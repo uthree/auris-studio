@@ -15,6 +15,8 @@ impl Session {
         at_tick: i64,
         preview: bool,
     ) -> Result<String, String> {
+        // Its pitches are MIDI semitones, which are keys only in a twelve-note tuning.
+        super::tuning::require_twelve_tone(&self.project).map_err(|error| error.to_string())?;
         draft.validate()?;
         if self.transaction.is_some() || at_tick < 0 || name.trim().is_empty() || name.len() > 256 {
             return Err(

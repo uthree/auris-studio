@@ -762,6 +762,12 @@ semitone. A CLAP plugin that speaks only MIDI 1.0 cannot be told anything finer,
 header says *12-TET* for as long as the tuning puts notes between keys. There are 128 keys, so 31
 steps to the octave reach about four octaves and 53 a little over two.
 
+The composer, *Accompany This Melody*, the chord and note recognisers and the chord suggestions
+read a key as a semitone of a twelve-note scale, so they work in the twelve-note tunings — just
+intonation and the meantones included — and say so rather than run in any other. A drum part is
+written in every tuning. The music linter leaves out its rules about intervals, chords, frets and
+range there too, and keeps the ones about timing, level and the sung line.
+
 ## The structure lane
 
 Above the harmony sits the song's own shape: a strip of section names — イントロ, Aメロ, サビ,

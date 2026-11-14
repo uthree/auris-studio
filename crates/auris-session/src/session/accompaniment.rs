@@ -226,7 +226,8 @@ fn write_backing(
     recipe: &ClipRecipe,
 ) -> Result<(Vec<Note>, Value), String> {
     let reference = foreground_notes(project, foreground, start, start + length)?;
-    let mut notes = unarranged_project_phrase(project, start, length, recipe);
+    let mut notes = unarranged_project_phrase(project, start, length, recipe)
+        .map_err(|error| error.to_string())?;
     let before = notes.clone();
     let status =
         arrange_backing_around_notes(project, start, length, recipe, &reference, &mut notes);

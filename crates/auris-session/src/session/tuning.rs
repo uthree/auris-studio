@@ -117,6 +117,23 @@ impl Session {
     }
 }
 
+/// Refuses what only a twelve-note tuning can answer.
+///
+/// The composer, the chord and note recognisers and the chord suggestions all read a key as a
+/// semitone of a twelve-note scale — `% 12` is a pitch class, a major third is four keys — and in
+/// a scale of any other size every one of those readings is wrong without looking it. Saying so is
+/// better than writing a tune in 31-tone equal temperament out of what were meant as semitones.
+/// The twelve-note tunings pass: just intonation and the meantones move where the keys sound, not
+/// what they are called.
+pub(crate) fn require_twelve_tone(project: &auris_core::Project) -> Result<(), SessionError> {
+    match project.tuning.is_twelve_tone() {
+        true => Ok(()),
+        false => Err(SessionError::NeedsTwelveTone {
+            steps: project.tuning.steps_per_period(),
+        }),
+    }
+}
+
 /// A Scala file's text, refused before it is read when it is too big to be one.
 fn read_scala(path: &Path) -> Result<String, SessionError> {
     let bytes = std::fs::metadata(path)
@@ -226,6 +243,82 @@ mod tests {
             .add_instrument_track("Lead", auris_synth::Chiptune::ID);
         session.set_tuning_preset(TuningPreset::Edo(31)).unwrap();
         assert!(session.tracks_playing_untuned().is_empty());
+    }
+
+    #[test]
+    fn the_composer_refuses_a_tuning_of_other_than_twelve_notes_and_drums_do_not() {
+        use auris_core::{ClipPreset, ClipRecipe, Ticks};
+        let mut session = session();
+        let bass = session.add_default_instrument_track("Bass").unwrap();
+        let kit = session
+            .add_drum_track("Kit", auris_synth::DrumKit::ID)
+            .unwrap();
+        let bar = Ticks::from_beats(4.0);
+
+        session.set_tuning_preset(TuningPreset::Edo(31)).unwrap();
+        let refused =
+            session.generate_clip(bass, Ticks::ZERO, bar, ClipRecipe::new(ClipPreset::Bass, 1));
+        assert!(
+            matches!(refused, Err(SessionError::NeedsTwelveTone { steps: 31 })),
+            "{refused:?}"
+        );
+        // A drum part names drums by key, and is written in any tuning.
+        session
+            .generate_clip(kit, Ticks::ZERO, bar, ClipRecipe::new(ClipPreset::Drums, 1))
+            .unwrap();
+
+        // Just intonation still has twelve notes, and C major is still keys 0, 4 and 7.
+        session
+            .set_tuning_preset(TuningPreset::Just(PitchClass::new(0)))
+            .unwrap();
+        session
+            .generate_clip(bass, Ticks::ZERO, bar, ClipRecipe::new(ClipPreset::Bass, 1))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_generated_clip_written_in_twelve_notes_will_not_be_rewritten_in_thirty_one() {
+        use auris_core::{ClipPreset, ClipRecipe, Ticks};
+        let mut session = session();
+        let bass = session.add_default_instrument_track("Bass").unwrap();
+        let bar = Ticks::from_beats(4.0);
+        let clip = session
+            .generate_clip(bass, Ticks::ZERO, bar, ClipRecipe::new(ClipPreset::Bass, 1))
+            .unwrap();
+        session.set_tuning_preset(TuningPreset::Edo(31)).unwrap();
+        let before = session.project().midi_clip(clip).unwrap().1.notes.clone();
+        assert!(session.regenerate_clip(clip).is_err());
+        assert!(session.resize_clip(clip, bar * 2).is_err());
+        assert_eq!(
+            session.project().midi_clip(clip).unwrap().1.notes,
+            before,
+            "a refusal leaves the notes as they were"
+        );
+    }
+
+    #[test]
+    fn the_linter_leaves_out_its_semitone_rules_outside_twelve_notes() {
+        use auris_core::{Note, Ticks};
+        let mut session = session();
+        let lead = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(lead, "High", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        // Key 124 is far above any instrument's range in equal temperament.
+        session
+            .add_note(clip, Note::new(124, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        let extreme = |session: &Session| {
+            crate::lint::lint_score(session.project())
+                .iter()
+                .any(|found| found.rule == crate::lint::Rule::ExtremePitch)
+        };
+        assert!(extreme(&session));
+        session.set_tuning_preset(TuningPreset::Edo(31)).unwrap();
+        assert!(
+            !extreme(&session),
+            "a range of keys is not a range of pitches here"
+        );
     }
 
     #[test]

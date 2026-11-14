@@ -108,19 +108,29 @@ pub(super) struct Event {
 ///
 /// Muted tracks and clips are skipped: they are not heard, and a muted take is often the wrong
 /// one on purpose. Solo is a listening aid and is ignored.
+///
+/// The rules that read a key as a semitone — intervals, chords, frets, a range moved by octaves of
+/// twelve keys — are left out in a tuning of other than twelve notes to the octave, where every
+/// one of them would be measuring the wrong thing. The rules about time, level and the sung line's
+/// shape still run.
 pub fn lint_score(project: &Project) -> Vec<Diagnostic> {
     let events = events(project);
+    let semitones = project.tuning.is_twelve_tone();
     let mut diagnostics = Vec::new();
     diagnostics.extend(limit(crowded_onsets(&events)));
     diagnostics.extend(limit(dense_bars(project, &events)));
-    diagnostics.extend(intervals(&events));
-    diagnostics.extend(harmony(project, &events));
-    diagnostics.extend(limit(missing_chords(project, &events)));
+    if semitones {
+        diagnostics.extend(intervals(&events));
+        diagnostics.extend(harmony(project, &events));
+        diagnostics.extend(limit(missing_chords(project, &events)));
+    }
     diagnostics.extend(clip_rules(project));
     diagnostics.extend(limit(overlapping_clips(project)));
     diagnostics.extend(limit(tight_strums(project)));
-    diagnostics.extend(limit(unfrettable_chords(project)));
-    diagnostics.extend(limit(position_jumps(project)));
+    if semitones {
+        diagnostics.extend(limit(unfrettable_chords(project)));
+        diagnostics.extend(limit(position_jumps(project)));
+    }
     diagnostics.extend(limit(impossible_drum_hits(project)));
     diagnostics.extend(limit(breathless_phrases(project)));
     diagnostics.extend(singer_rules(project));
@@ -614,7 +624,9 @@ fn clip_rules(project: &Project) -> Vec<Diagnostic> {
                     quiet.push(diagnostic);
                 }
             }
-            if drum {
+            // A range of keys is a range of pitches only in twelve notes to the octave, and the
+            // fix moves a note by twelve keys, which is an octave nowhere else.
+            if drum || !project.tuning.is_twelve_tone() {
                 continue;
             }
             let (low, high) = if singer {

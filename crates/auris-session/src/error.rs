@@ -118,6 +118,17 @@ pub enum SessionError {
     #[error(transparent)]
     Tuning(#[from] auris_core::TuningError),
 
+    /// Composing, recognising chords or notes, or suggesting chords was asked of a song whose
+    /// tuning does not have twelve notes to the octave, which all of them assume.
+    #[error(
+        "this needs a tuning of twelve notes to the octave, and the song's has {steps}; choose \
+         12-tone equal temperament, just intonation or a meantone to use it"
+    )]
+    NeedsTwelveTone {
+        /// How many notes the song's tuning has to its period.
+        steps: usize,
+    },
+
     /// A Scala file is larger than any tuning could need.
     #[error("{path} is {bytes} bytes, more than a Scala file could need")]
     TuningFileTooLarge {

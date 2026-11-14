@@ -2641,6 +2641,8 @@ tuning_set = "Tuning: {name}"
 not_a_frequency = "`{text}` is not a frequency — try `440` or `432.5`"
 # How many tracks play on the nearest semitone because their plugin only speaks MIDI 1.0.
 tuning_untuned_tracks = "{count} tracks play on the nearest semitone: their plugins only speak MIDI 1.0"
+# Something only a twelve-note tuning can do was asked of a song in another.
+needs_twelve_tone = "This needs a tuning of twelve notes to the octave, and the song's has {steps}. Choose 12-tone equal temperament, just intonation or a meantone to use it."
 # A note-roll video was written.
 exported_video = "Exported {path} · {duration}"
 # The ffmpeg a video will be encoded with.

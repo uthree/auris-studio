@@ -406,6 +406,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::Core(inner) => with(Key::ErrorDocument, core_error_text(inner, language)),
         // A parser's own words, like a plugin's: it names the line of somebody else's file.
         SessionError::Tuning(inner) => with(Key::ErrorDocument, inner.to_string()),
+        SessionError::NeedsTwelveTone { steps } => messages::needs_twelve_tone(language, steps),
         SessionError::TuningFileTooLarge { .. } => with(Key::ErrorFile, error.to_string()),
         SessionError::UnknownPlugin(id) => messages::unknown_plugin(language, id),
         SessionError::UntrustedPlugin(path) => match language {
