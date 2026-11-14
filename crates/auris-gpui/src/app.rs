@@ -1128,6 +1128,7 @@ mod tests {
             progress: Arc::new(AtomicU32::new(0.4f32.to_bits())),
             result: None,
             cancel: Arc::new(AtomicBool::new(false)),
+            window: None,
         }
     }
 
@@ -1234,6 +1235,13 @@ pub struct ExportState {
     /// somewhere in the render loop, and what the loop actually asks is a question with a
     /// one-word answer.
     pub cancel: Arc<AtomicBool>,
+    /// The utility window the export was started from, which keeps the progress and its Cancel
+    /// whichever window the pointer has moved to since.
+    ///
+    /// The overlay otherwise follows the window that last took input, so a video export started
+    /// from its own window lost its progress, and its only way to be stopped, from that window
+    /// the moment the arrangement behind it was clicked.
+    pub window: Option<gpui::WindowId>,
 }
 
 impl ExportState {

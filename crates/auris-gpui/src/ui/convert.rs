@@ -44,6 +44,7 @@ impl AurisApp {
             ),
             progress: Arc::clone(&progress),
             cancel: Arc::clone(&cancel),
+            window: None,
             result: None,
         });
         cx.notify();

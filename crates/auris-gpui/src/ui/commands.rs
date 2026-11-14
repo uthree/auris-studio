@@ -1857,6 +1857,7 @@ impl AurisApp {
             progress: Arc::clone(&lease.progress),
             result: None,
             cancel: Arc::clone(&lease.cancel),
+            window: None,
         });
         cx.notify();
 
@@ -3534,6 +3535,7 @@ impl AurisApp {
                     progress: Arc::clone(&progress),
                     result: None,
                     cancel: Arc::clone(&cancel),
+                    window: None,
                 });
                 cx.notify();
             });
@@ -3688,6 +3690,7 @@ impl AurisApp {
                     progress: Arc::clone(&progress),
                     result: None,
                     cancel: Arc::clone(&cancel),
+                    window: None,
                 });
                 cx.notify();
             });

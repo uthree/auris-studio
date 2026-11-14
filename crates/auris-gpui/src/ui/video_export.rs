@@ -466,6 +466,10 @@ impl AurisApp {
                     progress: Arc::clone(&progress),
                     result: None,
                     cancel: Arc::clone(&cancel),
+                    window: this
+                        .auxiliary_windows
+                        .get(&Surface::VideoExport)
+                        .map(|handle| handle.window_id()),
                 });
                 cx.notify();
             });
@@ -1523,6 +1527,46 @@ mod tests {
 
         app.update(&mut cx, |app, _| {
             app.edit_video_style(|style| *style = original);
+        });
+    }
+
+    #[gpui::test]
+    fn a_video_export_keeps_its_cancel_in_its_own_window(cx: &mut TestAppContext) {
+        let (app, main) = harness::open(cx);
+        main.dispatch_action(crate::actions::ExportVideo);
+        harness::paint(&app, main);
+        let handle = app.read_with(main, |app, _| app.auxiliary_windows[&Surface::VideoExport]);
+        let mut video = gpui::VisualTestContext::from_window(handle.into(), main);
+        harness::paint(&app, &mut video);
+        let cancel = Arc::new(AtomicBool::new(false));
+        app.update(&mut video, |app, cx| {
+            app.export = Some(ExportState {
+                path: "Song.mp4".into(),
+                progress: Arc::new(AtomicU32::new(0.3f32.to_bits())),
+                result: None,
+                cancel: Arc::clone(&cancel),
+                window: Some(handle.window_id()),
+            });
+            cx.notify();
+        });
+
+        // The arrangement behind it takes the pointer, and with it the window that draws sheets.
+        main.update(|window, cx| app.update(cx, |app, _| app.claim_event_window(window)));
+        harness::paint(&app, main);
+        harness::paint(&app, &mut video);
+        assert!(
+            main.debug_bounds("export-cancel").is_some(),
+            "the window with the input shows the export"
+        );
+        assert!(
+            video.debug_bounds("export-cancel").is_some(),
+            "and the window it was started from still does"
+        );
+
+        harness::click("export-cancel", &mut video);
+        assert!(cancel.load(Ordering::Relaxed), "and its Cancel stops it");
+        app.read_with(&video, |app, _| {
+            assert!(app.export.as_ref().unwrap().cancelling());
         });
     }
 

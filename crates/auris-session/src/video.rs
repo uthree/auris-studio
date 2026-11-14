@@ -231,6 +231,61 @@ mod tests {
     }
 
     #[test]
+    fn a_video_stopped_half_way_leaves_the_old_file_and_no_scraps() {
+        let Ok(ffmpeg) = Ffmpeg::detect() else {
+            eprintln!("ffmpeg is not installed; skipping the encode");
+            return;
+        };
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        let track = session
+            .add_instrument_track("Lead", crate::DEFAULT_INSTRUMENT)
+            .unwrap();
+        let clip = session
+            .add_midi_clip(track, "Lead", Ticks::ZERO, Ticks(TICKS_PER_QUARTER * 8))
+            .unwrap();
+        session
+            .add_note(
+                clip,
+                Note::new(60, Ticks::ZERO, Ticks(TICKS_PER_QUARTER * 8)),
+            )
+            .unwrap();
+        let style = NoteRollStyle {
+            size: VideoSize::new(320, 180),
+            fps: 12,
+            ..NoteRollStyle::default()
+        };
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("song.mp4");
+        std::fs::write(&path, b"the take before").unwrap();
+
+        // Stopped while frames are going to the encoder, the way the Cancel button stops it.
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut last = 0.0f32;
+        let mut report = |fraction: f32| {
+            last = fraction;
+            if fraction > 0.5 {
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        };
+        let error = session
+            .video_job(style)
+            .render(
+                &ffmpeg,
+                &path,
+                &mut RenderProgress::reporting(&mut report).cancelled_by(&cancel),
+            )
+            .unwrap_err();
+        assert!(error.is_cancellation(), "{error}");
+        assert!(last < 0.9, "it stopped soon after it was asked: {last}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"the take before");
+        let left: Vec<_> = std::fs::read_dir(folder.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["song.mp4"], "the half-written video is gone");
+    }
+
+    #[test]
     fn a_song_with_no_chart_is_captioned_with_the_chords_its_notes_spell() {
         let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session

@@ -330,11 +330,15 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (Vec<AnyElement>, Option<AnyElement>) {
-        if self
-            .event_window
-            .is_some_and(|id| id != window.window_handle().window_id())
-        {
-            return (Vec::new(), None);
+        let here = window.window_handle().window_id();
+        if self.event_window.is_some_and(|id| id != here) {
+            // The window an export was started from keeps showing it, and keeps its Cancel,
+            // while the pointer is busy elsewhere.
+            let overlay = (self.export_window() == Some(here))
+                .then(|| self.render_export_overlay(false, cx))
+                .flatten()
+                .map(IntoElement::into_any_element);
+            return (overlay.into_iter().collect(), None);
         }
         // A menu owns Enter/Space while open; they must not activate its focused trigger.
         let menu_open = self.menu.is_some() || self.menu_bar.is_some();
@@ -347,7 +351,7 @@ impl AurisApp {
         {
             window.focus(&trigger);
         }
-        let export_overlay = self.render_export_overlay(cx);
+        let export_overlay = self.render_export_overlay(true, cx);
         let export_dialog = self.render_export_dialog(cx);
         let inline = self.inline_prompt_open(window);
         let prompt = self.render_prompt(window, cx);
@@ -1278,8 +1282,25 @@ impl AurisApp {
         )
     }
 
+    /// The utility window an export was started from, while it is still open.
+    fn export_window(&self) -> Option<gpui::WindowId> {
+        let id = self.export.as_ref()?.window?;
+        self.auxiliary_windows
+            .values()
+            .any(|handle| handle.window_id() == id)
+            .then_some(id)
+    }
+
     /// A modal-ish overlay shown while an export runs.
-    fn render_export_overlay(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+    ///
+    /// `focused` is false for the copy drawn in the window an export was started from while
+    /// another window has the input: one focus handle cannot be tracked in two windows, and the
+    /// keyboard is in the other one.
+    fn render_export_overlay(
+        &self,
+        focused: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
         let export = self.export.as_ref()?;
         let theme = self.theme.clone();
         let fraction = export.fraction();
@@ -1400,7 +1421,9 @@ impl AurisApp {
                                         cx.notify();
                                     }),
                                 )
-                                .track_focus(self.modal_focus.export_cancel()),
+                                .when(focused, |button| {
+                                    button.track_focus(self.modal_focus.export_cancel())
+                                }),
                             )
                         })
                         // Export is the longest thing this application does, and until now the
@@ -1426,7 +1449,9 @@ impl AurisApp {
                                         cx.notify();
                                     }),
                                 )
-                                .track_focus(self.modal_focus.export_cancel()),
+                                .when(focused, |button| {
+                                    button.track_focus(self.modal_focus.export_cancel())
+                                }),
                             )
                         }),
                 ),
@@ -4100,6 +4125,7 @@ mod window_tests {
                 progress: Arc::new(AtomicU32::new(0.42f32.to_bits())),
                 result: None,
                 cancel: Arc::new(AtomicBool::new(false)),
+                window: None,
             });
         });
         paint(&app, cx);
