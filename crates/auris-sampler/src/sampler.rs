@@ -411,14 +411,16 @@ impl Sampler {
         };
         match event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
+                key: pitch,
+                velocity,
+                ..
             } => {
                 self.held = self.held.saturating_add(1);
                 // See `midi_velocity`: the number handed over is pre-compensated, because the
                 // synthesiser squares it and the rest of the application does not.
                 synth.note_on(CHANNEL, pitch as i32, midi_velocity(velocity));
             }
-            NoteEvent::NoteOff { pitch, .. } => {
+            NoteEvent::NoteOff { key: pitch, .. } => {
                 self.held = self.held.saturating_sub(1);
                 // The vendored synthesiser ends the *oldest* note with this key, which is the
                 // answer `auris_synth::VoiceAllocator::note_off` gives every built-in voice too.
@@ -830,14 +832,10 @@ mod tests {
             *sample = 0.5;
         }
         let events = [
-            NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 60,
-                velocity: 1.0,
-            },
+            NoteEvent::note_on(0, 60, 1.0),
             NoteEvent::NoteOff {
                 frame: 200,
-                pitch: 60,
+                key: 60,
             },
         ];
         let ctx = ProcessContext::realtime(48_000.0, 512, 0, 120.0, true);
@@ -900,11 +898,7 @@ mod tests {
     }
 
     fn note_on(frame: u32) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame,
-            pitch: crate::test_support::ROOT_KEY,
-            velocity: 1.0,
-        }
+        NoteEvent::note_on(frame, crate::test_support::ROOT_KEY, 1.0)
     }
 
     fn rms(samples: &[f32]) -> f32 {
@@ -933,7 +927,7 @@ mod tests {
                 note_on(0),
                 NoteEvent::NoteOff {
                     frame: 0,
-                    pitch: crate::test_support::ROOT_KEY,
+                    key: crate::test_support::ROOT_KEY,
                 },
             ],
             &mut out,
@@ -957,23 +951,15 @@ mod tests {
         expected.process(&[], &mut reference, &ctx);
         let chord = [
             note_on(0),
-            NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 72,
-                velocity: 1.0,
-            },
-            NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 76,
-                velocity: 1.0,
-            },
+            NoteEvent::note_on(0, 72, 1.0),
+            NoteEvent::note_on(0, 76, 1.0),
         ];
         actual.process(&chord, &mut out, &ctx);
         expected.process(&chord, &mut reference, &ctx);
         actual.process(
             &[NoteEvent::NoteOff {
                 frame: 0,
-                pitch: crate::test_support::ROOT_KEY,
+                key: crate::test_support::ROOT_KEY,
             }],
             &mut out,
             &ctx,
@@ -1140,7 +1126,7 @@ mod tests {
         sampler.process(
             &[NoteEvent::NoteOff {
                 frame: 0,
-                pitch: crate::test_support::ROOT_KEY,
+                key: crate::test_support::ROOT_KEY,
             }],
             &mut out,
             &ctx,
@@ -1329,7 +1315,7 @@ mod tests {
             note_on(0),
             NoteEvent::NoteOff {
                 frame: 128,
-                pitch: crate::test_support::ROOT_KEY,
+                key: crate::test_support::ROOT_KEY,
             },
             NoteEvent::PitchBend {
                 frame: 200,
@@ -1363,11 +1349,11 @@ mod tests {
         let mut out = AudioBuffer::stereo(frames, RATE);
         let ctx = ProcessContext::realtime(RATE, frames, 0, 120.0, true);
         sampler.process(
-            &[NoteEvent::NoteOn {
-                frame: 0,
-                pitch: crate::test_support::ROOT_KEY,
+            &[NoteEvent::note_on(
+                0,
+                crate::test_support::ROOT_KEY,
                 velocity,
-            }],
+            )],
             &mut out,
             &ctx,
         );

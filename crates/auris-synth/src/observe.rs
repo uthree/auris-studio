@@ -144,11 +144,7 @@ mod tests {
     };
 
     fn on(pitch: u8) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame: 0,
-            pitch,
-            velocity: 0.8,
-        }
+        NoteEvent::note_on(0, pitch, 0.8)
     }
 
     fn touch(at: f32) -> NoteEvent {

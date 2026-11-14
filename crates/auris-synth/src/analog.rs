@@ -1043,9 +1043,11 @@ impl SegmentRenderer for Analog {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
+                key: pitch,
+                velocity,
+                ..
             } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { pitch, .. } => self.note_off(pitch),
+            NoteEvent::NoteOff { key: pitch, .. } => self.note_off(pitch),
             NoteEvent::AllNotesOff { .. } => {
                 for index in self.allocator.release_all() {
                     if let Some(voice) = self.voices.get_mut(index) {
@@ -1256,15 +1258,11 @@ mod tests {
     const RATE: f64 = 48_000.0;
 
     fn on(frame: u32, pitch: u8) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame,
-            pitch,
-            velocity: 1.0,
-        }
+        NoteEvent::note_on(frame, pitch, 1.0)
     }
 
     fn off(frame: u32, pitch: u8) -> NoteEvent {
-        NoteEvent::NoteOff { frame, pitch }
+        NoteEvent::NoteOff { frame, key: pitch }
     }
 
     fn rig(patch: AnalogPatch) -> Rig {

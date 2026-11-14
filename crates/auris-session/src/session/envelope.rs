@@ -97,14 +97,13 @@ pub(super) fn measure_note(
         block.clear();
         let mut events = Vec::with_capacity(1);
         if start == 0 {
-            events.push(NoteEvent::NoteOn {
-                frame: 0,
-                pitch,
-                velocity: VELOCITY,
-            });
+            events.push(NoteEvent::note_on(0, pitch, VELOCITY));
         }
         if held && probe.should_release() {
-            events.push(NoteEvent::NoteOff { frame: 0, pitch });
+            events.push(NoteEvent::NoteOff {
+                frame: 0,
+                key: pitch,
+            });
             probe.release();
             held = false;
         }

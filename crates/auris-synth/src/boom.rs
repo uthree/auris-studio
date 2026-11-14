@@ -420,9 +420,11 @@ impl SegmentRenderer for BoomBass {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
+                key: pitch,
+                velocity,
+                ..
             } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { pitch, .. } => self.note_off(pitch),
+            NoteEvent::NoteOff { key: pitch, .. } => self.note_off(pitch),
             NoteEvent::AllNotesOff { .. } => {
                 self.held_count = 0;
                 self.envelope.release();
@@ -551,15 +553,11 @@ mod tests {
     }
 
     fn on(frame: u32, pitch: u8) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame,
-            pitch,
-            velocity: 1.0,
-        }
+        NoteEvent::note_on(frame, pitch, 1.0)
     }
 
     fn off(frame: u32, pitch: u8) -> NoteEvent {
-        NoteEvent::NoteOff { frame, pitch }
+        NoteEvent::NoteOff { frame, key: pitch }
     }
 
     fn ms(milliseconds: usize) -> usize {

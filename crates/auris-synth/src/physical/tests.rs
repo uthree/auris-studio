@@ -28,15 +28,11 @@ fn whole(model: Model) -> Rig {
 }
 
 fn on(pitch: u8, velocity: f32) -> NoteEvent {
-    NoteEvent::NoteOn {
-        frame: 0,
-        pitch,
-        velocity,
-    }
+    NoteEvent::note_on(0, pitch, velocity)
 }
 
 fn off(frame: u32, pitch: u8) -> NoteEvent {
-    NoteEvent::NoteOff { frame, pitch }
+    NoteEvent::NoteOff { frame, key: pitch }
 }
 
 fn controller(frame: u32, number: u8, value: f32) -> NoteEvent {
@@ -153,17 +149,9 @@ fn nothing_depends_on_the_hosts_block_size() {
     for model in Model::ALL {
         let pitch = home(model);
         let events = [
-            NoteEvent::NoteOn {
-                frame: 73,
-                pitch,
-                velocity: 0.8,
-            },
+            NoteEvent::note_on(73, pitch, 0.8),
             controller(900, 64, 1.0),
-            NoteEvent::NoteOn {
-                frame: 1_301,
-                pitch: pitch + 4,
-                velocity: 0.5,
-            },
+            NoteEvent::note_on(1_301, pitch + 4, 0.5),
             NoteEvent::PitchBend {
                 frame: 2_000,
                 semitones: 0.5,

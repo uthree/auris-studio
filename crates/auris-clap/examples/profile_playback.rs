@@ -66,11 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     for block in 0..blocks {
                         let notes: Vec<_> = if block == 0 {
                             [48, 55, 60, 64]
-                                .map(|pitch| NoteEvent::NoteOn {
-                                    frame: 0,
-                                    pitch,
-                                    velocity: 0.7,
-                                })
+                                .map(|pitch| NoteEvent::note_on(0, pitch, 0.7))
                                 .into()
                         } else {
                             Vec::new()

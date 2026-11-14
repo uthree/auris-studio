@@ -43,7 +43,7 @@
 //! synth.prepare(&PrepareContext::new(48_000.0, 512, 2));
 //!
 //! let mut out = AudioBuffer::stereo(512, 48_000.0);
-//! let events = [NoteEvent::NoteOn { frame: 100, pitch: 69, velocity: 1.0 }];
+//! let events = [NoteEvent::note_on(100, 69, 1.0)];
 //! let ctx = ProcessContext::realtime(48_000.0, 512, 0, 120.0, true);
 //! synth.process(&events, &mut out, &ctx);
 //!
@@ -163,11 +163,7 @@ mod channel_volume_tests {
                 // Breath noise advances across resets; isolate the tone for a gain comparison.
                 rig.set_param("breath", 0.0);
             }
-            let note = NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 69,
-                velocity: 0.8,
-            };
+            let note = NoteEvent::note_on(0, 69, 0.8);
             let full = rig.render(4096, &[note]);
             rig.instrument.reset();
             let quiet = rig.render(

@@ -242,9 +242,11 @@ impl SegmentRenderer for Vocal {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
+                key: pitch,
+                velocity,
+                ..
             } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { pitch, .. } => self.note_off(pitch),
+            NoteEvent::NoteOff { key: pitch, .. } => self.note_off(pitch),
             NoteEvent::AllNotesOff { .. } => {
                 for index in self.allocator.release_all() {
                     if let Some(voice) = self.voices.get_mut(index) {
@@ -423,11 +425,7 @@ mod tests {
     }
 
     fn note_on(pitch: u8, velocity: f32) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame: 0,
-            pitch,
-            velocity,
-        }
+        NoteEvent::note_on(0, pitch, velocity)
     }
 
     #[test]
@@ -454,10 +452,7 @@ mod tests {
         let mut rig = rig();
         let sounding = rig.render(4_800, &[note_on(60, 1.0)]);
         assert!(peak(&sounding) > 0.01, "the note should be audible");
-        let off = NoteEvent::NoteOff {
-            frame: 0,
-            pitch: 60,
-        };
+        let off = NoteEvent::NoteOff { frame: 0, key: 60 };
         rig.render(4_800, &[off]);
         let tail = rig.render(4_800, &[]);
         assert!(

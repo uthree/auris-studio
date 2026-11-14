@@ -73,11 +73,7 @@ mod tests {
     }
 
     fn note_on(frame: u32, pitch: u8) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame,
-            pitch,
-            velocity: 1.0,
-        }
+        NoteEvent::note_on(frame, pitch, 1.0)
     }
 
     /// Renders `frames` frames in `block`-frame chunks into a `channels`-channel buffer,
@@ -188,11 +184,11 @@ mod tests {
             let mut instrument = registry.create_instrument(&id).unwrap();
             instrument.prepare(&PrepareContext::new(44_100.0, 256, 2));
             let mut buffer = AudioBuffer::stereo(256, 44_100.0);
-            let events = [auris_core::NoteEvent::NoteOn {
-                frame: 8,
-                pitch: if kit_with_pads(&id) { 36 } else { 60 },
-                velocity: 0.8,
-            }];
+            let events = [auris_core::NoteEvent::note_on(
+                8,
+                if kit_with_pads(&id) { 36 } else { 60 },
+                0.8,
+            )];
             let ctx = ProcessContext::realtime(44_100.0, 256, 0, 120.0, true);
             instrument.process(&events, &mut buffer, &ctx);
 

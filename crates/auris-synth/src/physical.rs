@@ -868,9 +868,11 @@ impl SegmentRenderer for Physical {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
+                key: pitch,
+                velocity,
+                ..
             } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { pitch, .. } => {
+            NoteEvent::NoteOff { key: pitch, .. } => {
                 self.note_off(pitch);
                 self.engine.lift(pitch.min(127));
             }

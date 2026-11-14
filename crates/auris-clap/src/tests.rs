@@ -476,15 +476,8 @@ fn a_note_reaches_a_hosted_instrument_on_the_frame_it_was_scheduled_for() {
     let mut buffer = empty(32);
     instrument.process(
         &[
-            NoteEvent::NoteOn {
-                frame: 8,
-                pitch: 60,
-                velocity: 0.5,
-            },
-            NoteEvent::NoteOff {
-                frame: 24,
-                pitch: 60,
-            },
+            NoteEvent::note_on(8, 60, 0.5),
+            NoteEvent::NoteOff { frame: 24, key: 60 },
         ],
         &mut buffer,
         &playing(32),
@@ -558,14 +551,7 @@ fn a_prepared_input_burst_is_delivered_without_allocating() {
     instrument.prepare(&context().with_max_block_events(EVENT_COUNT));
     instrument.process(&[], &mut empty(64), &playing(64));
 
-    let burst = vec![
-        NoteEvent::NoteOn {
-            frame: 0,
-            pitch: 60,
-            velocity: 0.75,
-        };
-        EVENT_COUNT
-    ];
+    let burst = vec![NoteEvent::note_on(0, 60, 0.75); EVENT_COUNT];
     let mut output = empty(64);
     let process = playing(64);
     let allocations = count_allocations(|| instrument.process(&burst, &mut output, &process));
@@ -593,14 +579,7 @@ fn an_unprepared_input_burst_is_rejected_without_allocating_or_sticking_notes() 
     // exact maximum in `prepare`; a direct or buggy caller still must not grow a Vec on the RT
     // thread. The whole gesture is rejected and replaced by one choke, rather than delivering a
     // prefix whose missing note-offs could leave voices sounding forever.
-    let burst = vec![
-        NoteEvent::NoteOn {
-            frame: 0,
-            pitch: 60,
-            velocity: 1.0,
-        };
-        4_096
-    ];
+    let burst = vec![NoteEvent::note_on(0, 60, 1.0); 4_096];
     let mut output = empty(64);
     let process = playing(64);
     let allocations = count_allocations(|| instrument.process(&burst, &mut output, &process));
@@ -698,15 +677,7 @@ fn a_note_held_across_a_block_boundary_keeps_sounding() {
         .expect("must activate");
 
     let mut first = empty(16);
-    instrument.process(
-        &[NoteEvent::NoteOn {
-            frame: 0,
-            pitch: 64,
-            velocity: 1.0,
-        }],
-        &mut first,
-        &playing(16),
-    );
+    instrument.process(&[NoteEvent::note_on(0, 64, 1.0)], &mut first, &playing(16));
     assert_eq!(first.channel(0)[15], 1.0);
 
     // Nothing is sent this time. A host that reset the plugin between blocks, or that failed to
@@ -734,15 +705,7 @@ fn resetting_an_instrument_releases_notes_even_when_plugin_reset_keeps_them() {
     let mut plugin = tone();
     let mut instrument = plugin.activate_instrument(&context()).unwrap();
     let mut out = empty(16);
-    instrument.process(
-        &[NoteEvent::NoteOn {
-            frame: 0,
-            pitch: 60,
-            velocity: 1.0,
-        }],
-        &mut out,
-        &playing(16),
-    );
+    instrument.process(&[NoteEvent::note_on(0, 60, 1.0)], &mut out, &playing(16));
     assert_eq!(out.peak(), 1.0);
     let stopped = ProcessContext {
         is_playing: false,
@@ -769,15 +732,7 @@ fn a_pending_reset_precedes_new_notes_and_survives_an_empty_block() {
     instrument.reset();
     instrument.reset(); // The Stop button also seeks back to zero before the next callback.
     instrument.process(&[], &mut empty(0), &playing(0));
-    instrument.process(
-        &[NoteEvent::NoteOn {
-            frame: 0,
-            pitch: 64,
-            velocity: 0.75,
-        }],
-        &mut out,
-        &playing(16),
-    );
+    instrument.process(&[NoteEvent::note_on(0, 64, 0.75)], &mut out, &playing(16));
     assert_eq!(out.peak(), 0.75, "the reset must precede the chased note");
     instrument.process(&[], &mut out, &playing(16));
     assert_eq!(out.peak(), 0.75, "the reset must be sent only once");
@@ -799,14 +754,7 @@ fn a_reset_fits_alongside_the_prepared_notes_and_all_dirty_parameters() {
     for (id, value) in parameters {
         instrument.set_param(id, value);
     }
-    let notes = vec![
-        NoteEvent::NoteOn {
-            frame: 0,
-            pitch: 60,
-            velocity: 0.75
-        };
-        512
-    ];
+    let notes = vec![NoteEvent::note_on(0, 60, 0.75); 512];
     let mut out = empty(16);
     let allocations = count_allocations(|| {
         instrument.reset();
@@ -824,11 +772,7 @@ fn a_reset_at_event_capacity_silences_the_old_voice_without_partial_new_notes() 
     let mut plugin = tone();
     let mut instrument = plugin.activate_instrument(&context()).unwrap();
     let mut out = empty(16);
-    let note = NoteEvent::NoteOn {
-        frame: 0,
-        pitch: 60,
-        velocity: 1.0,
-    };
+    let note = NoteEvent::note_on(0, 60, 1.0);
     instrument.process(&[note], &mut out, &playing(16));
     assert_eq!(out.peak(), 1.0);
     let burst = vec![note; instrument.event_room()];
@@ -1054,14 +998,10 @@ fn notes_in_later_chunks_keep_their_block_relative_time() {
 
     instrument.process(
         &[
-            NoteEvent::NoteOn {
-                frame: 70,
-                pitch: 60,
-                velocity: 0.75,
-            },
+            NoteEvent::note_on(70, 60, 0.75),
             NoteEvent::NoteOff {
                 frame: 130,
-                pitch: 60,
+                key: 60,
             },
         ],
         &mut buffer,

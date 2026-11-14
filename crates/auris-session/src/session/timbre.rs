@@ -624,16 +624,12 @@ pub(super) fn render_reference(
         block.clear();
         let mut events = Vec::with_capacity(2);
         if start == 0 {
-            events.push(NoteEvent::NoteOn {
-                frame: 0,
-                pitch,
-                velocity,
-            });
+            events.push(NoteEvent::note_on(0, pitch, velocity));
         }
         if (start..start + count).contains(&off) {
             events.push(NoteEvent::NoteOff {
                 frame: (off - start) as u32,
-                pitch,
+                key: pitch,
             });
         }
         instrument.process(

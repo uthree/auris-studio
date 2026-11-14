@@ -405,9 +405,11 @@ impl AudioSampler {
     fn dispatch(&mut self, event: NoteEvent) {
         match event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
+                key: pitch,
+                velocity,
+                ..
             } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { pitch, .. } => self.note_off(pitch),
+            NoteEvent::NoteOff { key: pitch, .. } => self.note_off(pitch),
             NoteEvent::AllNotesOff { .. } => {
                 for voice in &mut self.voices {
                     voice.held = false;
@@ -745,11 +747,7 @@ mod tests {
     }
 
     fn note(pitch: u8, velocity: f32) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame: 0,
-            pitch,
-            velocity,
-        }
+        NoteEvent::note_on(0, pitch, velocity)
     }
 
     #[test]
@@ -924,14 +922,7 @@ mod tests {
         let mut out = AudioBuffer::new(2, 512, RATE);
         let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
         sampler.process(&[note(60, 1.0)], &mut out, &ctx);
-        sampler.process(
-            &[NoteEvent::NoteOff {
-                frame: 0,
-                pitch: 60,
-            }],
-            &mut out,
-            &ctx,
-        );
+        sampler.process(&[NoteEvent::NoteOff { frame: 0, key: 60 }], &mut out, &ctx);
         // Release defaults to 0.1 s = 4800 frames, so ten blocks later it is gone.
         for _ in 0..10 {
             sampler.process(&[], &mut out, &ctx);

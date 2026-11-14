@@ -80,7 +80,9 @@ pub const MIDI_BEND_SEMITONES: f32 = 2.0;
 pub fn translate(event: NoteEvent, language: NoteLanguage) -> Translated {
     match event {
         NoteEvent::NoteOn {
-            pitch, velocity, ..
+            key: pitch,
+            velocity,
+            ..
         } => match language.clap_notes {
             true => Translated::NoteOn {
                 key: pitch as u16,
@@ -88,7 +90,7 @@ pub fn translate(event: NoteEvent, language: NoteLanguage) -> Translated {
             },
             false => Translated::Midi([0x90, pitch & 0x7F, to_7bit(velocity)]),
         },
-        NoteEvent::NoteOff { pitch, .. } => match language.clap_notes {
+        NoteEvent::NoteOff { key: pitch, .. } => match language.clap_notes {
             true => Translated::NoteOff { key: pitch as u16 },
             false => Translated::Midi([0x80, pitch & 0x7F, 0]),
         },
@@ -147,11 +149,7 @@ mod tests {
     };
 
     fn note_on(pitch: u8, velocity: f32) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame: 0,
-            pitch,
-            velocity,
-        }
+        NoteEvent::note_on(0, pitch, velocity)
     }
 
     #[test]
@@ -237,13 +235,7 @@ mod tests {
             Translated::Midi([0x90, 60, 127])
         );
         assert_eq!(
-            translate(
-                NoteEvent::NoteOff {
-                    frame: 0,
-                    pitch: 60
-                },
-                MIDI_ONLY
-            ),
+            translate(NoteEvent::NoteOff { frame: 0, key: 60 }, MIDI_ONLY),
             Translated::Midi([0x80, 60, 0])
         );
         assert_eq!(

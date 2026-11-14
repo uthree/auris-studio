@@ -40,11 +40,7 @@ fn render(kit: &mut DrumKit, frames: u32, events: &[NoteEvent], samples: &mut Ve
 }
 
 fn on(frame: u32, pitch: u8, velocity: f32) -> NoteEvent {
-    NoteEvent::NoteOn {
-        frame,
-        pitch,
-        velocity,
-    }
+    NoteEvent::note_on(frame, pitch, velocity)
 }
 
 fn main() -> Result<(), Box<dyn Error>> {

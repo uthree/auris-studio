@@ -456,9 +456,11 @@ impl SegmentRenderer for Choir {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
+                key: pitch,
+                velocity,
+                ..
             } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { pitch, .. } => {
+            NoteEvent::NoteOff { key: pitch, .. } => {
                 for index in self.allocator.note_off(pitch) {
                     if let Some(voice) = self.voices.get_mut(index) {
                         voice.envelope.release();

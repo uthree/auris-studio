@@ -68,15 +68,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .filter(|e| e.0 >= from && e.0 < from + count)
                 .map(|&(frame, pitch, on)| {
                     if on {
-                        NoteEvent::NoteOn {
-                            frame: (frame - from) as u32,
-                            pitch,
-                            velocity: 0.7,
-                        }
+                        NoteEvent::note_on((frame - from) as u32, pitch, 0.7)
                     } else {
                         NoteEvent::NoteOff {
                             frame: (frame - from) as u32,
-                            pitch,
+                            key: pitch,
                         }
                     }
                 })

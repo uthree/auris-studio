@@ -49,17 +49,13 @@ impl Session {
                 .max(start + 1);
             events.push(ScheduledEvent {
                 frame: start,
-                event: NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch: note.pitch,
-                    velocity: note.velocity,
-                },
+                event: NoteEvent::note_on(0, note.pitch, note.velocity),
             });
             events.push(ScheduledEvent {
                 frame: end,
                 event: NoteEvent::NoteOff {
                     frame: 0,
-                    pitch: note.pitch,
+                    key: note.pitch,
                 },
             });
             note.start -= first;
@@ -132,7 +128,7 @@ mod tests {
         assert!(matches!(
             preview.events[2].event,
             NoteEvent::NoteOn {
-                pitch: 64,
+                key: 64,
                 velocity: 0.37,
                 ..
             }

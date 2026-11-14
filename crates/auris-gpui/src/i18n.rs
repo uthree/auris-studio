@@ -180,6 +180,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::ChangeTempo(_) => Key::EditChangeTempo,
         Edit::SetTempoPoint => Key::EditSetTempoPoint,
         Edit::SetStyle => Key::EditSetStyle,
+        Edit::SetTuning => Key::EditSetTuning,
         Edit::RemoveTempoPoint => Key::EditRemoveTempoPoint,
         Edit::ChangeSignature(_) => Key::EditChangeSignature,
         Edit::SetSignaturePoint => Key::EditSetSignaturePoint,
@@ -403,6 +404,9 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::Clap(inner) => with(Key::ErrorPlugin, inner.to_string()),
         SessionError::Vst3(inner) => with(Key::ErrorPlugin, inner.to_string()),
         SessionError::Core(inner) => with(Key::ErrorDocument, core_error_text(inner, language)),
+        // A parser's own words, like a plugin's: it names the line of somebody else's file.
+        SessionError::Tuning(inner) => with(Key::ErrorDocument, inner.to_string()),
+        SessionError::TuningFileTooLarge { .. } => with(Key::ErrorFile, error.to_string()),
         SessionError::UnknownPlugin(id) => messages::unknown_plugin(language, id),
         SessionError::UntrustedPlugin(path) => match language {
             Language::English => error.to_string(),

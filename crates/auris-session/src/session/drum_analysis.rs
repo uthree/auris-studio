@@ -903,16 +903,12 @@ fn render_trigger(
         block.set_frame_count(count);
         let mut events = Vec::with_capacity(2);
         if start == 0 {
-            events.push(NoteEvent::NoteOn {
-                frame: 0,
-                pitch,
-                velocity,
-            });
+            events.push(NoteEvent::note_on(0, pitch, velocity));
         }
         if (start..start + count).contains(&off) {
             events.push(NoteEvent::NoteOff {
                 frame: (off - start) as u32,
-                pitch,
+                key: pitch,
             });
         }
         instrument.process(
@@ -1288,15 +1284,7 @@ mod tests {
         let mut playing = live.activate_instrument(&prepare).unwrap();
         let mut block = AudioBuffer::stereo(BLOCK, 48_000.0);
         let context = ProcessContext::realtime(48_000.0, BLOCK, 0, 120.0, true);
-        playing.process(
-            &[NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 36,
-                velocity: 1.0,
-            }],
-            &mut block,
-            &context,
-        );
+        playing.process(&[NoteEvent::note_on(0, 36, 1.0)], &mut block, &context);
         let before = block.channel(0)[10];
         assert!((before - 0.25).abs() < 1e-5);
         let mut state = PluginState::empty();

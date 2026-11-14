@@ -223,17 +223,13 @@ pub(super) fn schedule_clip(
                 .max(start.saturating_add(1));
             out.push(ScheduledEvent {
                 frame: start,
-                event: NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch: note.pitch,
-                    velocity: note.velocity.clamp(0.0, 1.0),
-                },
+                event: NoteEvent::note_on(0, note.pitch, note.velocity.clamp(0.0, 1.0)),
             });
             out.push(ScheduledEvent {
                 frame: end,
                 event: NoteEvent::NoteOff {
                     frame: 0,
-                    pitch: note.pitch,
+                    key: note.pitch,
                 },
             });
         }
@@ -537,11 +533,7 @@ mod tests {
             );
             assert_eq!(
                 pair[0].event,
-                NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch: note.pitch,
-                    velocity: note.velocity
-                }
+                NoteEvent::note_on(0, note.pitch, note.velocity)
             );
         }
     }
@@ -750,13 +742,10 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].frame, 24_000);
         assert_eq!(events[1].frame, 48_000);
-        assert!(matches!(
-            events[0].event,
-            NoteEvent::NoteOn { pitch: 60, .. }
-        ));
+        assert!(matches!(events[0].event, NoteEvent::NoteOn { key: 60, .. }));
         assert!(matches!(
             events[1].event,
-            NoteEvent::NoteOff { pitch: 60, .. }
+            NoteEvent::NoteOff { key: 60, .. }
         ));
     }
 
@@ -1004,13 +993,12 @@ mod tests {
         .map(|(frame, pitch, on)| ScheduledEvent {
             frame,
             event: if on {
-                NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch,
-                    velocity: 1.0,
-                }
+                NoteEvent::note_on(0, pitch, 1.0)
             } else {
-                NoteEvent::NoteOff { frame: 0, pitch }
+                NoteEvent::NoteOff {
+                    frame: 0,
+                    key: pitch,
+                }
             },
         })
         .collect();

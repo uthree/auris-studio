@@ -1537,13 +1537,15 @@ fn translate_event(event: NoteEvent) -> MidiEvent {
     let channel = MidiChannel::Ch1;
     match event {
         NoteEvent::NoteOn {
-            pitch, velocity, ..
+            key: pitch,
+            velocity,
+            ..
         } => MidiEvent::NoteOn {
             channel,
             note: pitch,
             velocity: midi_velocity(velocity),
         },
-        NoteEvent::NoteOff { pitch, .. } => MidiEvent::NoteOff {
+        NoteEvent::NoteOff { key: pitch, .. } => MidiEvent::NoteOff {
             channel,
             note: pitch,
             velocity: 0,
@@ -1582,9 +1584,11 @@ fn note_event_is_valid(event: &NoteEvent, frames: usize) -> bool {
     }
     match *event {
         NoteEvent::NoteOn {
-            pitch, velocity, ..
+            key: pitch,
+            velocity,
+            ..
         } => pitch <= 127 && velocity.is_finite(),
-        NoteEvent::NoteOff { pitch, .. } => pitch <= 127,
+        NoteEvent::NoteOff { key: pitch, .. } => pitch <= 127,
         NoteEvent::Controller { number, value, .. } => number <= 127 && value.is_finite(),
         NoteEvent::AllNotesOff { frame } | NoteEvent::AllSoundOff { frame } => frame == 0,
         NoteEvent::PitchBend { semitones, .. } => semitones.is_finite(),
@@ -1789,19 +1793,9 @@ mod tests {
 
     #[test]
     fn event_validation_and_note_tracking_match_the_midi_conversion() {
-        assert!(note_event_is_valid(
-            &NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 127,
-                velocity: 1.0,
-            },
-            64,
-        ));
+        assert!(note_event_is_valid(&NoteEvent::note_on(0, 127, 1.0), 64,));
         assert!(!note_event_is_valid(
-            &NoteEvent::NoteOff {
-                frame: 0,
-                pitch: 128,
-            },
+            &NoteEvent::NoteOff { frame: 0, key: 128 },
             64,
         ));
         assert!(!note_event_is_valid(
@@ -1817,18 +1811,11 @@ mod tests {
             64,
         ));
         assert!(!note_event_is_valid(
-            &NoteEvent::NoteOff {
-                frame: 64,
-                pitch: 60,
-            },
+            &NoteEvent::NoteOff { frame: 64, key: 60 },
             64,
         ));
         assert!(!note_event_is_valid(
-            &NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 60,
-                velocity: f32::NAN,
-            },
+            &NoteEvent::note_on(0, 60, f32::NAN),
             64,
         ));
         assert!(!note_event_is_valid(

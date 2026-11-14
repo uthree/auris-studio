@@ -1529,13 +1529,15 @@ impl AudioEngine {
             if let Some(graph) = &mut self.graph {
                 match scheduled.event {
                     auris_core::NoteEvent::NoteOn {
-                        pitch, velocity, ..
+                        key: pitch,
+                        velocity,
+                        ..
                     } => {
                         graph.note_on(preview.track, pitch, velocity);
                         let active = &mut preview.active[pitch.min(127) as usize];
                         *active = active.saturating_add(1);
                     }
-                    auris_core::NoteEvent::NoteOff { pitch, .. } => {
+                    auris_core::NoteEvent::NoteOff { key: pitch, .. } => {
                         graph.note_off(preview.track, pitch);
                         let active = &mut preview.active[pitch.min(127) as usize];
                         *active = active.saturating_sub(1);
@@ -1755,36 +1757,10 @@ mod tests {
     fn phrase_events() -> Arc<[crate::ScheduledEvent]> {
         use auris_core::NoteEvent;
         [
-            (
-                0,
-                NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch: 60,
-                    velocity: 0.8,
-                },
-            ),
-            (
-                31,
-                NoteEvent::NoteOff {
-                    frame: 0,
-                    pitch: 60,
-                },
-            ),
-            (
-                57,
-                NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch: 64,
-                    velocity: 0.5,
-                },
-            ),
-            (
-                101,
-                NoteEvent::NoteOff {
-                    frame: 0,
-                    pitch: 64,
-                },
-            ),
+            (0, NoteEvent::note_on(0, 60, 0.8)),
+            (31, NoteEvent::NoteOff { frame: 0, key: 60 }),
+            (57, NoteEvent::note_on(0, 64, 0.5)),
+            (101, NoteEvent::NoteOff { frame: 0, key: 64 }),
         ]
         .into_iter()
         .map(|(frame, event)| crate::ScheduledEvent { frame, event })
@@ -1870,33 +1846,19 @@ mod tests {
         let events = [
             crate::ScheduledEvent {
                 frame: 0,
-                event: NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch: 60,
-                    velocity: 0.8,
-                },
+                event: NoteEvent::note_on(0, 60, 0.8),
             },
             crate::ScheduledEvent {
                 frame: 5,
-                event: NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch: 60,
-                    velocity: 0.8,
-                },
+                event: NoteEvent::note_on(0, 60, 0.8),
             },
             crate::ScheduledEvent {
                 frame: 100,
-                event: NoteEvent::NoteOff {
-                    frame: 0,
-                    pitch: 60,
-                },
+                event: NoteEvent::NoteOff { frame: 0, key: 60 },
             },
             crate::ScheduledEvent {
                 frame: 200,
-                event: NoteEvent::NoteOff {
-                    frame: 0,
-                    pitch: 60,
-                },
+                event: NoteEvent::NoteOff { frame: 0, key: 60 },
             },
         ]
         .into();

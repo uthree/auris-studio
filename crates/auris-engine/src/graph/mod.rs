@@ -116,6 +116,18 @@ fn block_event_capacity(events: &[ScheduledEvent], max_block: usize) -> usize {
 /// Number of MIDI pitches, and therefore the size of the chase table.
 pub(crate) const PITCH_COUNT: usize = 128;
 
+/// The table a track's note-ons are retuned by, or `None` when there is nothing to move.
+///
+/// A drum track is never retuned — its keys name sounds, not pitches — and the standard tuning
+/// needs no table at all, which keeps the per-block loop off every track of an ordinary song.
+fn track_pitch_offsets(
+    tuning: &auris_core::Tuning,
+    kind: &TrackKind,
+) -> Option<Box<[f32; auris_core::tuning::KEY_COUNT]>> {
+    let pitched = matches!(kind, TrackKind::Instrument(_) | TrackKind::Singer(_));
+    (pitched && !tuning.is_standard()).then(|| Box::new(tuning.pitch_offsets()))
+}
+
 /// Number of graphs the audio thread can hold before it stops accepting new ones.
 pub(crate) const RETIRED_GRAPH_SLOTS: usize = 8;
 
@@ -562,6 +574,7 @@ impl RenderGraph {
                 scratch,
                 block_events: Vec::with_capacity(block_events),
                 audition: Vec::with_capacity(AUDITION_HEADROOM),
+                pitch_offsets: track_pitch_offsets(&project.tuning, &track.kind),
                 one_shot: None,
                 continued_from: None,
                 peaks: [0.0, 0.0],

@@ -2,11 +2,7 @@ use super::*;
 use crate::test_support::{band_amplitude, count_allocations, goertzel, peak, rms};
 
 fn note(frame: u32, pitch: u8, velocity: f32) -> NoteEvent {
-    NoteEvent::NoteOn {
-        frame,
-        pitch,
-        velocity,
-    }
+    NoteEvent::note_on(frame, pitch, velocity)
 }
 
 fn render(
@@ -174,7 +170,7 @@ fn events_releases_and_reset_are_independent_of_block_size() {
         },
         NoteEvent::NoteOff {
             frame: 2_931,
-            pitch: 48,
+            key: 48,
         },
         NoteEvent::AllSoundOff { frame: 4_173 },
     ];
@@ -205,7 +201,7 @@ fn release_frees_only_the_oldest_overlapping_note() {
             note(123, 60, 0.8),
             NoteEvent::NoteOff {
                 frame: 499,
-                pitch: 60,
+                key: 60,
             },
         ],
     );

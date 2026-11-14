@@ -457,9 +457,11 @@ impl SegmentRenderer for DrumKit {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
+                key: pitch,
+                velocity,
+                ..
             } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { pitch, .. } => {
+            NoteEvent::NoteOff { key: pitch, .. } => {
                 self.allocator.note_off(pitch);
             }
             NoteEvent::AllNotesOff { .. } => {
@@ -647,11 +649,7 @@ mod tests {
     use crate::test_support::{Rig, band_amplitude, peak, rms};
 
     fn hit(frame: u32, pitch: u8) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame,
-            pitch,
-            velocity: 1.0,
-        }
+        NoteEvent::note_on(frame, pitch, 1.0)
     }
 
     fn rig(block: usize) -> Rig {
@@ -779,7 +777,7 @@ mod tests {
                 hit(0, 49),
                 NoteEvent::NoteOff {
                     frame: 100,
-                    pitch: 49,
+                    key: 49,
                 },
             ],
         );
@@ -795,14 +793,7 @@ mod tests {
     #[test]
     fn velocity_scales_amplitude_without_moving_the_pad() {
         let loud = sound(38);
-        let quiet = rig(512).render(
-            48_000,
-            &[NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 38,
-                velocity: 0.5,
-            }],
-        );
+        let quiet = rig(512).render(48_000, &[NoteEvent::note_on(0, 38, 0.5)]);
         assert!(
             loud.iter()
                 .zip(&quiet)

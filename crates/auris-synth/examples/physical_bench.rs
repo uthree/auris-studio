@@ -61,15 +61,15 @@ fn measure(model: Model, voices: usize, quality: f32, rate: f64, block: usize) -
                 if start > 0 && !model.is_sustained() {
                     events.push(NoteEvent::NoteOff {
                         frame: 0,
-                        pitch: *pitch,
+                        key: *pitch,
                     });
                 }
                 if start == 0 || !model.is_sustained() {
-                    events.push(NoteEvent::NoteOn {
-                        frame: 0,
-                        pitch: *pitch,
-                        velocity: 0.6 + 0.3 * (index % 3) as f32 / 2.0,
-                    });
+                    events.push(NoteEvent::note_on(
+                        0,
+                        *pitch,
+                        0.6 + 0.3 * (index % 3) as f32 / 2.0,
+                    ));
                 }
             }
         }

@@ -13,11 +13,7 @@ use crate::{Model, Physical};
 const RATE: f64 = 48_000.0;
 
 fn on(frame: u32, pitch: u8) -> NoteEvent {
-    NoteEvent::NoteOn {
-        frame,
-        pitch,
-        velocity: 0.8,
-    }
+    NoteEvent::note_on(frame, pitch, 0.8)
 }
 
 /// A low and a high note inside each instrument's range.

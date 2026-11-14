@@ -174,11 +174,7 @@ mod tests {
     }
 
     fn note_on(frame: u32) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame,
-            pitch: 60,
-            velocity: 1.0,
-        }
+        NoteEvent::note_on(frame, 60, 1.0)
     }
 
     #[test]

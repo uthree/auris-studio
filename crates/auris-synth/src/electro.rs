@@ -957,9 +957,11 @@ impl SegmentRenderer for ElectroKit {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
+                key: pitch,
+                velocity,
+                ..
             } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { pitch, .. } => {
+            NoteEvent::NoteOff { key: pitch, .. } => {
                 self.allocator.note_off(pitch);
             }
             NoteEvent::AllNotesOff { .. } => {
@@ -1084,11 +1086,7 @@ mod tests {
     }
 
     fn hit(frame: u32, pitch: u8) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame,
-            pitch,
-            velocity: 1.0,
-        }
+        NoteEvent::note_on(frame, pitch, 1.0)
     }
 
     fn ms(milliseconds: usize) -> usize {
@@ -1272,14 +1270,8 @@ mod tests {
     #[test]
     fn velocity_shapes_the_level() {
         let at = |velocity| {
-            let rendered = rig(ElectroStyle::Electro).render(
-                ms(200),
-                &[NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch: 38,
-                    velocity,
-                }],
-            );
+            let rendered =
+                rig(ElectroStyle::Electro).render(ms(200), &[NoteEvent::note_on(0, 38, velocity)]);
             peak(&rendered)
         };
         assert!(at(1.0) > at(0.5) * 2.0);

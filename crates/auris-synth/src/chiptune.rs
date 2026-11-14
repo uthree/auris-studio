@@ -414,9 +414,11 @@ impl SegmentRenderer for Chiptune {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
+                key: pitch,
+                velocity,
+                ..
             } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { pitch, .. } => self.note_off(pitch),
+            NoteEvent::NoteOff { key: pitch, .. } => self.note_off(pitch),
             NoteEvent::AllNotesOff { .. } => {
                 for index in self.allocator.release_all() {
                     if let Some(voice) = self.voices.get_mut(index) {
@@ -613,11 +615,7 @@ mod tests {
     }
 
     fn note_on(frame: u32, pitch: u8) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame,
-            pitch,
-            velocity: 1.0,
-        }
+        NoteEvent::note_on(frame, pitch, 1.0)
     }
 
     #[test]
@@ -860,7 +858,7 @@ mod tests {
             note_on(0, 69),
             NoteEvent::NoteOff {
                 frame: 4_800,
-                pitch: 69,
+                key: 69,
             },
         ];
         // 100 ms of note, then 200 ms of release, then look at what is left.
@@ -879,13 +877,7 @@ mod tests {
         let mut rig = sine_rig();
         rig.render(64, &[note_on(0, 60), note_on(0, 64), note_on(0, 67)]);
         assert_eq!(rig.instrument.active_voices(), 3);
-        rig.render(
-            64,
-            &[NoteEvent::NoteOff {
-                frame: 0,
-                pitch: 64,
-            }],
-        );
+        rig.render(64, &[NoteEvent::NoteOff { frame: 0, key: 64 }]);
         // Still sounding out its release.
         assert_eq!(rig.instrument.active_voices(), 3);
         rig.render(48_000, &[]);
@@ -902,13 +894,7 @@ mod tests {
         rig.render(512, &[note_on(0, 60)]);
         assert_eq!(rig.instrument.active_voices(), 2);
 
-        rig.render(
-            512,
-            &[NoteEvent::NoteOff {
-                frame: 0,
-                pitch: 60,
-            }],
-        );
+        rig.render(512, &[NoteEvent::NoteOff { frame: 0, key: 60 }]);
         // Half a second is ten times the 50 ms release, so the voice that was let go has retired
         // and anything still audible belongs to the note that was not.
         let remaining = rig.render(24_000, &[]);
@@ -920,13 +906,7 @@ mod tests {
         );
 
         // The second off ends it, and a third has nothing left to pair with.
-        rig.render(
-            512,
-            &[NoteEvent::NoteOff {
-                frame: 0,
-                pitch: 60,
-            }],
-        );
+        rig.render(512, &[NoteEvent::NoteOff { frame: 0, key: 60 }]);
         rig.render(24_000, &[]);
         assert_eq!(rig.instrument.active_voices(), 0);
     }
@@ -1069,13 +1049,7 @@ mod tests {
         rig.render(4_800, &[note_on(0, 69)]);
         rig.render(
             480,
-            &[
-                NoteEvent::NoteOff {
-                    frame: 0,
-                    pitch: 69,
-                },
-                note_on(1, 81),
-            ],
+            &[NoteEvent::NoteOff { frame: 0, key: 69 }, note_on(1, 81)],
         );
         // An octave up over a second: 10 to 30 ms in, the new note is still near 440 Hz and
         // nowhere near the 880 Hz it was asked for.
@@ -1117,7 +1091,7 @@ mod tests {
                     },
                     NoteEvent::NoteOff {
                         frame: 400,
-                        pitch: 69,
+                        key: 69,
                     },
                 ];
                 let rendered = rig.render(8_192, &events);
@@ -1168,11 +1142,7 @@ mod tests {
             synth.set_param(ParamId(P_UNISON), unison as f32);
 
             let mut out = AudioBuffer::new(1, 48_000, 48_000.0);
-            let events = [NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 69,
-                velocity: 1.0,
-            }];
+            let events = [NoteEvent::note_on(0, 69, 1.0)];
             synth.process(
                 &events,
                 &mut out,

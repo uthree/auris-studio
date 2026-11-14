@@ -295,6 +295,14 @@ pub struct Project {
     /// field, so a file from before it opens undecided, and is read exactly as it was.
     #[serde(default, skip_serializing_if = "crate::style::Style::is_unset")]
     pub style: crate::style::Style,
+    /// Which frequency each key sounds, on every pitched track.
+    ///
+    /// One per document rather than one per track, because the key and the chords above are
+    /// written in one pitch system and every track that plays them has to agree on what a key
+    /// is. A drum track is never retuned: its keys name sounds, not pitches. Unwritten while it
+    /// is the standard tuning, so a document that never chose one reads exactly as before.
+    #[serde(default, skip_serializing_if = "crate::tuning::Tuning::is_standard")]
+    pub tuning: crate::tuning::Tuning,
     next_id: u64,
 }
 
@@ -310,6 +318,8 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
+    /// Version 38 adds the document's tuning; an older build would play a retuned song in
+    /// equal temperament without a word.
     /// Version 37 moves comments pinned to an effect onto its strip, since effects are no longer
     /// mixer graph nodes of their own.
     /// Version 36 folds sends into outputs, which now carry a level and a tap point of their own.
@@ -320,7 +330,7 @@ impl Project {
     /// Version 31 adds power, added-tone, 6/9 and thirteenth chord qualities to stored harmony.
     /// Version 30 adds eleventh chord qualities to stored harmony.
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
-    pub const FORMAT_VERSION: u32 = 37;
+    pub const FORMAT_VERSION: u32 = 38;
 
     /// The name a document carries until somebody — a person or the agent — gives it one.
     pub const UNTITLED: &'static str = "Untitled";
@@ -363,6 +373,7 @@ impl Project {
             transcription_provenance: BTreeMap::new(),
             lint_suppressions: Vec::new(),
             style: crate::style::Style::default(),
+            tuning: crate::tuning::Tuning::standard(),
             next_id: 1,
         }
     }

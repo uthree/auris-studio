@@ -78,15 +78,7 @@ fn stopping_an_external_instrument_releases_held_notes() {
     for _ in 0..16 {
         instrument.process(&[], &mut out, &playing);
     }
-    instrument.process(
-        &[NoteEvent::NoteOn {
-            frame: 0,
-            pitch: 60,
-            velocity: 0.8,
-        }],
-        &mut out,
-        &playing,
-    );
+    instrument.process(&[NoteEvent::note_on(0, 60, 0.8)], &mut out, &playing);
     let mut peak = out.peak();
     for _ in 0..64 {
         instrument.process(&[], &mut out, &playing);
@@ -113,15 +105,7 @@ fn stopping_an_external_instrument_releases_held_notes() {
 
     // Seeking while playing must let the newly chased note sound after the reset.
     instrument.reset();
-    instrument.process(
-        &[NoteEvent::NoteOn {
-            frame: 0,
-            pitch: 64,
-            velocity: 0.8,
-        }],
-        &mut out,
-        &playing,
-    );
+    instrument.process(&[NoteEvent::note_on(0, 64, 0.8)], &mut out, &playing);
     let mut peak = out.peak();
     for _ in 0..64 {
         instrument.process(&[], &mut out, &playing);

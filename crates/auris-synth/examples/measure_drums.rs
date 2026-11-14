@@ -14,11 +14,7 @@ fn main() {
         for start in (0..144_000).step_by(512) {
             let count = (144_000 - start).min(512);
             block.set_frame_count(count);
-            let note = [NoteEvent::NoteOn {
-                frame: 0,
-                pitch: key,
-                velocity: 1.0,
-            }];
+            let note = [NoteEvent::note_on(0, key, 1.0)];
             let events = if start == 0 { &note[..] } else { &[] };
             instrument.process(
                 events,
