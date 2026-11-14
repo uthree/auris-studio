@@ -362,11 +362,71 @@
 //! the table, and the first of them now guards both sides: the arpeggio the line was before the
 //! first pass, and the scale it was before this one.
 //!
+//! # The seventh pass: note values
+//!
+//! The fifth pass and the sixth chose their own measurements, so they were checked against
+//! one they had not: the corpus's own long-term model (`tools/eval/melody_corpus.py`), a PPM
+//! model over each note's interval and its distance from the note before, trained on the 620
+//! PDMX lead sheets. Its own songs read at 5.57 bits a note, give or take 1.65. The composer
+//! read at 6.89 before the fifth pass and at **7.16** after the sixth. Split in two, the
+//! intervals had come nearer and the distances had gone further away: the two passes had
+//! mended what repeats and how the line moves, and nothing had ever asked what a note is
+//! *worth*.
+//!
+//! | | before | after | sung pop |
+//! | --- | --- | --- | --- |
+//! | a note a sixteenth after the one before | 22% | 13% | 12% |
+//! | … an eighth after | 34% | 52% | 48% |
+//! | … a quarter after | 22% | 20% | 20% |
+//! | … a dotted quarter after | 7.6% | 5.4% | 4.8% |
+//! | bars with a note off the eighth | 47% | 23% | 22% |
+//! | half-bars holding three notes a sixteenth apart | **19%** | 11% | 4% |
+//! | half-bars of four straight eighths | 1.5% | 9.7% | **9.7%** |
+//! | half-bars with no note starting in them | 5% | 11% | 19% |
+//! | bits a note under the corpus's model | 7.16 | 6.45 | 5.57 ± 1.65 |
+//!
+//! Every gesture was a run of short notes into a held one inside two beats, and the short
+//! notes were as short as arithmetic made them: an approach half a beat long, split in two as
+//! any ordinary density asked, is a pair of sixteenths. So one half-bar in five held three
+//! notes a sixteenth apart, which a singer sings in one in twenty-five, and the commonest thing
+//! a singer does sing after a held note — four eighths straight through half a bar — was
+//! something the gestures could not write. In `parts::melody`'s rhythm helper:
+//!
+//! 1. **A gesture is written on the offbeat** unless it is drawn fine, and how often it is
+//!    drawn fine belongs to the density. A fine gesture is on the grid's own step and fits one
+//!    more note into a run. The syncopation that pushed a note late pushes it by the gesture's
+//!    own unit, where it used to push a step and write a sixteenth inside a run of eighths.
+//! 2. **A gesture may run**: eighths straight through, arriving on whatever the next gesture
+//!    opens with. Never the last gesture of a bar, which is where the bar's held note is.
+//! 3. **Inside the bar a pickup carries on** into the gesture that follows, and **an
+//!    anticipation is late** — an offbeat ahead of the next gesture rather than of the second
+//!    beat. Both keep their old shape in a bar's last gesture, where they come to rest.
+//! 4. **An answer may rest on the note it is already holding.** Half the answers that come to
+//!    rest strike nothing in their last two beats, which is where a note of three beats comes
+//!    from and why a half-bar may now be empty.
+//!
+//! The density dial had a dead stretch that this closes: 0.3 and 0.5 used to write the same
+//! rhythm, take for take, because a note count rounded to the same number of subdivisions over
+//! a third of the dial. They now differ in how often a gesture is fine — 2 notes in a hundred a
+//! sixteenth after the last at 0.3, 9 at 0.5 and 24 at 0.7.
+//!
+//! `a_gesture_is_written_in_offbeats_until_the_density_asks_for_finer` and
+//! `note_values_are_a_singers_rather_than_an_arpeggiators`, beside the gestures, hold this.
+//!
 //! # What is still wrong
 //!
 //! One thing is known and not fixed from the early passes: resolving a dissonance onto a chord
 //! tone sometimes lands on the note beside it, which is refused where it would stutter but not
 //! otherwise.
+//!
+//! The line is still fuller than a singer's. A half-bar with nothing starting in it is 11 in
+//! a hundred against 19, a note twelve sixteenths or more after the last is 1.4 against 5.4,
+//! and one bar in twelve of a sung line is empty altogether where no bar of the composer's is.
+//! It has almost no dotted eighths — 1 note in a hundred three sixteenths after the last,
+//! against 4 — its sixteenths still come three in a row where a singer's come in pairs, and
+//! two eighths into a held note on the second beat is still six times as common as it should
+//! be. Under the corpus's model it reads half a standard deviation above
+//! the corpus's own songs, which is inside the spread and not at its middle.
 //!
 //! Against sung pop, a bar line is still crossed too smoothly — by a fourth or wider 11 times
 //! in a hundred where a singer does it 20 — and a continuation, the third bar of a phrase, is

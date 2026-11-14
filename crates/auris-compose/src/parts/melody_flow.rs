@@ -185,7 +185,8 @@ pub(super) fn cross_bar_lines(
         let start = section.start + grid.bar_ticks() * phrase.start_bar as i64;
         if crossings.anticipates {
             for position in (1..phrase.bars).step_by(2) {
-                anticipate_downbeat(start + grid.bar_ticks() * position as i64, shift, notes);
+                let at = start + grid.bar_ticks() * position as i64;
+                anticipate_downbeat(section, at, shift, notes);
             }
         }
         if *led_in {
@@ -197,15 +198,26 @@ pub(super) fn cross_bar_lines(
 /// Pull the note on the downbeat at `at` an offbeat ahead of it, making room in the note before.
 ///
 /// Refused when the bar does not enter on its downbeat, when the entry is shorter than the
-/// offbeat it would be moved by, and when the note before it would be left shorter than that.
-fn anticipate_downbeat(at: Ticks, shift: Ticks, notes: &mut [Draft]) -> bool {
+/// offbeat it would be moved by, when the note before it would be left shorter than that, and
+/// when no chord sounds where the note would move to — a stretch somebody cleared is silent,
+/// and an anticipation is not a way into it.
+fn anticipate_downbeat(
+    section: &SectionPlan,
+    at: Ticks,
+    shift: Ticks,
+    notes: &mut [Draft],
+) -> bool {
     let index = notes.partition_point(|note| note.start < at);
     let (before, from) = notes.split_at_mut(index);
     let (Some(previous), Some(entry)) = (before.last_mut(), from.first_mut()) else {
         return false;
     };
     let room = at - shift;
-    if entry.start != at || entry.length < shift || previous.start + shift > room {
+    if entry.start != at
+        || entry.length < shift
+        || previous.start + shift > room
+        || section.chord_at(room - section.start).is_none()
+    {
         return false;
     }
     previous.length = previous.length.min(room - previous.start);
@@ -399,22 +411,26 @@ mod tests {
 
     #[test]
     fn an_anticipated_downbeat_is_held_across_the_bar_line() {
+        let (_, frame) = lead();
+        let section = &frame.sections[0];
         let half = Ticks::from_beats(0.5);
         let bar = Ticks::from_beats(4.0);
         let mut notes = [note(2.0, 2.0, 67), note(4.0, 1.0, 69), note(5.0, 1.0, 71)];
-        assert!(anticipate_downbeat(bar, half, &mut notes));
+        assert!(anticipate_downbeat(section, bar, half, &mut notes));
         assert_eq!(
             notes,
             [note(2.0, 1.5, 67), note(3.5, 1.5, 69), note(5.0, 1.0, 71)]
         );
         // Where the bar before already left the room, nothing in it is shortened.
         let mut rested = [note(2.0, 1.0, 67), note(4.0, 1.0, 69)];
-        assert!(anticipate_downbeat(bar, half, &mut rested));
+        assert!(anticipate_downbeat(section, bar, half, &mut rested));
         assert_eq!(rested, [note(2.0, 1.0, 67), note(3.5, 1.5, 69)]);
     }
 
     #[test]
     fn an_anticipation_needs_a_downbeat_to_move_and_a_note_it_can_shorten() {
+        let (_, mut frame) = lead();
+        let section = frame.sections[0].clone();
         let half = Ticks::from_beats(0.5);
         let bar = Ticks::from_beats(4.0);
         for mut notes in [
@@ -426,12 +442,24 @@ mod tests {
             [note(2.0, 2.0, 67), note(4.0, 0.25, 69)],
         ] {
             let before = notes;
-            assert!(!anticipate_downbeat(bar, half, &mut notes));
+            assert!(!anticipate_downbeat(&section, bar, half, &mut notes));
             assert_eq!(notes, before);
         }
         // And the first bar of all has no bar before it.
         let mut first = [note(0.0, 1.0, 67)];
-        assert!(!anticipate_downbeat(Ticks::ZERO, half, &mut first));
+        assert!(!anticipate_downbeat(
+            &section,
+            Ticks::ZERO,
+            half,
+            &mut first
+        ));
+        // A stretch with no chord under it is silent, and nothing is moved into it.
+        let cleared = &mut frame.sections[0];
+        cleared.events[0].length = Ticks::from_beats(3.0);
+        let mut notes = [note(1.0, 2.0, 67), note(4.0, 1.0, 69)];
+        let before = notes;
+        assert!(!anticipate_downbeat(cleared, bar, half, &mut notes));
+        assert_eq!(notes, before);
     }
 
     #[test]

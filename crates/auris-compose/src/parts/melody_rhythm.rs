@@ -27,6 +27,14 @@ enum Half {
 /// — and this often it simply stops and holds, which is where the tune's long notes come from.
 const ANSWER_HOLDS: f32 = 0.6;
 
+/// How often an answer that comes to rest does it on the note it was already on, striking
+/// nothing new in its last two beats.
+///
+/// Measured over the same corpus, 18 half-bars in a hundred have no note starting in them at
+/// all: a held note going on, or a rest. The composer's had five, because every gesture opened
+/// with a note of its own, and the longest thing it could write was two beats.
+const ANSWER_CARRIES: f32 = 0.5;
+
 /// How many times an answer that came out as the call's own rhythm is drawn again.
 ///
 /// The two bars share one table, so now and then they draw the same thing and the figure is
@@ -69,6 +77,23 @@ pub(super) fn answering(
     answer
 }
 
+/// How often a gesture is drawn on the grid's own step rather than on the meter's offbeat.
+///
+/// Nothing below a density of 0.15, and rising from there: at the density a clip starts with,
+/// about one of a call's gestures in five. Measured over the PDMX pop and rock vocal parts, 12
+/// notes in a hundred follow the one before by a sixteenth and 22 bars in a hundred have a
+/// note off the eighth at all. The composer had 22 and 47, because the shortest note was
+/// whatever a run came to when it was divided: see the seventh pass in [`crate::melodic`].
+/// Chiptune reaches for the fine grid sooner, and the sustained palettes later.
+fn fineness(density: f32, style: Option<PerformanceStyle>) -> f32 {
+    let base = ((density - 0.15) * 0.8).clamp(0.0, 0.6);
+    match style {
+        Some(PerformanceStyle::Chiptune) => base + 0.25,
+        Some(PerformanceStyle::Ambient | PerformanceStyle::Orchestral) => 0.5 * base,
+        _ => base,
+    }
+}
+
 /// One bar of gestures for either half of the figure.
 fn gestures(
     grid: Grid,
@@ -89,74 +114,143 @@ fn gestures(
         _ => 3.0,
     };
     let splits = (1 + (density * subdivision_range).round() as usize).min(beat.min(4));
-    let splits = match half {
-        Half::Call => splits,
-        Half::Answer => splits.saturating_sub(1).max(1),
+    let (splits, fineness) = match half {
+        Half::Call => (splits, fineness(density, style)),
+        Half::Answer => (
+            splits.saturating_sub(1).max(1),
+            0.5 * fineness(density, style),
+        ),
     };
-    // Held, short-long, long-short, anticipation, pickup. Styles choose gestures, while the
-    // meter supplies their size; a dotted quarter in 6/8 remains a whole felt beat.
+    // Held, short-long, long-short, anticipation, pickup, running. Styles choose gestures,
+    // while the meter supplies their size; a dotted quarter in 6/8 remains a whole felt beat.
     let weights = match style {
-        Some(PerformanceStyle::Ambient) => [8.0, 1.0, 1.0, 0.5, 0.5],
-        Some(PerformanceStyle::Orchestral) => [4.0, 2.0, 2.0, 0.5, 0.5],
-        Some(PerformanceStyle::JazzTrio | PerformanceStyle::CityPop) => {
-            [0.5, 2.0, 2.0, 2.0 + 3.0 * syncopation, 2.0]
-        }
+        Some(PerformanceStyle::Ambient) => [8.0, 1.0, 1.0, 0.5, 0.5, 0.2],
+        Some(PerformanceStyle::Orchestral) => [4.0, 2.0, 2.0, 0.5, 0.5, 0.5],
+        Some(PerformanceStyle::JazzTrio | PerformanceStyle::CityPop) => [
+            0.5,
+            1.5,
+            2.0,
+            2.0 + 3.0 * syncopation,
+            2.0,
+            1.0 + 2.0 * density,
+        ],
         Some(PerformanceStyle::Rock | PerformanceStyle::Chiptune) => {
-            [0.5, 4.0, 3.0, 0.5 + syncopation, 1.0]
+            [0.5, 3.0, 3.0, 0.5 + syncopation, 1.0, 1.5 + 3.0 * density]
         }
-        _ => [0.5, 3.0, 2.0, 1.0 + 3.0 * syncopation, 1.0],
+        _ => [
+            0.5,
+            2.0,
+            2.5,
+            1.0 + 3.0 * syncopation,
+            1.0,
+            1.0 + 3.0 * density,
+        ],
     };
-    let mut cells = Vec::new();
+    let offbeat = offbeat_steps(grid).unwrap_or(1).max(1);
+    let mut cells: Vec<Cell> = Vec::new();
     for start in (0..steps).step_by(2 * beat) {
         let end = (start + 2 * beat).min(steps);
         let length = end - start;
         let mut onsets = Vec::new();
         let mut target = start;
+        // The shortest note this gesture may write: the meter's offbeat, or a step of the grid
+        // when the gesture was drawn fine. Rolled for every gesture so the stream stays aligned.
+        let fine = rng.chance(fineness);
+        let unit = if fine { 1 } else { offbeat };
         if length <= beat {
             // An unmatched beat in an odd meter finishes the cell with one held arrival.
             onsets.push(start);
         } else {
             let middle = start + beat;
             let short = (beat / 2).max(1);
+            // No more notes in a run than its unit leaves room for, and one more than the
+            // density asked for when the gesture is fine — which is what a fine gesture is.
+            let run = |from: usize, length: usize, onsets: &mut Vec<usize>| {
+                let count = splits + usize::from(fine);
+                subdivisions(from, length, count.min((length / unit).max(1)), onsets);
+            };
+            // Straight on by the offbeat from `from` to the end of the gesture.
+            let through = |from: usize, onsets: &mut Vec<usize>| {
+                subdivisions(from, end - from, ((end - from) / offbeat).max(1), onsets);
+            };
             // The answer's last gesture is where it comes to rest. Both rolls are made whether
             // or not the hold is taken, so the stream stays aligned either way.
             let drawn = rng.weighted(&weights);
             let holds = rng.chance(ANSWER_HOLDS);
-            let resting = half == Half::Answer && end == steps && holds;
-            match if resting { 0 } else { drawn } {
+            let carries = rng.chance(ANSWER_CARRIES);
+            let last = end == steps;
+            let resting = half == Half::Answer && last && holds;
+            if resting
+                && carries
+                && let Some(held) = cells.last_mut()
+            {
+                // The note the bar was already on is the one it rests on: nothing new is
+                // struck, and it sounds to the end of the bar.
+                held.length = end - held.step;
+                continue;
+            }
+            // A bar's last gesture never runs: it is where the bar's held note is, and a bar
+            // of nothing but eighths has nowhere it was going.
+            let kind = match drawn {
+                _ if resting => 0,
+                5 if last => 1,
+                kind => kind,
+            };
+            match kind {
                 0 => onsets.push(start),
                 1 => {
-                    subdivisions(start, beat, splits, &mut onsets);
+                    run(start, beat, &mut onsets);
                     onsets.push(middle);
                     target = middle;
                 }
                 2 => {
                     onsets.push(start);
-                    subdivisions(middle, end - middle, splits, &mut onsets);
+                    run(middle, end - middle, &mut onsets);
+                }
+                3 if beat > 1 && last => {
+                    // Early, and held to the end of the bar.
+                    target = middle - short;
+                    run(start, target - start, &mut onsets);
+                    onsets.push(target);
                 }
                 3 if beat > 1 => {
-                    target = middle - short;
-                    subdivisions(start, target - start, splits, &mut onsets);
+                    // Late: an offbeat ahead of the gesture that follows, off the back of an
+                    // approach in the first beat.
+                    target = end - offbeat.min(beat - 1);
+                    run(start, beat, &mut onsets);
                     onsets.push(target);
+                }
+                5 => {
+                    // Arriving on whatever the next gesture opens with.
+                    through(start, &mut onsets);
+                    target = onsets.last().copied().unwrap_or(start);
                 }
                 _ => {
                     let pickup = start + short.min(beat - 1);
-                    subdivisions(pickup, middle - pickup, splits, &mut onsets);
-                    onsets.push(middle);
-                    target = middle;
+                    if last {
+                        run(pickup, middle - pickup, &mut onsets);
+                        onsets.push(middle);
+                        target = middle;
+                    } else {
+                        // A pickup inside the bar carries on into the gesture that follows.
+                        through(pickup, &mut onsets);
+                        target = onsets.last().copied().unwrap_or(pickup);
+                    }
                 }
             }
         }
         // Move a short preparation off the beat, keeping the held target intact. Changing
         // only palette weights can select the same rhythm at both ends of the syncopation dial.
+        // The delay is the gesture's own unit: pushing a note a step late inside a run of
+        // offbeats wrote a sixteenth nobody had asked for.
         if beat > 1 && rng.chance(syncopation) {
             for position in 0..onsets.len() {
                 let step = onsets[position];
                 let next = onsets.get(position + 1).copied().unwrap_or(end);
                 let held = step == target;
                 let room = next - step;
-                if step.is_multiple_of(beat) && room > if held { beat } else { 1 } {
-                    let delay = (beat / 2).max(1).min(room - if held { beat } else { 1 });
+                if step.is_multiple_of(beat) && room > if held { beat } else { unit } {
+                    let delay = (beat / 2).max(1).min(room - if held { beat } else { unit });
                     onsets[position] += delay;
                     if held {
                         target += delay;
@@ -457,6 +551,93 @@ mod tests {
         assert!(
             (24..=56).contains(&resting),
             "{resting} of 64 answers come to rest on a note of two beats"
+        );
+    }
+
+    /// The call and its answer for `seed`, as the figure draws them.
+    fn figure(seed: u64, density: f32) -> (Vec<Cell>, Vec<Cell>) {
+        let grid = Grid::default();
+        let style = Some(PerformanceStyle::PopBand);
+        let mut rng = Rng::stream(seed, &[]);
+        let call = grouped(grid, density, 0.3, style, &mut rng);
+        let answer = answering(grid, density, 0.3, style, &call, &mut rng);
+        (call, answer)
+    }
+
+    #[test]
+    fn a_gesture_is_written_in_offbeats_until_the_density_asks_for_finer() {
+        // The shortest note used to be a matter of arithmetic: an approach half a beat long
+        // split in two is a pair of sixteenths, so the commonest figure in a section at any
+        // ordinary density was three sixteenths running, which a sung line all but never has.
+        // A gesture is on the offbeat unless it was drawn fine, and how often that is belongs
+        // to the density.
+        let odd = |density: f32| {
+            (0..64)
+                .flat_map(|seed| {
+                    let (call, answer) = figure(seed, density);
+                    call.into_iter().chain(answer)
+                })
+                .filter(|cell| cell.step % 2 == 1)
+                .count()
+        };
+        assert_eq!(odd(0.1), 0, "a calm figure has a note off the eighth");
+        assert!(odd(0.9) > odd(0.45), "density does not make a figure finer");
+        assert!(odd(0.45) > 0, "an ordinary figure is never fine");
+    }
+
+    #[test]
+    fn note_values_are_a_singers_rather_than_an_arpeggiators() {
+        // The seventh pass of `crate::melodic`. Counted over the PDMX pop and rock vocal parts,
+        // 12 of every hundred notes follow the one before by a sixteenth and 48 by an eighth;
+        // the composer had 22 and 34. Each band sits between what the writer does now and what
+        // it did, and guards the other side as well.
+        let (mut sixteenths, mut eighths, mut spacings) = (0, 0, 0);
+        let (mut running, mut carried, mut bars) = (0, 0, 0);
+        let grid = Grid::default();
+        let steps = grid.steps_per_bar();
+        for seed in 0..256 {
+            let (call, answer) = figure(seed, 0.45);
+            for bar in [&call, &answer] {
+                bars += 1;
+                for pair in bar.windows(2) {
+                    spacings += 1;
+                    sixteenths += usize::from(pair[1].step - pair[0].step == 1);
+                    eighths += usize::from(pair[1].step - pair[0].step == 2);
+                }
+                let onsets: Vec<usize> = bar.iter().map(|cell| cell.step).collect();
+                // Four eighths straight through the first half of a bar: a tenth of a sung
+                // line's half-bars, and something the gestures could not write at all.
+                running += usize::from(onsets.starts_with(&[0, 2, 4, 6]));
+                assert!(
+                    !onsets.ends_with(&[8, 10, 12, 14]),
+                    "seed {seed} runs through the half of the bar that holds: {onsets:?}"
+                );
+                // Nothing struck in the second half, and the note before it held through.
+                if onsets.iter().all(|step| *step < steps / 2) {
+                    carried += 1;
+                    let last = bar.last().unwrap();
+                    assert_eq!(last.step + last.length, steps, "seed {seed}: {bar:?}");
+                }
+            }
+        }
+        let percent = |count: usize, of: usize| 100.0 * count as f64 / of as f64;
+        let (sixteenths, eighths) = (percent(sixteenths, spacings), percent(eighths, spacings));
+        assert!(
+            (3.0..16.0).contains(&sixteenths),
+            "{sixteenths:.1}% of notes follow by a sixteenth"
+        );
+        assert!(
+            (42.0..66.0).contains(&eighths),
+            "{eighths:.1}% of notes follow by an eighth"
+        );
+        let (running, carried) = (percent(running, bars), percent(carried, bars));
+        assert!(
+            (5.0..35.0).contains(&running),
+            "{running:.1}% of bars open with four eighths"
+        );
+        assert!(
+            (5.0..30.0).contains(&carried),
+            "{carried:.1}% of bars strike nothing in their second half"
         );
     }
 

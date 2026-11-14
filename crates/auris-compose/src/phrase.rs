@@ -1011,7 +1011,7 @@ mod tests {
             ("leading", &leading, Ticks::ZERO, BAR * 2),
             ("cleared", &cleared, BAR, BAR * 3),
         ] {
-            for seed in 1..=4u64 {
+            for seed in 1..=32u64 {
                 let notes = write_phrase(
                     harmony,
                     Ticks::ZERO,
