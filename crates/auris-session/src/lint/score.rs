@@ -1182,9 +1182,13 @@ fn overlapping_clips(project: &Project) -> Vec<Diagnostic> {
                         continue;
                     };
                     let keep = later_start - early.start;
+                    // Written and performed, both: a sustain or a slow strum carries a note past
+                    // where its text ends, and trimming the clip would cut what it holds.
+                    let bpm = project.tempo_map.bpm_at(early.start);
                     let silent_tail = keep > Ticks::ZERO
                         && !early.is_looped()
-                        && early.notes.iter().all(|note| note.end() <= keep);
+                        && early.notes.iter().all(|note| note.end() <= keep)
+                        && early.sounding_notes(bpm).all(|note| note.end() <= keep);
                     if silent_tail {
                         diagnostic.fix = Some(Fix::TrimClip {
                             clip: first,
@@ -1925,6 +1929,14 @@ mod tests {
         // A note of A ringing under B leaves the choice to somebody.
         project.midi_clip_mut(first).unwrap().notes = vec![Note::new(60, Ticks(1200), Ticks(480))];
         assert!(overlaps(&project)[0].fix.is_none());
+        // So does one that ends in time as written and is held on under B by its performance.
+        let held = project.midi_clip_mut(first).unwrap();
+        held.notes = vec![Note::new(60, Ticks(0), Ticks(960))];
+        assert!(overlaps(&project)[0].fix.is_some());
+        project.midi_clip_mut(first).unwrap().transforms =
+            vec![auris_core::project::NoteTransform::Sustain { ticks: 960 }];
+        assert!(overlaps(&project)[0].fix.is_none());
+        project.midi_clip_mut(first).unwrap().transforms.clear();
 
         // A clip on another track at the same time is a second part, not an overlap.
         let other = project.add_instrument_track("Bass", "auris.synth.pulse");
