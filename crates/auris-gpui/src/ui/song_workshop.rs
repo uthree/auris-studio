@@ -90,6 +90,9 @@ pub(crate) struct SongWorkshop {
     switching: bool,
     show_archived_threads: bool,
     pending_thread_name: Option<String>,
+    /// When the open conversation was first drawn with a transcript, so the metal behind the
+    /// empty conversation stays drawn while the veil closes over it and is let go once it has.
+    log_since: Option<std::time::Instant>,
 }
 
 impl SongWorkshop {
@@ -537,6 +540,7 @@ impl AurisApp {
             switching: false,
             show_archived_threads: false,
             pending_thread_name: None,
+            log_since: None,
         });
         focus.focus(window);
         cx.notify();
@@ -1156,6 +1160,15 @@ impl AurisApp {
                 window.focus(&s.foci[0]);
             }
             s.chord_prompt_open = chord_prompt;
+            let has_messages = s
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| !snapshot.document.messages.is_empty());
+            if !has_messages {
+                s.log_since = None;
+            } else if s.log_since.is_none() {
+                s.log_since = Some(std::time::Instant::now());
+            }
         }
         let input = self.render_workshop_input(window, cx);
         let prompt = chord_prompt
@@ -1184,16 +1197,6 @@ impl AurisApp {
             .w(column)
             .mx_auto();
         if let Some(snapshot) = &s.snapshot {
-            if snapshot.document.messages.is_empty() {
-                transcript = transcript.child(text_panel(
-                    agent_components::conversation_intro(
-                        title_of(self.t(Key::WorkshopTitle)),
-                        self.t(Key::WorkshopChatHint),
-                        &theme,
-                    ),
-                    &theme,
-                ));
-            }
             for (i, message) in snapshot.document.messages.iter().enumerate() {
                 let entry = agent_components::workshop_message(
                     ("song-workshop-message", i),
@@ -1344,7 +1347,16 @@ impl AurisApp {
             .snapshot
             .as_ref()
             .is_some_and(|snapshot| !snapshot.document.messages.is_empty());
-        let veil = workshop_veil(has_messages, -s.scroll.offset().y);
+        let veil = workshop_veil(has_messages);
+        // The metal goes once the veil has closed over it; until then it is still beneath.
+        let metal = !has_messages
+            || s.log_since.is_some_and(|since| {
+                let closing = since.elapsed() < theme.atelier.motion.normal;
+                if closing {
+                    window.request_animation_frame();
+                }
+                closing
+            });
         let body = div()
             .id("song-workshop-body")
             .debug_selector(|| "song-workshop-body".into())
@@ -1353,9 +1365,6 @@ impl AurisApp {
             .min_h_0()
             .overflow_y_scroll()
             .track_scroll(&s.scroll)
-            // The veil follows the scroll position, which the view reads while drawing; a wheel
-            // that moves the transcript has to ask for the next drawing.
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
             .px(spacing.xxl)
             .py(spacing.xl)
             // The column is given its width in pixels and centred by its margins, in block
@@ -1445,14 +1454,57 @@ impl AurisApp {
             .child(input)
             .child(attachment_preview)
             .child(options);
-        let content = div()
-            .h_full()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .child(body)
-            .child(footer);
+        let content = div().h_full().flex_1().min_w_0().flex().flex_col();
+        // An empty conversation is a question waiting to be asked: the composer stands in the
+        // middle of the metal under a greeting, and anything the transcript has to say before
+        // the first message (loading, an error, the memory) sits under it. The first message
+        // moves the composer to its place at the foot of the transcript.
+        let content = if has_messages {
+            content.child(body).child(footer)
+        } else {
+            let greeting = div()
+                .debug_selector(|| "song-workshop-greeting".into())
+                .w_full()
+                .max_w(COLUMN_WIDTH + spacing.xxl * 2.0)
+                .mx_auto()
+                .flex_shrink_0()
+                .px(spacing.xxl)
+                .pb(spacing.lg)
+                .flex()
+                .justify_center()
+                // A surface of its own, as `text_panel` gives the transcript's words, but only
+                // as wide as the greeting: a heading over the composer rather than a card.
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .text_center()
+                        .gap(spacing.xs)
+                        .px(spacing.xl)
+                        .py(spacing.md)
+                        .rounded(theme.atelier.shape.radius_lg)
+                        .bg(theme.surface)
+                        .border_1()
+                        .border_color(theme.border_subtle)
+                        .child(
+                            Label::new(self.t(Key::WorkshopGreeting))
+                                .size(TextSize::XLarge)
+                                .heading_weight(),
+                        )
+                        .child(
+                            Label::new(self.t(Key::WorkshopChatHint))
+                                .size(TextSize::Small)
+                                .color(TextColor::Muted),
+                        ),
+                );
+            content
+                .child(div().flex_1().min_h(spacing.xl))
+                .child(greeting)
+                .child(footer)
+                .child(body)
+        };
         let screen = div()
             .size_full()
             .flex()
@@ -1556,12 +1608,12 @@ impl AurisApp {
                     .min_h_0()
                     .flex()
                     .flex_col()
-                    // The metal the start panel floated over stays beneath this screen, behind a
-                    // veil of the surface colour: thin while the conversation is empty, thicker
-                    // once there is text to read, and solid once the transcript has been
-                    // scrolled. While the start panel grows into this screen the travelling
-                    // shape is the veil, and it arrives at the veil's thickness.
-                    .when(veil < 1.0 || transition.is_some(), |area| {
+                    // The metal the start panel floated over stays beneath an empty conversation,
+                    // behind a thin veil of the surface colour. The first message closes the veil
+                    // and the metal goes with it, so a transcript reads on a plain surface. While
+                    // the start panel grows into this screen the travelling shape is the veil,
+                    // and it arrives at the veil's thickness.
+                    .when(metal || transition.is_some(), |area| {
                         area.children(self.welcome_backdrop(window))
                     })
                     .child(match transition {
@@ -2069,15 +2121,10 @@ impl AurisApp {
 
 /// How thick the surface-coloured veil over the metal is, from 0 (bare metal) to 1 (solid).
 ///
-/// An empty conversation is the welcome continued, so the metal shows through. Once there is a
-/// transcript the veil thickens enough to read over, and scrolling it — which is reading it —
-/// takes the veil the rest of the way to solid over the first [`VEIL_SCROLL`] of travel.
-pub(crate) fn workshop_veil(has_messages: bool, scrolled: gpui::Pixels) -> f32 {
-    if !has_messages {
-        return EMPTY_VEIL;
-    }
-    let travel = (f32::from(scrolled) / f32::from(VEIL_SCROLL)).clamp(0.0, 1.0);
-    atelier::motion::lerp(LOG_VEIL, 1.0, travel)
+/// An empty conversation is the welcome continued, so the metal shows through. A transcript
+/// reads on a plain surface, so the veil is solid once there is one.
+pub(crate) fn workshop_veil(has_messages: bool) -> f32 {
+    if has_messages { 1.0 } else { EMPTY_VEIL }
 }
 
 /// How wide the transcript column is drawn in a body `body` wide with `inset` either side: the
@@ -2108,13 +2155,9 @@ fn text_panel(content: impl IntoElement, theme: &crate::theme::Theme) -> AnyElem
 
 /// The veil over an empty conversation.
 const EMPTY_VEIL: f32 = 0.4;
-/// The veil over a transcript that has not been scrolled.
-const LOG_VEIL: f32 = 0.78;
-/// How far the transcript scrolls before the veil is solid.
-const VEIL_SCROLL: gpui::Pixels = gpui::px(160.0);
 
-/// The veil itself. Its first thickening, when the first message arrives, eases in rather than
-/// jumping; after that it follows the scroll position directly.
+/// The veil itself. It closes over the metal when the first message arrives by easing in rather
+/// than jumping.
 fn workshop_veil_layer(has_messages: bool, veil: f32, theme: &crate::theme::Theme) -> AnyElement {
     let layer = div().absolute().inset_0().bg(theme.surface);
     if !has_messages {
@@ -2535,19 +2578,16 @@ mod tests {
     }
 
     #[test]
-    fn the_metal_shows_through_an_empty_conversation_and_is_veiled_as_the_log_is_read() {
-        let empty = workshop_veil(false, gpui::px(0.0));
-        let unread = workshop_veil(true, gpui::px(0.0));
-        let partway = workshop_veil(true, VEIL_SCROLL / 2.0);
-        let read = workshop_veil(true, VEIL_SCROLL * 3.0);
-        assert!(empty < unread && unread < partway && partway < read);
+    fn the_metal_shows_through_an_empty_conversation_and_not_behind_a_transcript() {
         assert!(
-            empty <= 0.5,
+            workshop_veil(false) <= 0.5,
             "an empty conversation leaves the metal visible"
         );
-        assert_eq!(read, 1.0, "a scrolled transcript reads on a plain surface");
-        // Scrolling an empty conversation, if it ever overflowed, keeps the welcome.
-        assert_eq!(workshop_veil(false, VEIL_SCROLL * 3.0), empty);
+        assert_eq!(
+            workshop_veil(true),
+            1.0,
+            "a transcript reads on a plain surface"
+        );
     }
     use auris_session::SongIdea;
     use std::sync::atomic::AtomicBool;
@@ -3764,10 +3804,56 @@ mod tests {
         let brief = cx
             .debug_bounds("song-brief")
             .expect("the workshop composer remains reachable");
-        assert!(body.bottom() <= footer.top());
+        // An empty conversation puts the composer above the transcript's notices.
+        assert!(footer.bottom() <= body.top());
         assert!(brief.left() >= footer.left());
         assert!(brief.right() <= footer.right());
         assert!(brief.bottom() <= footer.bottom());
+    }
+
+    #[gpui::test]
+    fn an_empty_conversation_centres_the_composer_under_a_greeting(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        make_ready(&app, cx);
+        let height = gpui::px(800.0);
+        crate::harness::resize(&app, cx, gpui::size(gpui::px(1200.0), height));
+
+        let greeting = cx
+            .debug_bounds("song-workshop-greeting")
+            .expect("an empty conversation greets");
+        let footer = cx
+            .debug_bounds("song-workshop-footer")
+            .expect("the composer is shown");
+        let body = cx
+            .debug_bounds("song-workshop-body")
+            .expect("the transcript's notices still have a place");
+        assert!(greeting.bottom() <= footer.top(), "the greeting is above");
+        assert!(
+            footer.bottom() <= body.top(),
+            "notices sit under the composer"
+        );
+        let middle = (greeting.top() + footer.bottom()) / 2.0;
+        assert!(
+            (middle - height / 2.0).abs() < height / 6.0,
+            "the composer stands in the middle: {middle:?} of {height:?}"
+        );
+
+        // The first message puts the composer back under the transcript.
+        app.update(cx, |this, cx| {
+            this.song_workshop.as_mut().unwrap().snapshot =
+                Some(conversation_snapshot(&["A slow piano piece"], false));
+            cx.notify();
+        });
+        crate::harness::paint(&app, cx);
+        let body = cx.debug_bounds("song-workshop-body").unwrap();
+        let footer = cx.debug_bounds("song-workshop-footer").unwrap();
+        assert!(body.bottom() <= footer.top(), "the composer is at the foot");
     }
 
     #[gpui::test]

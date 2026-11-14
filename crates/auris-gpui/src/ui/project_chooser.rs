@@ -280,7 +280,7 @@ impl AurisApp {
                 }
             }
             ChooserPage::New if chooser.ai => {
-                let arriving = super::song_workshop::workshop_veil(false, px(0.0));
+                let arriving = super::song_workshop::workshop_veil(false);
                 self.begin_welcome_transition(true, arriving, cx);
                 self.open_song_workshop(window, cx);
             }
