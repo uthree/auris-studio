@@ -432,6 +432,16 @@ count lands in front of the downbeat.
 * **A sustain pedal** holds notes past their keys, and a take writes each note as long as it was
   heard — held notes become long notes rather than a pedal lane.
 
+**What a take does with what is already there** is the note recording mode, in **Settings → MIDI**:
+
+* **Takes** (the default) — every take is a clip of its own. With the loop on, every pass round it
+  is a clip of its own too, stacked on the same bars, and all but the last are muted. **Next Take**
+  on the clip's menu plays the next one in the stack and mutes the rest; nothing is deleted.
+* **Merge** — the notes go into the clip already on the track there, which grows to hold them.
+  Round a loop, every pass is laid on top of the last: the way to build a drum part a hit at a time.
+* **Replace** — the notes already on the track under the take are taken away first. Round a loop,
+  only the last pass is kept.
+
 **Step input** (**Transport → Step Input**, `⌘⇧K`; Ctrl+Shift+K on Windows) writes a part with
 the transport standing still. Play a note or a chord, and when every key is up again it is written
 at the playhead, one grid division long, and the playhead moves on a division. A chord is every key
