@@ -20,6 +20,19 @@ def test_manifest_has_two_sixteen_bar_cases_per_genre():
     }
 
 
+def test_style_manifest_covers_the_genres_the_first_one_has_no_case_for():
+    value = benchmark.validate_manifest(
+        ROOT / "references" / "genre-benchmark-styles-v1.json"
+    )
+    assert tuple(value["genres"]) == benchmark.STYLE_GENRES
+    assert not set(benchmark.STYLE_GENRES) & set(benchmark.GENRES)
+    assert {(case["genre"], case["split"]) for case in value["cases"]} == {
+        (genre, split)
+        for genre in benchmark.STYLE_GENRES
+        for split in ("development", "holdout")
+    }
+
+
 def test_combined_pilot_and_second_repetition_keep_the_complete_genre_cohort(tmp_path):
     import composition_quality as quality
 

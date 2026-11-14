@@ -132,7 +132,8 @@ mod tests {
             Phase::Score,
         )
         .unwrap();
-        let (genre, usage) = text.split_once('\n').unwrap();
+        let (genre, usage) = text.split_once("\nUsage: ").unwrap();
+        let usage = format!("Usage: {usage}");
         assert!(genre.starts_with("Genre: Chiptune."), "{genre}");
         assert!(
             usage.starts_with("Usage: Loop background music."),
@@ -155,6 +156,50 @@ mod tests {
             }
             _ => (first - 1.0, first + 1.0),
         })
+    }
+
+    /// The words of a page's Score section that are written as chord numerals: a roman
+    /// numeral, after any accidentals, followed by nothing or by a quality.
+    fn numerals(text: &str) -> Vec<String> {
+        let score = text
+            .split("## Score")
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .unwrap_or_default();
+        const QUALITIES: [&str; 11] = [
+            "maj", "m", "M", "add", "dim", "aug", "sus", "/", "ø", "°", "+",
+        ];
+        score
+            .split(|c: char| c.is_whitespace() || ",;:()`–".contains(c))
+            .map(|word| word.trim_end_matches('.'))
+            .filter(|word| {
+                let bare = word.trim_start_matches(['b', '#']);
+                let roman = bare.len() - bare.trim_start_matches(['I', 'V', 'i', 'v']).len();
+                let rest = &bare[roman..];
+                roman > 0
+                    && (rest.is_empty()
+                        || rest.starts_with(|c: char| c.is_ascii_digit())
+                        || QUALITIES.iter().any(|quality| rest.starts_with(quality)))
+            })
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn every_chord_a_page_writes_is_one_edit_harmony_reads() {
+        use auris_session::prelude::Numeral;
+        for (id, _, text) in GENRES.iter().chain(USAGES) {
+            for numeral in numerals(text) {
+                assert!(
+                    Numeral::parse(&numeral).is_some(),
+                    "{id} writes {numeral}, which edit_harmony does not read"
+                );
+            }
+        }
+        assert!(
+            numerals(GENRES[0].2).len() > 5,
+            "the reader finds the numerals"
+        );
     }
 
     #[test]

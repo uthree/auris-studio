@@ -21,6 +21,18 @@ GENRES = (
     "anime_song",
     "game_bgm",
 )
+# The genres the first manifest has no case for, measured by a manifest of their own so that
+# the first one, and every comparison already made on it, stays as it was.
+STYLE_GENRES = (
+    "rock",
+    "jazz",
+    "orchestral",
+    "ambient",
+    "folk_acoustic",
+    "latin",
+    "chiptune",
+)
+GENRE_SETS = (GENRES, STYLE_GENRES)
 ACCEPTANCE = {
     "selection_policy_version": "overall-mean-priority-v2",
     "overall_mean_delta_at_least": 0.03,
@@ -106,10 +118,13 @@ def scoring_manifest(suites: list[Path]) -> dict[str, Any]:
 
 
 def validate_manifest(path: Path) -> dict[str, Any]:
-    """Validate the fixed two-split, seven-genre benchmark manifest."""
+    """Validate a fixed two-split, seven-genre benchmark manifest."""
     value = _read(path)
-    if value.get("schema_version") != 1 or tuple(value.get("genres", ())) != GENRES:
-        raise ValueError("manifest must contain the seven versioned genres")
+    genres = tuple(value.get("genres", ()))
+    if value.get("schema_version") != 1 or genres not in GENRE_SETS:
+        raise ValueError(
+            "manifest must contain one of the versioned sets of seven genres"
+        )
     if tuple(value.get("axes", ())) != (
         "request_fit",
         "melody",
@@ -137,7 +152,7 @@ def validate_manifest(path: Path) -> dict[str, Any]:
         identifier, genre, split = case.get("id"), case.get("genre"), case.get("split")
         if not isinstance(identifier, str) or not identifier or identifier in seen:
             raise ValueError("case IDs must be unique nonempty strings")
-        if genre not in GENRES or split not in {"development", "holdout"}:
+        if genre not in genres or split not in {"development", "holdout"}:
             raise ValueError("invalid genre or split")
         if case.get("fixture") != "blank" or case.get("bars") != 16:
             raise ValueError("all cases must be sixteen-bar blank fixtures")
@@ -158,7 +173,7 @@ def validate_manifest(path: Path) -> dict[str, Any]:
         counts[(genre, split)] = counts.get((genre, split), 0) + 1
     if any(
         counts.get((genre, split), 0) != 1
-        for genre in GENRES
+        for genre in genres
         for split in ("development", "holdout")
     ):
         raise ValueError("each genre needs one development and one holdout case")
@@ -569,16 +584,17 @@ def compare(
             }
         )
     valid_rows = [row for row in rows if row["status"] == "paired"]
+    genres = tuple(definition["genres"])
     genre_reports = {
         genre: _aggregate([row for row in valid_rows if row["genre"] == genre])
-        for genre in GENRES
+        for genre in genres
     }
     overall = _aggregate(valid_rows)
     development_rows = [row for row in valid_rows if row["split"] == "development"]
     development = _aggregate(development_rows)
     development_genres = {
         genre: _aggregate([row for row in development_rows if row["genre"] == genre])
-        for genre in GENRES
+        for genre in genres
     }
     holdout = _aggregate([row for row in valid_rows if row["split"] == "holdout"])
     auxiliary = _aggregate(

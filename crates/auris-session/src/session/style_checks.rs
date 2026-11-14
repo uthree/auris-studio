@@ -74,14 +74,18 @@ fn loudness(style: Style) -> Option<(f32, f32)> {
     if style.usage == Some(Usage::LoopBgm) {
         return Some((-18.0, -16.0));
     }
-    match style.genre? {
-        Genre::DanceElectronic => Some((-11.0, -9.0)),
-        Genre::HipHopLofi => Some((-16.0, -14.0)),
-        Genre::AnimeVocaloid => Some((-14.0, -12.0)),
+    Some(match style.genre? {
+        Genre::DanceElectronic => (-11.0, -9.0),
+        Genre::Rock => (-12.0, -10.0),
+        Genre::AnimeVocaloid => (-14.0, -12.0),
+        Genre::Chiptune => (-14.0, -12.0),
         // A page naming one level is held to it within a unit either way.
-        Genre::JPop | Genre::CityPop | Genre::RnbNeoSoul => Some((-15.0, -13.0)),
-        _ => None,
-    }
+        Genre::JPop | Genre::CityPop | Genre::RnbNeoSoul => (-15.0, -13.0),
+        Genre::HipHopLofi | Genre::FolkAcoustic | Genre::Latin => (-16.0, -14.0),
+        Genre::Jazz => (-18.0, -16.0),
+        // Kept quiet for the dynamics a build or a drift needs.
+        Genre::Orchestral | Genre::Ambient => (-21.0, -18.0),
+    })
 }
 
 #[cfg(test)]
@@ -118,8 +122,9 @@ mod tests {
         let looped = of(Some(Genre::DanceElectronic), Some(Usage::LoopBgm));
         assert_eq!(looped.loudness, Some((-18.0, -16.0)));
         assert_eq!(of(None, Some(Usage::LoopBgm)).loudness_target(), -17.0);
-        // A page that names no level adds no check.
-        assert_eq!(of(Some(Genre::Jazz), None).loudness, None);
+        // Jazz keeps its dynamics; only an unset style adds no check.
+        assert_eq!(of(Some(Genre::Jazz), None).loudness, Some((-18.0, -16.0)));
+        assert_eq!(of(None, Some(Usage::Song)).loudness, None);
     }
 
     #[test]

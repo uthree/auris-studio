@@ -1,0 +1,422 @@
+{
+ "schema_version": 1,
+ "genres": [
+  "rock",
+  "jazz",
+  "orchestral",
+  "ambient",
+  "folk_acoustic",
+  "latin",
+  "chiptune"
+ ],
+ "conditions": "内蔵音源だけを使った器楽曲として作曲し、プロジェクトは未保存のまま残して。",
+ "axes": [
+  "request_fit",
+  "melody",
+  "form",
+  "ensemble",
+  "sound"
+ ],
+ "songeval_axes": [
+  "Coherence",
+  "Musicality",
+  "Memorability",
+  "Clarity",
+  "Naturalness"
+ ],
+ "delivery_prompt": "完成した曲全体を24bit WAV「{output}/result.wav」とMIDI「{output}/result.mid」に書き出して。16小節ちょうどであること、実ファイルの長さ、無音、音割れを確認して。プロジェクトは未保存のまま残して。",
+ "cases": [
+  {
+   "id": "rock-development",
+   "genre": "rock",
+   "split": "development",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "E minor",
+   "tempo": 140,
+   "brief": "ロックの16小節インスト。歪んだギターのリフ、8ビートで推すドラムとベース、9小節目からギターを重ねてサビの高揚を作る。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "ロックの16小節インスト。歪んだギターのリフ、8ビートで推すドラムとベース、9小節目からギターを重ねてサビの高揚を作る。 140 BPM、E minor、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  },
+  {
+   "id": "rock-holdout",
+   "genre": "rock",
+   "split": "holdout",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "E minor",
+   "tempo": 140,
+   "brief": "ロックの16小節インスト。歪んだギターのリフ、8ビートで推すドラムとベース、9小節目からギターを重ねてサビの高揚を作る。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "ロックの16小節インスト。歪んだギターのリフ、8ビートで推すドラムとベース、9小節目からギターを重ねてサビの高揚を作る。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 140 BPM、E minor、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  },
+  {
+   "id": "jazz-development",
+   "genre": "jazz",
+   "split": "development",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "F major",
+   "tempo": 144,
+   "brief": "ジャズ・コンボ風の16小節インスト。スウィングするウォーキングベース、ライド中心のドラム、ii–Vを含む進行とピアノのコンピング、歌うように崩す主旋律。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "ジャズ・コンボ風の16小節インスト。スウィングするウォーキングベース、ライド中心のドラム、ii–Vを含む進行とピアノのコンピング、歌うように崩す主旋律。 144 BPM、F major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  },
+  {
+   "id": "jazz-holdout",
+   "genre": "jazz",
+   "split": "holdout",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "F major",
+   "tempo": 144,
+   "brief": "ジャズ・コンボ風の16小節インスト。スウィングするウォーキングベース、ライド中心のドラム、ii–Vを含む進行とピアノのコンピング、歌うように崩す主旋律。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "ジャズ・コンボ風の16小節インスト。スウィングするウォーキングベース、ライド中心のドラム、ii–Vを含む進行とピアノのコンピング、歌うように崩す主旋律。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 144 BPM、F major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  },
+  {
+   "id": "orchestral-development",
+   "genre": "orchestral",
+   "split": "development",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "D minor",
+   "tempo": 96,
+   "brief": "オーケストラ風の16小節インスト。弦の和声に木管の主旋律、9小節目から金管とティンパニで盛り上げる。ドラムセットは使わない。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "オーケストラ風の16小節インスト。弦の和声に木管の主旋律、9小節目から金管とティンパニで盛り上げる。ドラムセットは使わない。 96 BPM、D minor、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  },
+  {
+   "id": "orchestral-holdout",
+   "genre": "orchestral",
+   "split": "holdout",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "D minor",
+   "tempo": 96,
+   "brief": "オーケストラ風の16小節インスト。弦の和声に木管の主旋律、9小節目から金管とティンパニで盛り上げる。ドラムセットは使わない。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "オーケストラ風の16小節インスト。弦の和声に木管の主旋律、9小節目から金管とティンパニで盛り上げる。ドラムセットは使わない。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 96 BPM、D minor、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  },
+  {
+   "id": "ambient-development",
+   "genre": "ambient",
+   "split": "development",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "D major",
+   "tempo": 70,
+   "brief": "アンビエントの16小節インスト。ゆっくり変化するパッド、まばらな鍵盤やベルの断片、はっきりしたビートを置かず、後半で音の層を少し増やす。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "アンビエントの16小節インスト。ゆっくり変化するパッド、まばらな鍵盤やベルの断片、はっきりしたビートを置かず、後半で音の層を少し増やす。 70 BPM、D major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  },
+  {
+   "id": "ambient-holdout",
+   "genre": "ambient",
+   "split": "holdout",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "D major",
+   "tempo": 70,
+   "brief": "アンビエントの16小節インスト。ゆっくり変化するパッド、まばらな鍵盤やベルの断片、はっきりしたビートを置かず、後半で音の層を少し増やす。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "アンビエントの16小節インスト。ゆっくり変化するパッド、まばらな鍵盤やベルの断片、はっきりしたビートを置かず、後半で音の層を少し増やす。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 70 BPM、D major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  },
+  {
+   "id": "folk_acoustic-development",
+   "genre": "folk_acoustic",
+   "split": "development",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "G major",
+   "tempo": 100,
+   "brief": "アコースティック・フォークの16小節インスト。アコースティックギターのストローク、素朴な主旋律、控えめなベースと軽い打楽器、後半で弦か笛が加わる。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "アコースティック・フォークの16小節インスト。アコースティックギターのストローク、素朴な主旋律、控えめなベースと軽い打楽器、後半で弦か笛が加わる。 100 BPM、G major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  },
+  {
+   "id": "folk_acoustic-holdout",
+   "genre": "folk_acoustic",
+   "split": "holdout",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "G major",
+   "tempo": 100,
+   "brief": "アコースティック・フォークの16小節インスト。アコースティックギターのストローク、素朴な主旋律、控えめなベースと軽い打楽器、後半で弦か笛が加わる。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "アコースティック・フォークの16小節インスト。アコースティックギターのストローク、素朴な主旋律、控えめなベースと軽い打楽器、後半で弦か笛が加わる。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 100 BPM、G major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  },
+  {
+   "id": "latin-development",
+   "genre": "latin",
+   "split": "development",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "A minor",
+   "tempo": 128,
+   "brief": "ボサノヴァ寄りのラテン16小節インスト。ナイロン弦ギター風のコンピング、シンコペーションするベース、クラーベを感じる打楽器、7thの和声と穏やかな主旋律。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "ボサノヴァ寄りのラテン16小節インスト。ナイロン弦ギター風のコンピング、シンコペーションするベース、クラーベを感じる打楽器、7thの和声と穏やかな主旋律。 128 BPM、A minor、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  },
+  {
+   "id": "latin-holdout",
+   "genre": "latin",
+   "split": "holdout",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "A minor",
+   "tempo": 128,
+   "brief": "ボサノヴァ寄りのラテン16小節インスト。ナイロン弦ギター風のコンピング、シンコペーションするベース、クラーベを感じる打楽器、7thの和声と穏やかな主旋律。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "ボサノヴァ寄りのラテン16小節インスト。ナイロン弦ギター風のコンピング、シンコペーションするベース、クラーベを感じる打楽器、7thの和声と穏やかな主旋律。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 128 BPM、A minor、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  },
+  {
+   "id": "chiptune-development",
+   "genre": "chiptune",
+   "split": "development",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "C major",
+   "tempo": 150,
+   "brief": "チップチューンの16小節インスト。矩形波の主旋律、三角波のベース、ノイズのドラム、アルペジオで和音を示し、9小節目から盛り上げる。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "チップチューンの16小節インスト。矩形波の主旋律、三角波のベース、ノイズのドラム、アルペジオで和音を示し、9小節目から盛り上げる。 150 BPM、C major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  },
+  {
+   "id": "chiptune-holdout",
+   "genre": "chiptune",
+   "split": "holdout",
+   "fixture": "blank",
+   "bars": 16,
+   "key": "C major",
+   "tempo": 150,
+   "brief": "チップチューンの16小節インスト。矩形波の主旋律、三角波のベース、ノイズのドラム、アルペジオで和音を示し、9小節目から盛り上げる。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+   "sections": [
+    {
+     "name": "A",
+     "start_bar": 1,
+     "end_bar": 8
+    },
+    {
+     "name": "B",
+     "start_bar": 9,
+     "end_bar": 16
+    }
+   ],
+   "instrumentation": [
+    "built-in"
+   ],
+   "prompts": [
+    "チップチューンの16小節インスト。矩形波の主旋律、三角波のベース、ノイズのドラム、アルペジオで和音を示し、9小節目から盛り上げる。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 150 BPM、C major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+   ]
+  }
+ ]
+}
