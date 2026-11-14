@@ -9,12 +9,73 @@ fn subdivisions(start: usize, length: usize, count: usize, onsets: &mut Vec<usiz
     }
 }
 
+/// Which bar of the two-bar figure a rhythm is drawn for.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Half {
+    /// The bar that states the figure.
+    Call,
+    /// The bar that answers it: one subdivision calmer, and more often than not coming to
+    /// rest on a note held through its last two beats.
+    Answer,
+}
+
+/// How often the answering bar ends on a held note rather than on a gesture of its own.
+///
+/// Sung lines alternate: measured over the PDMX pop and rock vocal parts, a bar differs from
+/// the bar before it by two notes on average, and one note in eleven lasts two beats or more.
+/// Two bars drawn the same way differ by one and hold nothing, so the answer is drawn calmer
+/// — and this often it simply stops and holds, which is where the tune's long notes come from.
+const ANSWER_HOLDS: f32 = 0.6;
+
+/// How many times an answer that came out as the call's own rhythm is drawn again.
+///
+/// The two bars share one table, so now and then they draw the same thing and the figure is
+/// one bar long after all. A few more draws settle nearly every case; a table with one
+/// outcome cannot be argued with, and after these the bars are allowed to agree.
+const ANSWER_REDRAWS: usize = 4;
+
 /// Draw gestures, then allocate their approaches against the following gesture's arrival.
 pub(super) fn grouped(
     grid: Grid,
     density: f32,
     syncopation: f32,
     style: Option<PerformanceStyle>,
+    rng: &mut Rng,
+) -> Vec<Cell> {
+    gestures(grid, density, syncopation, style, Half::Call, rng)
+}
+
+/// The rhythm of the bar that answers `call`, drawn so that the two are not the same bar.
+///
+/// What makes a figure two bars long rather than one bar said twice. The answer is drawn from
+/// the same gestures as the call, a subdivision calmer and inclined to end on a held note —
+/// see [`ANSWER_HOLDS`] — and drawn again when it lands on the call's own onsets.
+pub(super) fn answering(
+    grid: Grid,
+    density: f32,
+    syncopation: f32,
+    style: Option<PerformanceStyle>,
+    call: &[Cell],
+    rng: &mut Rng,
+) -> Vec<Cell> {
+    let onsets = |cells: &[Cell]| cells.iter().map(|cell| cell.step).collect::<Vec<_>>();
+    let mut answer = gestures(grid, density, syncopation, style, Half::Answer, rng);
+    for _ in 0..ANSWER_REDRAWS {
+        if onsets(&answer) != onsets(call) {
+            break;
+        }
+        answer = gestures(grid, density, syncopation, style, Half::Answer, rng);
+    }
+    answer
+}
+
+/// One bar of gestures for either half of the figure.
+fn gestures(
+    grid: Grid,
+    density: f32,
+    syncopation: f32,
+    style: Option<PerformanceStyle>,
+    half: Half,
     rng: &mut Rng,
 ) -> Vec<Cell> {
     let steps = grid.steps_per_bar();
@@ -28,6 +89,10 @@ pub(super) fn grouped(
         _ => 3.0,
     };
     let splits = (1 + (density * subdivision_range).round() as usize).min(beat.min(4));
+    let splits = match half {
+        Half::Call => splits,
+        Half::Answer => splits.saturating_sub(1).max(1),
+    };
     // Held, short-long, long-short, anticipation, pickup. Styles choose gestures, while the
     // meter supplies their size; a dotted quarter in 6/8 remains a whole felt beat.
     let weights = match style {
@@ -53,7 +118,12 @@ pub(super) fn grouped(
         } else {
             let middle = start + beat;
             let short = (beat / 2).max(1);
-            match rng.weighted(&weights) {
+            // The answer's last gesture is where it comes to rest. Both rolls are made whether
+            // or not the hold is taken, so the stream stays aligned either way.
+            let drawn = rng.weighted(&weights);
+            let holds = rng.chance(ANSWER_HOLDS);
+            let resting = half == Half::Answer && end == steps && holds;
+            match if resting { 0 } else { drawn } {
                 0 => onsets.push(start),
                 1 => {
                     subdivisions(start, beat, splits, &mut onsets);
@@ -178,16 +248,52 @@ fn connect_gestures(grid: Grid, style: Option<PerformanceStyle>, cells: &mut [Ce
     }
 }
 
+/// The meter's own offbeat in steps: half a beat, or a third of one where the beat divides in
+/// three. `None` on a grid too coarse to have one.
+pub(super) fn offbeat_steps(grid: Grid) -> Option<usize> {
+    let beat = grid.steps_per_beat();
+    let division = if grid.signature.is_compound() || grid.is_triplet() {
+        3
+    } else {
+        2
+    };
+    (beat.is_multiple_of(division) && beat >= division).then_some(beat / division)
+}
+
+/// How a phrase is let go of.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(super) enum Ending {
+    /// One beat on the arrival: the line pauses and means to go on.
+    Open,
+    /// Two beats on it: the line has got where it was going.
+    Closed,
+    /// A beat and an offbeat on it, let go a whole beat before the pickup that leads into the
+    /// next phrase — so the pickup is heard as the next phrase starting and not as this one
+    /// carrying on.
+    Early,
+}
+
 /// Place a held arrival before the final felt beat, which is reserved for the next phrase.
-pub(super) fn close_phrase(grid: Grid, figure: &mut Motif) {
+///
+/// Every phrase used to end the same way — a beat of note and a beat of rest — so a section
+/// was four identical cadences in a row, and the longest note in sixteen bars averaged under a
+/// beat and a half where a sung line's averages over three. `ending` says which of three ways
+/// this one goes. The two longer ones arrive a beat sooner; a bar with fewer than four felt
+/// beats has no beat to arrive sooner on, and closes as an open one does.
+pub(super) fn close_phrase(grid: Grid, figure: &mut Motif, ending: Ending) {
     let steps = grid.steps_per_bar();
     let beat = grid.steps_per_beat();
     if steps <= beat || figure.cells.is_empty() {
         return;
     }
     let arrival_degree = figure.cells.last().map_or(0, |cell| cell.degree);
-    let release = steps - beat;
-    let target = release.saturating_sub(beat);
+    let roomy = steps >= 4 * beat;
+    let (release, held) = match (ending, offbeat_steps(grid)) {
+        (Ending::Closed, _) if roomy => (steps - beat, 2 * beat),
+        (Ending::Early, Some(offbeat)) if roomy => (steps - beat - offbeat, beat + offbeat),
+        _ => (steps - beat, beat),
+    };
+    let target = release.saturating_sub(held);
     let earliest = target.saturating_sub(beat / 2);
     if let Some(index) = figure.cells.iter().rposition(|cell| cell.step <= target) {
         figure.cells.truncate(index + 1);
@@ -306,11 +412,86 @@ mod tests {
     }
 
     #[test]
+    fn the_answer_is_not_the_call_and_is_the_calmer_of_the_two() {
+        // Two bars drawn the same way are one bar's rhythm twice more often than not, and
+        // differ by a note when they differ. The answer is what makes the figure two bars
+        // long: its own onsets, fewer of them, and usually a note to come to rest on.
+        let grid = Grid::default();
+        let two_beats = 2 * grid.steps_per_beat();
+        let (mut called, mut answered, mut same, mut resting) = (0, 0, 0, 0);
+        for seed in 0..64 {
+            let mut rng = Rng::stream(seed, &[]);
+            let call = grouped(grid, 0.5, 0.3, Some(PerformanceStyle::PopBand), &mut rng);
+            let answer = answering(
+                grid,
+                0.5,
+                0.3,
+                Some(PerformanceStyle::PopBand),
+                &call,
+                &mut rng,
+            );
+            assert!(!answer.is_empty(), "seed {seed} answers with nothing");
+            assert!(
+                answer
+                    .iter()
+                    .all(|cell| cell.length > 0 && cell.step + cell.length <= grid.steps_per_bar()),
+                "seed {seed} answers past its own bar: {answer:?}"
+            );
+            assert!(
+                answer
+                    .windows(2)
+                    .all(|pair| pair[0].step + pair[0].length <= pair[1].step),
+                "seed {seed} answers with overlapping notes: {answer:?}"
+            );
+            called += call.len();
+            answered += answer.len();
+            let onsets = |cells: &[Cell]| cells.iter().map(|cell| cell.step).collect::<Vec<_>>();
+            same += usize::from(onsets(&call) == onsets(&answer));
+            resting += usize::from(answer.iter().any(|cell| cell.length >= two_beats));
+        }
+        assert!(same <= 1, "{same} of 64 answers are the call's own rhythm");
+        assert!(
+            answered * 10 < called * 9,
+            "the answers hold {answered} notes against the calls' {called}"
+        );
+        assert!(
+            (24..=56).contains(&resting),
+            "{resting} of 64 answers come to rest on a note of two beats"
+        );
+    }
+
+    #[test]
+    fn a_phrase_is_let_go_of_in_one_of_three_ways() {
+        let grid = Grid::default();
+        let ended = |ending: Ending, grid: Grid, positions: &[(usize, usize)]| {
+            let mut figure = Motif {
+                cells: cells_at(positions),
+            };
+            close_phrase(grid, &mut figure, ending);
+            let last = *figure.cells.last().unwrap();
+            (figure.cells.len(), last.step, last.length, last.degree)
+        };
+        let busy = [(0, 2), (2, 2), (4, 2), (6, 2), (8, 4), (12, 4)];
+        // A beat on beat three, and the last beat left empty.
+        assert_eq!(ended(Ending::Open, grid, &busy), (5, 8, 4, 5));
+        // Two beats from beat two: the same breath after a longer arrival.
+        assert_eq!(ended(Ending::Closed, grid, &busy), (3, 4, 8, 5));
+        // A beat and a half from beat two, let go a whole beat before the pickup's offbeat.
+        assert_eq!(ended(Ending::Early, grid, &busy), (3, 4, 6, 5));
+        // Three beats have no beat to arrive sooner on, so every ending is the open one.
+        let waltz = Grid::new(TimeSignature::new(3, 4), 4);
+        let short = [(0, 2), (2, 2), (4, 4), (8, 4)];
+        let open = ended(Ending::Open, waltz, &short);
+        assert_eq!(ended(Ending::Closed, waltz, &short), open);
+        assert_eq!(ended(Ending::Early, waltz, &short), open);
+    }
+
+    #[test]
     fn sparse_phrase_endings_do_not_gain_an_extra_attack() {
         let mut figure = Motif {
             cells: cells_at(&[(0, 16)]),
         };
-        close_phrase(Grid::default(), &mut figure);
+        close_phrase(Grid::default(), &mut figure, Ending::Open);
         assert_eq!(signature(&figure.cells), [(0, 12, 0, Accent::Strong)]);
     }
 
@@ -346,7 +527,7 @@ mod tests {
         let mut figure = Motif {
             cells: cells_at(&[(0, 1), (1, 1), (2, 6), (10, 1), (11, 1), (12, 4)]),
         };
-        close_phrase(grid, &mut figure);
+        close_phrase(grid, &mut figure, Ending::Open);
         let last = figure.cells.last().unwrap();
         assert!(
             last.step >= grid.steps_per_bar() / 2 - grid.steps_per_beat() / 2,
@@ -394,7 +575,7 @@ mod tests {
                                 .windows(2)
                                 .all(|pair| { pair[0].step + pair[0].length <= pair[1].step })
                         );
-                        close_phrase(grid, &mut figure);
+                        close_phrase(grid, &mut figure, Ending::Open);
                         let last = figure.cells.last().unwrap();
                         let limit = if grid.steps_per_bar() > grid.steps_per_beat() {
                             grid.steps_per_bar() - grid.steps_per_beat()

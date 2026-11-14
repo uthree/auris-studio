@@ -11,11 +11,14 @@ pub(super) struct PhraseLine {
 }
 
 impl PhraseLine {
-    /// State, echo, develop and answer a call using the already allotted rhythmic slots.
+    /// State, develop and answer a call using the already allotted rhythmic slots.
     ///
-    /// A four-bar phrase has two statements, a continuation and an answer. Short phrases
-    /// omit the echo; longer phrases continue towards the same answer without moving their
-    /// breath. Only degrees change, after any rhythmic omission, ornament or closing hold.
+    /// A four-bar phrase has two bars of statement, a continuation and an answer. The two
+    /// are the halves of a two-bar `call` when the line was drawn across both, and a call and
+    /// its echo when `call` is one bar that each of them says whole; either way they keep the
+    /// degrees they came with. Short phrases state one bar; longer phrases continue towards
+    /// the same answer without moving their breath. Only degrees change, after any rhythmic
+    /// omission, ornament or closing hold.
     pub(super) fn develop(
         &mut self,
         call: &Motif,

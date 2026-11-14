@@ -2019,6 +2019,11 @@ pub mod composition {
     //! absolute notes, so restating it over the next chord keeps its shape and still belongs to
     //! the harmony.
     //!
+    //! The tune's figure is two bars — a bar that calls and a calmer one that answers it — and
+    //! its line is drawn across both, because one bar said in every bar is a loop rather than a
+    //! hook. It is also the one part allowed over a bar line: an answering bar may enter an
+    //! offbeat early and hold across it, and a phrase may be led into by a pickup.
+    //!
     //! Shared phrases assign statement, continuation, answer and release functions over several
     //! bars. The melodic head returns while its tail develops; bass approaches and comping
     //! closures use those same boundaries. Voicings compare individual noncrossing voices, and a

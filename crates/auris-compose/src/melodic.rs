@@ -41,12 +41,15 @@
 //!
 //! # A call and its response
 //!
-//! A four-bar phrase first states its call twice, develops the call's final interval gesture,
-//! then recalls the head while approaching a reachable answer. The response carries the degree
-//! reached by the preceding bar. A descending call can therefore return upward rather than
-//! restarting its descent in every bar. The excursion is bounded by the call's own span, and
-//! the approach reserves enough movement for its final arrival. Repeated degrees remain valid.
-//! Short phrases omit the echo; longer phrases keep their existing shared breath boundary.
+//! A four-bar phrase first states its figure — a bar that calls and the bar that answers it,
+//! see the fifth pass below — then develops the figure's final interval gesture, then recalls
+//! its head while approaching a reachable answer. The response carries the degree reached by
+//! the preceding bar. A descending call can therefore return upward rather than restarting its
+//! descent in every bar. The excursion is bounded by the figure's own span, and the approach
+//! reserves enough movement for its final arrival. Repeated degrees remain valid. A phrase
+//! shorter than four bars states the call alone; longer phrases keep their existing shared
+//! breath boundary. A given motif is one bar long and each of the two bars says it whole, so
+//! there the second bar is an echo and the development reads the call by itself.
 //!
 //! This plan changes contour degrees after rhythmic slots and the closing breath are allotted.
 //! The chord-scale, register join and prepared-tension passes then realize those degrees as
@@ -226,11 +229,80 @@
 //! `a_verse_and_a_chorus_are_two_statements_of_one_tune` in `parts::melody` holds the shape, and
 //! `dressed` is the resampling with the anti-stammer rule.
 //!
+//! # The fifth pass: the figure is two bars
+//!
+//! Every pass above was about pitch, and the line still sounded like a machine. What was left
+//! was not in the intervals at all. A section drew **one bar** of rhythm and one bar of
+//! contour and said them in every bar: one sixteen-bar take over `I V vi IV` wrote
+//! `.x--x-x-..xxx---` in eight of its bars and a cut-down copy of it in the other eight, the
+//! same six-note shape climbing the scale under it. An ear does not hear that as a hook. It
+//! hears a loop.
+//!
+//! Measured over 2,160 sixteen-bar takes — six charts, five styles, three densities and
+//! twenty-four seeds — against the sung parts of the PDMX pop and rock scores that carry
+//! lyrics: 181 songs in 4/4, cut into 607 sixteen-bar windows, everything quantised to a
+//! sixteenth. A *line* is what lies between two rests of a beat or more.
+//!
+//! | | before | after | corpus |
+//! | --- | --- | --- | --- |
+//! | the commonest bar rhythm, as a share of the bars | 54% | 31% | 26% |
+//! | a bar with the onsets of the bar before it | 26% | 1% | 9% |
+//! | … of the bar two before | 33% | 22% | 19% |
+//! | … of the bar four before | **80%** | 22% | 23% |
+//! | … of the bar eight before | 81% | 37% | 20% |
+//! | contour correlation with the bar four before | 0.76 | 0.27 | 0.31 |
+//! | notes held across a bar line, in sixteen bars | **0** | 1.4 | 3.2 |
+//! | lines entering in the second half of a bar | 3% | 30% | 37% |
+//! | lines entering at the commonest point | 97% | 68% | 63% |
+//! | change in note count from a bar to the next | 1.1 | 2.7 | 2.1 |
+//! | the longest note in sixteen bars, in beats | 1.4 | 2.3 | 3.3 |
+//! | notes of two beats or more | 2% | 7% | 9% |
+//!
+//! The corpus has no period at all: a bar resembles the bars one, two, four and eight before it
+//! about equally, a fifth of the time exactly. What it does not do is what the composer did —
+//! return to one bar four times in five. Five changes in `parts::melody` and its two helpers:
+//!
+//! 1. **The figure is a call and the bar that answers it.** Each has a rhythm of its own, and
+//!    the germ is one line drawn across both, so the second bar carries on from where the
+//!    first got to instead of starting again. The answer is drawn a subdivision calmer and
+//!    more often than not comes to rest on a note held through its last two beats, which is
+//!    also where the tune's long notes come from. A phrase plays call, answer, call varied,
+//!    answer closed.
+//! 2. **A variation may turn the rhythm three times in four.** The rhythmic operation and the
+//!    inflection of the arrival were one draw, and half its outcomes were an inflection and
+//!    nothing else — so half of every phrase's third bars came back as its first exactly.
+//! 3. **A continuation leads with the answer.** The same two bars the other way round: no new
+//!    material, and the phrase still does not open the way the one before it did.
+//! 4. **A phrase is let go of in one of three ways.** A beat on the arrival where the line
+//!    means to go on, two where it has got where it was going, and a beat and a half let go
+//!    early where a pickup follows. It was a beat of note and a beat of rest every time.
+//! 5. **The line may cross a bar line.** An answering bar can enter an offbeat ahead of its
+//!    downbeat and hold across it — a choice made once for a section, likelier the more
+//!    syncopated the part — and a phrase after the first can be led into by one note in the
+//!    breath before it, a scale step from where it is going.
+//!
+//! The first of these alone was not enough, and measuring it on its own said so: a bar stopped
+//! resembling its neighbour and matched the bar *two* before it nearly half the time, with the
+//! four-bar figure untouched at 81%. The repetition had only moved up a level. A written
+//! rhythm keeps one bar and every attack where it was typed; none of the five reaches it
+//! beyond the two-bar contour.
+//!
+//! Two tests in `parts::melody` hold the table: `a_section_is_not_one_bar_said_sixteen_times`
+//! and `the_line_crosses_bar_lines_and_some_phrases_are_led_into`.
+//!
 //! # What is still wrong
 //!
 //! Steps sit at 60.5% where a corpus says 68. One thing is known and not fixed: resolving a
 //! dissonance onto a chord tone sometimes lands on the note beside it, which is refused where it
 //! would stutter but not otherwise.
+//!
+//! The larger thing is which corpus. The 68 and the 11 are Palestrina's, and the fifth pass
+//! measured the pitches against sung pop while it was there: a repeated note is 28% of those
+//! lines (22% in POP909's melody tracks) where the composer writes 12, a step is 43% where it
+//! writes 59, a quarter of its notes sit inside a stepwise run of four or more where an eighth
+//! of theirs do, and sixteen bars of it span nineteen semitones against fourteen. A tune that
+//! walks up and down a scale and seldom says a note twice is well formed and still does not
+//! sound sung. None of the five changes above touches it.
 //!
 //! # What is not a code problem
 //!

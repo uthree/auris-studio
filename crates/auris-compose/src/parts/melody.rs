@@ -1,9 +1,10 @@
 //! The tune.
 //!
-//! One figure per part and section, stated and echoed before its continuation and answer,
-//! which is what leaves a section with something an ear can hold on to. The motif, the way
-//! it is varied and the two scale walks it is stated through are all here because nothing else in
-//! the band writes one: this is the only part whose notes are a shape rather than a harmony.
+//! One figure per part and section — a bar that calls and the bar that answers it — stated
+//! before its continuation and answer, which is what leaves a section with something an ear
+//! can hold on to. The motif, the way it is varied and the two scale walks it is stated through
+//! are all here because nothing else in the band writes one: this is the only part whose notes
+//! are a shape rather than a harmony.
 //!
 //! That is also why it is the hard part. Every other writer is told what to play by the chord
 //! under it; this one is only told where to hang. What the rules below are, where their numbers
@@ -214,38 +215,61 @@ fn motif(
     rng: &mut Rng,
 ) -> Motif {
     match pattern {
-        Some(_) => contour(grid, pattern, density, syncopation, style, rng),
+        Some(_) => contour(grid, pattern, density, syncopation, style, 1, rng),
         None => Motif {
             cells: melody_rhythm::grouped(grid, density, syncopation, style, rng),
         },
     }
 }
 
+/// How many bars the tune's own unit lasts: a bar that calls and a bar that answers it.
+///
+/// One bar was the unit until it was measured. A single bar's rhythm stamped on every bar of a
+/// section was the commonest rhythm of more than half its bars, where sung pop lines give
+/// their commonest bar a quarter of them, and a bar resembled the bar *four* before it nearly
+/// perfectly while real lines resemble the bar two before them more than the one beside them.
+/// See [`crate::melodic`], "The fifth pass".
+const TUNE_BARS: usize = 2;
+
 /// Draw the pitch contour on its own scaffolding, independently of the section's rhythm.
 /// Explicit patterns also keep their original articulation through this path.
+///
+/// `bars` is how long the walk goes on for. The line does not start again at a bar line: the
+/// second bar carries on from wherever the first one got to, which is what makes two bars one
+/// shape rather than one shape said twice. A cell's step counts from the first bar's start.
 fn contour(
     grid: Grid,
     pattern: Option<&Pattern>,
     density: f32,
     syncopation: f32,
     style: Option<PerformanceStyle>,
+    bars: usize,
     rng: &mut Rng,
 ) -> Motif {
     let steps = grid.steps_per_bar();
-    let mut onsets = bar_onsets(grid, pattern, density, syncopation, rng);
-    // A figure needs a few notes to be one, and one note cannot be varied at all. A thin roll
-    // used to average out because every bar rolled again; now a single roll decides the whole
-    // section, so a thin one would leave the section with nothing rather than with a quiet bar.
-    // The strongest free steps are filled first, which is where a note would have gone anyway.
-    if pattern.is_none() && onsets.len() < MOTIF_MINIMUM {
-        let mut spare: Vec<usize> = (0..steps)
-            .filter(|step| !onsets.iter().any(|(taken, _)| taken == step))
-            .collect();
-        spare.sort_by_key(|step| std::cmp::Reverse(grid.weight(*step)));
-        for step in spare.into_iter().take(MOTIF_MINIMUM - onsets.len()) {
-            onsets.push((step, Accent::Normal));
+    let mut onsets: Vec<(usize, Accent)> = Vec::new();
+    for bar in 0..bars.max(1) {
+        let mut drawn = bar_onsets(grid, pattern, density, syncopation, rng);
+        // A figure needs a few notes to be one, and one note cannot be varied at all. A thin
+        // roll used to average out because every bar rolled again; now a single roll decides
+        // the whole section, so a thin one would leave the section with nothing rather than
+        // with a quiet bar. The strongest free steps are filled first, which is where a note
+        // would have gone anyway.
+        if pattern.is_none() && drawn.len() < MOTIF_MINIMUM {
+            let mut spare: Vec<usize> = (0..steps)
+                .filter(|step| !drawn.iter().any(|(taken, _)| taken == step))
+                .collect();
+            spare.sort_by_key(|step| std::cmp::Reverse(grid.weight(*step)));
+            for step in spare.into_iter().take(MOTIF_MINIMUM - drawn.len()) {
+                drawn.push((step, Accent::Normal));
+            }
+            drawn.sort_by_key(|(step, _)| *step);
         }
-        onsets.sort_by_key(|(step, _)| *step);
+        onsets.extend(
+            drawn
+                .into_iter()
+                .map(|(step, accent)| (bar * steps + step, accent)),
+        );
     }
 
     let mut cells = Vec::with_capacity(onsets.len());
@@ -265,19 +289,20 @@ fn contour(
             previous_move = landed - degree;
             degree = landed;
         }
+        // A note sounds until the next one or the end of its own bar, whichever comes first.
+        let bar_end = (step / steps + 1) * steps;
         let next = onsets
             .get(position + 1)
-            .map(|(next, _)| *next)
-            .unwrap_or(steps);
+            .map_or(bar_end, |(next, _)| (*next).min(bar_end));
         let gap = next.saturating_sub(*step).max(1);
-        // The figure's last note stops short of the next bar, which is where the rest that lets a
+        // A bar's last note stops short of the next bar, which is where the rest that lets a
         // phrase breathe comes from. Inside the figure a note is occasionally detached too.
         let detached = match style {
             Some(PerformanceStyle::JazzTrio | PerformanceStyle::CityPop) => 0.40,
             Some(PerformanceStyle::Ambient | PerformanceStyle::Orchestral) => 0.10,
             _ => 0.25,
         };
-        let length = if position + 1 == onsets.len() || rng.chance(detached) {
+        let length = if next == bar_end || rng.chance(detached) {
             1 + rng.below(gap)
         } else {
             gap
@@ -303,20 +328,20 @@ fn vary_rhythm(figure: &Motif, rng: &mut Rng) -> (Motif, i32) {
     if cells.len() < 2 {
         return (Motif { cells }, 0);
     }
-    let mut inflection = 0;
-    match rng.below(6) {
-        0 => {
-            inflection = if rng.chance(0.5) { 1 } else { -1 };
-        }
+    // Two separate draws. They used to be one, with half its outcomes an inflection and nothing
+    // else — so half of every phrase's third bars came back as the first bar's rhythm exactly,
+    // and a bar matched the bar two before it nearly half the time where sung lines manage a
+    // fifth. How the arrival is shaded says nothing about whether the rhythm turns.
+    let inflection = [-1, 0, 1][rng.below(3)];
+    match rng.below(4) {
         // Take a note out, leaving a hole where the ear expects one.
         1 if cells.len() > 2 => {
             let doomed = 1 + rng.below(cells.len() - 1);
             cells.remove(doomed);
         }
-        3 => inflection = 1,
         // Ornament the longest note: struck again halfway through itself, which is the
         // repetition figure singers put on a held syllable.
-        4 if cells.iter().any(|cell| cell.length >= 2) => {
+        2 if cells.iter().any(|cell| cell.length >= 2) => {
             let position = cells
                 .iter()
                 .enumerate()
@@ -338,10 +363,11 @@ fn vary_rhythm(figure: &Motif, rng: &mut Rng) -> (Motif, i32) {
         }
         // Come in late: the first note becomes a rest, and the bar starts on the offbeat the
         // figure left behind.
-        5 if cells.len() > 2 => {
+        3 if cells.len() > 2 => {
             cells.remove(0);
         }
-        _ => inflection = -1,
+        // The rhythm as it was stated, shaded by the inflection alone.
+        _ => {}
     }
     (Motif { cells }, inflection)
 }
@@ -465,6 +491,50 @@ fn dressed(rhythm: &Motif, contour: &Motif) -> Motif {
     Motif { cells }
 }
 
+/// The figure a section is built from: a bar that calls, the bar that answers it, and the line
+/// the two of them draw.
+struct Tune {
+    /// The call and its answer, each with its own rhythm, in the order a phrase plays them.
+    bars: [Motif; TUNE_BARS],
+    /// What a phrase develops and recalls once it has been stated. Only the degrees are read.
+    ///
+    /// Both bars end to end when the germ was drawn, because the line was drawn across both.
+    /// The call alone when the germ was given: each bar then says the given line whole, the
+    /// second bar is an echo of the first, and running the two together would hand the
+    /// development the leap from the end of the line back to its start as if it were a
+    /// gesture somebody wrote.
+    line: Motif,
+}
+
+impl Tune {
+    /// The two rhythms wearing the piece's contour.
+    fn dressed(call: Motif, answer: Motif, germ: &Motif, given: bool) -> Self {
+        if given {
+            let bars = [dressed(&call, germ), dressed(&answer, germ)];
+            let line = bars[0].clone();
+            return Self { bars, line };
+        }
+        let split = call.cells.len();
+        let mut cells = call.cells;
+        cells.extend(answer.cells);
+        let line = dressed(&Motif { cells }, germ);
+        let bars = [
+            Motif {
+                cells: line.cells[..split].to_vec(),
+            },
+            Motif {
+                cells: line.cells[split..].to_vec(),
+            },
+        ];
+        Self { bars, line }
+    }
+
+    /// The bar a phrase plays `position` bars after it starts: call, answer, call, answer.
+    fn bar(&self, position: usize) -> &Motif {
+        &self.bars[position % TUNE_BARS]
+    }
+}
+
 /// The intensity the piece-level germ is drawn at.
 ///
 /// Between a verse's 0.55 and a chorus's 0.9, because the germ belongs to the piece and not to
@@ -494,7 +564,11 @@ pub(super) fn melody(
     // that is all `dressed` reads — the rhythm every section says it in stays the section's.
     // Nothing is drawn from the germ stream in that case, which is safe precisely because it is
     // its own stream: no other decision in the piece shares it, so skipping it shifts nothing.
-    let germ = if settings.motif.len() >= 2 {
+    //
+    // A drawn germ is [`TUNE_BARS`] long, one line across the bar that calls and the bar that
+    // answers. A given one is as long as it was typed, and each of the two bars says it whole.
+    let given = settings.motif.len() >= 2;
+    let germ = if given {
         Motif {
             cells: settings
                 .motif
@@ -523,15 +597,19 @@ pub(super) fn melody(
             density_at(settings, part, GERM_INTENSITY),
             settings.mood.syncopation,
             settings.style,
+            TUNE_BARS,
             &mut germinate,
         )
     };
 
-    // One figure per part and section, restated bar after bar. Keyed by neither the bar nor the
-    // instance, so every bar of every playing reaches for the same one. Its rhythm is the
-    // section's own — a chorus is busier than its verse because the section's intensity is in
-    // `density` — and its contour is then re-dressed in the germ's, so what changes between
+    // One figure per part and section, restated phrase after phrase. Keyed by neither the bar
+    // nor the instance, so every phrase of every playing reaches for the same one. Its rhythm is
+    // the section's own — a chorus is busier than its verse because the section's intensity is
+    // in `density` — and its contour is then re-dressed in the germ's, so what changes between
     // sections is how the tune is said, not which tune it is.
+    //
+    // The figure is two bars: a call and the bar that answers it, each with a rhythm of its own.
+    // A written rhythm is the exception, because somebody typed one bar and meant every bar.
     let mut invent = Rng::stream(
         frame.seed,
         &[
@@ -541,7 +619,7 @@ pub(super) fn melody(
             RngKey::Word(&section.name),
         ],
     );
-    let figure = motif(
+    let call = motif(
         grid,
         part.rhythm.as_ref(),
         density,
@@ -549,7 +627,21 @@ pub(super) fn melody(
         settings.style,
         &mut invent,
     );
-    let figure = dressed(&figure, &germ);
+    let answer = match part.rhythm {
+        Some(_) => call.clone(),
+        None => Motif {
+            cells: melody_rhythm::answering(
+                grid,
+                density,
+                settings.mood.syncopation,
+                settings.style,
+                &call.cells,
+                &mut invent,
+            ),
+        },
+    };
+    let tune = Tune::dressed(call, answer, &germ, given);
+    let crossings = melody_flow::Crossings::plan(settings, frame, section, part);
 
     let mut notes = Vec::new();
     // The pitch the last bar finished on, which the next one is joined to. `None` until the
@@ -559,17 +651,45 @@ pub(super) fn melody(
     for bar in 0..section.bars {
         let mut rng = bar_stream(frame, part, section, "melody", bar);
         let closing = section.closes_phrase(bar);
+        // Which bar of the figure this is: a phrase starts on the call whatever bar of the
+        // section it starts in, so a five-bar section's second phrase still opens with it.
+        let position = section
+            .phrase_at(bar)
+            .map_or(bar, |phrase| bar.saturating_sub(phrase.start_bar));
+        let role = section.phrase_at(bar).map(|phrase| phrase.role);
+        // A continuation leads with the answer: the same two bars the other way round. It is
+        // the cheapest contrast there is — nothing new to remember, and the phrase still does
+        // not begin the way the one before it did — and without it every phrase of a section
+        // opened on the same bar, which is how a bar came to match the one four before it
+        // four times in five. A written rhythm is one bar and has no order to turn round.
+        let leading = usize::from(role == Some(PhraseRole::Continuation) && part.rhythm.is_none());
         let (mut cells, inflection) = phrase_rhythm(
-            &figure,
+            tune.bar(position + leading),
             section.phrase_at(bar),
             bar,
             part.rhythm.is_some(),
             &mut rng,
         );
         if closing && part.rhythm.is_none() {
-            melody_rhythm::close_phrase(grid, &mut cells);
+            // A pickup into the next phrase comes first, because it needs the room made for it
+            // here; if it is refused later, the phrase has only breathed a little longer.
+            // After that, the section's last phrase has arrived whatever it is called, and so
+            // has one that answers or releases. The others pause.
+            let ending = match role {
+                _ if crossings.follow(section, bar) => melody_rhythm::Ending::Early,
+                Some(PhraseRole::Answer | PhraseRole::Release) => melody_rhythm::Ending::Closed,
+                _ if bar + 1 == section.bars => melody_rhythm::Ending::Closed,
+                _ => melody_rhythm::Ending::Open,
+            };
+            melody_rhythm::close_phrase(grid, &mut cells, ending);
         }
-        phrase_line.develop(&figure, &mut cells, section.phrase_at(bar), bar, inflection);
+        phrase_line.develop(
+            &tune.line,
+            &mut cells,
+            section.phrase_at(bar),
+            bar,
+            inflection,
+        );
         let bar_start = grid.bar_ticks() * bar as i64;
 
         // Where the whole figure sits this bar. The shape is the figure's; the height is whatever
@@ -813,6 +933,7 @@ pub(super) fn melody(
         }
     }
     melody_flow::connect(settings, frame, section, part, &mut notes);
+    melody_flow::cross_bar_lines(settings, frame, section, part, &crossings, &mut notes);
     notes
 }
 
@@ -893,19 +1014,21 @@ mod tests {
     use auris_core::time::Ticks;
 
     #[test]
-    fn the_melody_restates_its_call_and_echo_in_the_next_phrase() {
+    fn the_melody_restates_its_call_and_answer_in_the_next_phrase() {
         // Every bar used to roll its own rhythm from its own stream, so no figure ever recurred
-        // and a section had nothing in it to recognise.
+        // and a section had nothing in it to recognise. Then one bar's rhythm was every bar's,
+        // and there was nothing in it to tell apart. The figure is two bars — a call and the
+        // bar that answers it — and it is the two together that the next phrase restates.
         let (frame, parts) = lead("@axis", 8, 0, |_| {}).draft();
         let lead = part(&parts, "lead");
-        let figure = bar_steps(&frame, lead, 0);
-        assert!(!figure.is_empty(), "the melody played nothing at all");
+        let call = bar_steps(&frame, lead, 0);
+        assert!(!call.is_empty(), "the melody played nothing at all");
 
-        assert_eq!(bar_steps(&frame, lead, 4), figure);
-        let echo = bar_steps(&frame, lead, 1);
-        assert!(!echo.is_empty());
-        assert_eq!(bar_steps(&frame, lead, 5), echo);
-        assert_ne!(echo, figure, "the echo should answer the opening rhythm");
+        assert_eq!(bar_steps(&frame, lead, 4), call);
+        let answer = bar_steps(&frame, lead, 1);
+        assert!(!answer.is_empty());
+        assert_eq!(bar_steps(&frame, lead, 5), answer);
+        assert_ne!(answer, call, "the answer should not be the call again");
     }
 
     #[test]
@@ -1043,7 +1166,11 @@ mod tests {
                     &mut Rng::stream(seed, &[]),
                 );
                 if bar == 3 {
-                    melody_rhythm::close_phrase(Grid::default(), &mut cells);
+                    melody_rhythm::close_phrase(
+                        Grid::default(),
+                        &mut cells,
+                        melody_rhythm::Ending::Open,
+                    );
                 }
                 let timing: Vec<_> = cells
                     .cells
@@ -1104,7 +1231,11 @@ mod tests {
                                     &mut Rng::stream(seed, &[RngKey::Index(bar as u64)]),
                                 );
                                 if bar + 1 == bars {
-                                    melody_rhythm::close_phrase(grid, &mut figure);
+                                    melody_rhythm::close_phrase(
+                                        grid,
+                                        &mut figure,
+                                        melody_rhythm::Ending::Open,
+                                    );
                                 }
                                 let signature = |figure: &Motif| {
                                     figure
@@ -1169,30 +1300,147 @@ mod tests {
             for phrase in &section.phrases {
                 let boundary = frame.grid.bar_ticks() * phrase.end_bar() as i64;
                 let last_bar = boundary - frame.grid.bar_ticks();
-                let played: Vec<_> = lead
+                // The last felt beat belongs to the next phrase: empty, or holding the one note
+                // that leads into it. Everything sounding in the bar before that is this
+                // phrase's own — sounding rather than starting, because an arrival that was
+                // anticipated starts an offbeat ahead of the bar it arrives in.
+                let beat = frame.grid.signature.beat_ticks();
+                let (own, pickup): (Vec<&Draft>, Vec<&Draft>) = lead
                     .notes
                     .iter()
-                    .filter(|note| note.start >= last_bar && note.start < boundary)
-                    .collect();
-                assert!(!played.is_empty(), "seed {seed}: no phrase arrival");
-                let end = played
+                    .filter(|note| note.start + note.length > last_bar && note.start < boundary)
+                    .partition(|note| note.start < boundary - beat);
+                assert!(!own.is_empty(), "seed {seed}: no phrase arrival");
+                let end = own
                     .iter()
                     .map(|note| note.start + note.length)
                     .max()
                     .unwrap();
                 assert!(
-                    end <= boundary - frame.grid.signature.beat_ticks(),
+                    end <= boundary - beat,
                     "seed {seed}: phrase {} ended at {end:?}, boundary {boundary:?}",
                     phrase.start_bar,
                 );
+                assert!(
+                    pickup.len() <= 1,
+                    "seed {seed}: {} notes in the breath after phrase {}",
+                    pickup.len(),
+                    phrase.start_bar,
+                );
+                if let Some(pickup) = pickup.first() {
+                    assert!(
+                        phrase.end_bar() < section.bars,
+                        "seed {seed}: a pickup leads out of the section's last phrase"
+                    );
+                    assert_eq!(pickup.start + pickup.length, boundary);
+                    assert!(
+                        end + beat <= pickup.start,
+                        "seed {seed}: phrase {} ran into its successor's pickup",
+                        phrase.start_bar,
+                    );
+                }
             }
         }
+    }
+
+    /// The steps each bar of a sixteen-bar generated take starts a note on.
+    fn bar_rhythms(seed: u64) -> Vec<Vec<usize>> {
+        let (frame, parts) = lead("@axis", 16, seed, |_| {}).draft();
+        let lead = part(&parts, "lead");
+        (0..16).map(|bar| bar_steps(&frame, lead, bar)).collect()
+    }
+
+    #[test]
+    fn a_section_is_not_one_bar_said_sixteen_times() {
+        // The fifth pass of `crate::melodic`, held at the size of a test. One bar's rhythm
+        // used to be stamped on every bar of a section: it was the rhythm of 54 bars in a
+        // hundred, and a bar had the onsets of the bar four before it 80 times in a hundred.
+        // Sung pop lines give their commonest bar 26 and repeat a bar four on 23 times. The
+        // bands sit between what the writer does now and what it did then, and the lower
+        // one guards the other way: a section in which nothing ever came back would have
+        // nothing in it to recognise.
+        let (mut recurring, mut pairs, mut commonest, mut bars) = (0, 0, 0, 0);
+        let mut one_bar_figures = 0;
+        for seed in 1..=16u64 {
+            let rhythms = bar_rhythms(seed);
+            // Statement, continuation, statement, release: the third phrase opens exactly as
+            // the first did, which is the section's figure coming back.
+            assert_eq!(rhythms[8..10], rhythms[0..2], "seed {seed}");
+            one_bar_figures += usize::from(rhythms[0] == rhythms[1]);
+            for bar in 4..16 {
+                pairs += 1;
+                recurring += usize::from(rhythms[bar] == rhythms[bar - 4]);
+            }
+            let mut counts = std::collections::BTreeMap::new();
+            for rhythm in &rhythms {
+                *counts.entry(rhythm).or_insert(0usize) += 1;
+            }
+            commonest += counts.values().max().copied().unwrap_or(0);
+            bars += rhythms.len();
+        }
+        assert!(
+            one_bar_figures <= 1,
+            "{one_bar_figures} of 16 takes answer the call with the call"
+        );
+        let recurring = 100.0 * recurring as f64 / pairs as f64;
+        assert!(
+            (8.0..50.0).contains(&recurring),
+            "{recurring:.1}% of bars have the rhythm of the bar four before"
+        );
+        let commonest = 100.0 * commonest as f64 / bars as f64;
+        assert!(
+            commonest < 43.0,
+            "the commonest bar rhythm is {commonest:.1}% of a section"
+        );
+    }
+
+    #[test]
+    fn the_line_crosses_bar_lines_and_some_phrases_are_led_into() {
+        // A figure's cells begin and end inside their own bar, so no note was ever held
+        // across a bar line and every phrase entered where the one before it had. Both are
+        // choices now, and neither is made every time: an anticipation heard in every take
+        // and a pickup into every phrase would be the same uniformity moved somewhere else.
+        let (mut held_over, mut takes_holding, mut led_in, mut phrases) = (0, 0, 0, 0);
+        for seed in 1..=32u64 {
+            let (frame, parts) = lead("@axis", 16, seed, |_| {}).draft();
+            let lead = part(&parts, "lead");
+            let bar = frame.grid.bar_ticks().raw();
+            let beat = frame.grid.signature.beat_ticks();
+            let held = lead
+                .notes
+                .iter()
+                .filter(|note| {
+                    let last = note.start.raw() + note.length.raw() - 1;
+                    note.start.raw() / bar != last / bar
+                })
+                .count();
+            held_over += held;
+            takes_holding += usize::from(held > 0);
+            for phrase in frame.sections[0].phrases.iter().skip(1) {
+                let start = frame.grid.bar_ticks() * phrase.start_bar as i64;
+                phrases += 1;
+                led_in += usize::from(
+                    lead.notes
+                        .iter()
+                        .any(|note| note.start >= start - beat && note.start < start),
+                );
+            }
+        }
+        assert!(held_over > 0, "no note is held across a bar line");
+        assert!(
+            (4..=28).contains(&takes_holding),
+            "{takes_holding} of 32 takes hold a note across a bar line"
+        );
+        assert!(
+            led_in * 5 > phrases && led_in * 5 < phrases * 4,
+            "{led_in} of {phrases} phrases are led into by a pickup"
+        );
     }
 
     #[test]
     fn a_planned_arrival_keeps_the_answers_final_contour_degree() {
         let mut figure = figure_of(&[(0, 0), (2, 1), (4, 2), (8, 3), (12, 1), (15, -1)]);
-        melody_rhythm::close_phrase(Grid::default(), &mut figure);
+        melody_rhythm::close_phrase(Grid::default(), &mut figure, melody_rhythm::Ending::Open);
         assert_eq!(figure.cells.last().unwrap().degree, -1);
     }
 
