@@ -197,8 +197,8 @@ mod sound_icons;
 pub use session::{TrackConversion, TrackConversionJob};
 pub use settings::{
     AgentEndpoint, AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences,
-    InputCalibration, PianoRollGrid, ReasoningEffort, Settings, ToolbarEntry, ToolbarItem,
-    ToolbarPreferences, TypingCalibration, WindowPlacement, config_dir,
+    InputCalibration, MidiPreferences, PianoRollGrid, ReasoningEffort, Settings, ToolbarEntry,
+    ToolbarItem, ToolbarPreferences, TypingCalibration, VelocityCurve, WindowPlacement, config_dir,
 };
 pub use singer_portrait::{
     SingerPortraitError, SingerPortraitSource, load_singer_icon, load_singer_portrait,

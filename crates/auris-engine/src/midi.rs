@@ -61,6 +61,37 @@ const EVENT_CAPACITY: usize = 8192;
 /// The name this program gives itself to the MIDI backend.
 const CLIENT_NAME: &str = "Auris Studio";
 
+/// How hard a key has to be struck for how loud a note.
+///
+/// Keyboards differ, and so do hands: a small keyboard's keys are often stiff enough that its
+/// full range is out of reach, which is what a softer curve gives back.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum VelocityResponse {
+    /// The keyboard's own reading raised to this power: 1 is as it comes, below 1 makes a light
+    /// touch louder, above 1 makes it quieter.
+    Curve(f32),
+    /// Every note at this velocity, however it was struck.
+    Fixed(f32),
+}
+
+impl Default for VelocityResponse {
+    fn default() -> Self {
+        Self::Curve(1.0)
+    }
+}
+
+impl VelocityResponse {
+    /// The velocity, 0 to 1, a strike read as `raw` (1 to 127) sounds at.
+    pub fn shape(self, raw: u8) -> f32 {
+        let linear = f32::from(raw.min(127)) / 127.0;
+        match self {
+            Self::Curve(power) if power.is_finite() && power > 0.0 => linear.powf(power),
+            Self::Curve(_) => linear,
+            Self::Fixed(velocity) => velocity.clamp(0.0, 1.0),
+        }
+    }
+}
+
 /// One MIDI message, as far as an instrument is concerned.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum MidiMessage {
@@ -226,9 +257,16 @@ pub struct LivePlayer {
     /// Tracks this keyboard has bent or moved a controller on, and which controllers, so that
     /// letting go of everything can put them back.
     touched: Vec<(LiveTarget, Option<u8>)>,
+    /// How a strike's reading becomes a velocity.
+    response: VelocityResponse,
 }
 
 impl LivePlayer {
+    /// Chooses how a strike's reading becomes a velocity.
+    pub fn set_response(&mut self, response: VelocityResponse) {
+        self.response = response;
+    }
+
     /// Answers one message, played towards `target`.
     ///
     /// A key that comes up is released on the track it went down on, wherever the target has
@@ -264,7 +302,7 @@ impl LivePlayer {
                     target,
                     Performed::NoteOn {
                         pitch,
-                        velocity: f32::from(velocity) / 127.0,
+                        velocity: self.response.shape(velocity),
                     },
                 ));
                 out
@@ -585,6 +623,15 @@ impl MidiInputs {
         carry_out(&mut shared, performed, &self.log);
     }
 
+    /// Chooses how a strike's reading becomes a velocity, from the next note on.
+    pub fn set_velocity_response(&self, response: VelocityResponse) {
+        self.shared
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .player
+            .set_response(response);
+    }
+
     /// Everything played since the last call, oldest first.
     pub fn drain(&self) -> Vec<MidiEvent> {
         self.events.try_iter().collect()
@@ -762,6 +809,25 @@ mod tests {
         assert_eq!(again[0], (LEAD, Performed::NoteOff { pitch: 60 }));
         assert!(matches!(again[1].1, Performed::NoteOn { pitch: 60, .. }));
         assert_eq!(player.sounding().count(), 1);
+    }
+
+    #[test]
+    fn a_velocity_curve_reshapes_the_strike_and_a_fixed_one_ignores_it() {
+        assert_eq!(VelocityResponse::default().shape(127), 1.0);
+        let soft = VelocityResponse::Curve(0.5).shape(32);
+        let linear = VelocityResponse::Curve(1.0).shape(32);
+        let hard = VelocityResponse::Curve(2.0).shape(32);
+        assert!(soft > linear && linear > hard);
+        assert_eq!(VelocityResponse::Fixed(0.8).shape(10), 0.8);
+        let mut player = LivePlayer::default();
+        player.set_response(VelocityResponse::Fixed(0.5));
+        assert_eq!(
+            player.play(on(60), Some(LEAD))[0].1,
+            Performed::NoteOn {
+                pitch: 60,
+                velocity: 0.5
+            }
+        );
     }
 
     #[test]

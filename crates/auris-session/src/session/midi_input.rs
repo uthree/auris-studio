@@ -20,7 +20,7 @@
 use std::time::{Duration, Instant};
 
 use auris_core::TrackId;
-use auris_engine::{LiveTarget, MidiInputs, Performed};
+use auris_engine::{LiveTarget, MidiInputs, Performed, VelocityResponse};
 
 use super::Session;
 
@@ -50,7 +50,16 @@ pub(super) struct MidiInput {
     refused: Vec<String>,
     /// Inputs opened since a frontend last asked, for it to announce.
     opened: Vec<String>,
+    /// Inputs the system has, as of the last look, whether listened to or not.
+    available: Vec<String>,
+    /// Inputs somebody has said not to listen to.
+    ignored: Vec<String>,
+    /// Notes struck since a frontend last asked, for a control learning which note a key sends.
+    struck: Vec<u8>,
 }
+
+/// How many struck notes wait for a frontend before the oldest are forgotten.
+const STRUCK_CAPACITY: usize = 64;
 
 impl Session {
     /// Whether MIDI keyboards are being listened to.
@@ -73,6 +82,47 @@ impl Session {
         } else {
             self.midi.inputs.close();
         }
+    }
+
+    /// Every MIDI input the system had at the last look, listened to or not.
+    pub fn available_midi_inputs(&self) -> &[String] {
+        &self.midi.available
+    }
+
+    /// Stops listening to the inputs named in `ignored`, and starts again on any no longer named.
+    ///
+    /// By name, because a name is what survives a keyboard being unplugged and plugged back in;
+    /// a name the system does not have is kept, so the choice holds for when it comes back.
+    pub fn set_ignored_midi_inputs(&mut self, ignored: Vec<String>) {
+        if self.midi.ignored == ignored {
+            return;
+        }
+        self.midi.ignored = ignored;
+        self.midi.scanned = None;
+        if self.midi.enabled {
+            self.service_midi(Instant::now());
+        }
+    }
+
+    /// Takes up everything in a set of MIDI preferences that the session acts on.
+    ///
+    /// Whether to listen at all is left to the frontend, which knows which of its windows is
+    /// being heard; see [`Self::set_midi_input`].
+    pub fn apply_midi_preferences(&mut self, preferences: &crate::settings::MidiPreferences) {
+        self.set_ignored_midi_inputs(preferences.ignored_inputs.clone());
+        self.set_midi_velocity(preferences.velocity.response());
+        self.set_note_record_mode(preferences.record_mode);
+        self.set_record_quantize(preferences.record_quantize());
+    }
+
+    /// Chooses how hard a key has to be struck for how loud a note, from the next note on.
+    pub fn set_midi_velocity(&mut self, response: VelocityResponse) {
+        self.midi.inputs.set_velocity_response(response);
+    }
+
+    /// The notes struck on a MIDI keyboard since the last call, oldest first.
+    pub fn take_midi_struck(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.midi.struck)
     }
 
     /// The MIDI inputs being listened to, by the names the system gives them.
@@ -156,11 +206,16 @@ impl Session {
                 return;
             }
         };
+        self.midi.available = available.clone();
+        let ignored = &self.midi.ignored;
         let gone: Vec<String> = self
             .midi
             .inputs
             .connected()
-            .filter(|open| !available.iter().any(|name| name == open))
+            .filter(|open| {
+                !available.iter().any(|name| name == open)
+                    || ignored.iter().any(|name| name == open)
+            })
             .map(str::to_string)
             .collect();
         self.midi
@@ -175,7 +230,9 @@ impl Session {
             self.midi.inputs.release_all();
         }
         for name in available {
-            if self.midi.inputs.connected().any(|open| open == name) {
+            if self.midi.inputs.connected().any(|open| open == name)
+                || self.midi.ignored.contains(&name)
+            {
                 continue;
             }
             match self.midi.inputs.connect(&name) {
@@ -218,6 +275,10 @@ impl Session {
             let at = event.frame;
             match event.performed {
                 Performed::NoteOn { pitch, velocity } => {
+                    if self.midi.struck.len() >= STRUCK_CAPACITY {
+                        self.midi.struck.remove(0);
+                    }
+                    self.midi.struck.push(pitch);
                     self.note_take_struck_at(event.track, pitch, velocity, at);
                     self.step_struck(event.track, pitch, velocity);
                 }
@@ -321,5 +382,33 @@ mod tests {
         session.release_midi_notes();
         assert!(session.midi_sounding().is_empty());
         assert!(session.take_midi_activity());
+    }
+
+    #[test]
+    fn preferences_reach_the_take() {
+        let mut session = session();
+        let preferences = crate::settings::MidiPreferences {
+            quantize_division: 16,
+            quantize_strength: 0.5,
+            record_mode: crate::NoteRecordMode::Merge,
+            ..Default::default()
+        };
+        session.apply_midi_preferences(&preferences);
+        assert_eq!(session.note_record_mode(), crate::NoteRecordMode::Merge);
+        let quantize = session.record_quantize().unwrap();
+        assert_eq!(quantize.grid, auris_core::Ticks(240), "a sixteenth");
+        assert_eq!(quantize.strength, 0.5);
+    }
+
+    #[test]
+    fn struck_notes_wait_for_whoever_is_learning_one() {
+        let mut session = session();
+        let lead = session.add_default_instrument_track("Lead").unwrap();
+        session.set_midi_target(Some(lead));
+        session.midi.inputs.receive(&[0x90, 38, 100]);
+        session.midi.inputs.receive(&[0x80, 38, 0]);
+        session.drain_midi();
+        assert_eq!(session.take_midi_struck(), vec![38]);
+        assert!(session.take_midi_struck().is_empty(), "read once");
     }
 }
