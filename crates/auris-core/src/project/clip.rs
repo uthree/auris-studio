@@ -3308,6 +3308,52 @@ mod tests {
     }
 
     #[test]
+    fn a_split_joined_back_draws_every_curve_it_drew_before() {
+        let (mut project, _, left, _) = side_by_side();
+        let point = |beats: f64, value: f32| CurvePoint {
+            at: Ticks::from_beats(beats),
+            value,
+        };
+        let curves = [
+            // A slope the cut goes through, coming back down to rest at the clip's end.
+            (
+                ClipCurve::Bend,
+                vec![point(0.0, 0.0), point(3.0, 1.5), point(4.0, 0.0)],
+            ),
+            // Set once and held.
+            (ClipCurve::Controller(11), vec![point(0.0, 0.8)]),
+            // Drawn only after the cut.
+            (
+                ClipCurve::Controller(1),
+                vec![point(3.0, 0.5), point(3.5, 1.0)],
+            ),
+        ];
+        for (which, points) in &curves {
+            *project.midi_clip_mut(left).unwrap().curve_mut(*which) = points.clone();
+        }
+        let whole = project.midi_clip(left).unwrap().1.clone();
+        let right = project
+            .split_clip(left, whole.start + Ticks::from_beats(2.0))
+            .unwrap();
+
+        let joined = project.join_midi_clips(&[left, right]).unwrap();
+
+        let (_, clip) = project.midi_clip(joined).unwrap();
+        assert_eq!(clip.length, whole.length);
+        for (which, _) in &curves {
+            for tick in 0..clip.length.raw() {
+                let at = Ticks(tick);
+                let read = clip.curve_at(*which, at);
+                let drawn = whole.curve_at(*which, at);
+                assert!(
+                    (read - drawn).abs() < 1.0e-4,
+                    "{which:?} at {tick}: {read}, drew {drawn}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_piece_laid_over_another_hands_the_curve_back_where_it_ends() {
         let mut project = Project::new("Demo", 48_000.0);
         let track = project.add_instrument_track("Lead", "x");
