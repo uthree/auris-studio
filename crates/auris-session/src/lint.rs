@@ -32,6 +32,7 @@ mod audio;
 mod fix;
 mod score;
 
+pub(crate) use audio::off_target;
 pub use audio::{AUDIO_LINT_RATE, AudioLintJob, AudioLintResult, AudioSummary};
 pub use score::{TIGHT_STRUM_MS, lint_score};
 

@@ -357,7 +357,7 @@ pub enum Command {
     VerifyRender {
         /// Workspace-relative (renders/mix.wav) or absolute local WAV path to inspect.
         path: String,
-        /// Optional target loudness, -60..-6 LUFS.
+        /// Target loudness, -60..-6 LUFS. Omitted, the file is held to the range the song's style names (a loop -16 to -18, dance -9 to -11), or loudness is not checked when the style names none.
         target_lufs: Option<f32>,
         /// True-peak ceiling, -12..0 dBTP; default -1.
         ceiling_db: Option<f32>,

@@ -543,7 +543,7 @@ impl AudioLintJob {
 /// The edge of `range` a mix at `lufs` falls past, or `None` inside it. Half a unit either side
 /// is allowed: integrated loudness moves that much between two renders of one mix at the lint's
 /// rate and at the delivery rate.
-fn off_target(lufs: f32, (low, high): (f32, f32)) -> Option<f32> {
+pub(crate) fn off_target(lufs: f32, (low, high): (f32, f32)) -> Option<f32> {
     const SLACK: f32 = 0.5;
     if lufs < low - SLACK {
         Some(low)
