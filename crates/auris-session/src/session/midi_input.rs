@@ -271,9 +271,19 @@ impl Session {
     }
 
     /// Hands what was played to the take listening for it.
+    ///
+    /// Each event is moved earlier by the latency a tap-along measured, so a note lands where
+    /// the player meant it rather than where it reached the computer.
     fn drain_midi(&mut self) {
+        let rate = self.engine.sample_rate().max(1.0);
+        let lag = self.midi_lag_ms() / 1000.0 * rate;
         for event in self.midi.inputs.drain() {
-            let at = event.frame;
+            if let Performed::NoteOn { .. } = event.performed {
+                // A tap is measured as heard, before any correction: what is being found out is
+                // the very lateness the correction takes off.
+                self.tap_midi_calibration(event.frame);
+            }
+            let at = event.frame - lag;
             match event.performed {
                 Performed::NoteOn { pitch, velocity } => {
                     if self.midi.struck.len() >= STRUCK_CAPACITY {
@@ -413,6 +423,52 @@ mod tests {
         session.midi.inputs.receive(&[0x90, 60, 100]);
         assert_eq!(session.midi_sounding(), vec![48]);
         session.release_midi_notes();
+    }
+
+    #[test]
+    fn a_tap_along_on_a_midi_keyboard_takes_its_notes_as_taps() {
+        let mut session = session();
+        let lead = session.add_default_instrument_track("Lead").unwrap();
+        session.set_midi_target(Some(lead));
+        session.start_midi_calibration().unwrap();
+        assert!(session.calibrating_midi());
+        assert!(
+            !session.calibrating_typing(),
+            "the typing keyboard is not the one measured"
+        );
+        session.midi.inputs.receive(&[0x90, 60, 100]);
+        session.drain_midi();
+        let taps = session
+            .typing_calibration_run
+            .as_ref()
+            .map(|run| run.tap_count())
+            .unwrap();
+        assert_eq!(taps, 1);
+        session.cancel_typing_calibration();
+        assert!(!session.calibrating_midi());
+        assert!(session.take_midi_calibration().is_none());
+    }
+
+    #[test]
+    fn a_measured_midi_latency_moves_recorded_notes_earlier() {
+        let mut session = session();
+        let lead = session.add_default_instrument_track("Lead").unwrap();
+        session.set_midi_target(Some(lead));
+        session.audio.midi_calibration = Some(crate::settings::TypingCalibration {
+            offset_ms: 10.0,
+            spread_ms: 1.0,
+        });
+        session.start_recording(Some(lead)).unwrap();
+        session.midi.inputs.receive(&[0x90, 60, 100]);
+        session.drain_midi();
+        // A silent session hears frame zero; the note is written ten milliseconds before it.
+        let rate = session.engine.sample_rate();
+        let struck = session
+            .note_take
+            .as_ref()
+            .and_then(|take| take.first_struck());
+        assert_eq!(struck, Some(-rate / 100.0));
+        assert_eq!(session.midi_lag_ms(), 10.0);
     }
 
     #[test]

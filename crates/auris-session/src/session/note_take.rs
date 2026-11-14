@@ -130,6 +130,12 @@ impl NoteTake {
         self.track
     }
 
+    /// Where the first note still held was struck.
+    #[cfg(test)]
+    pub(super) fn first_struck(&self) -> Option<f64> {
+        self.held.first().map(|held| held.2)
+    }
+
     /// Folds an event's frame into the cycle and says which pass it is in.
     fn stamp(&mut self, at: f64) -> (f64, usize) {
         let reckoned = self

@@ -605,6 +605,8 @@ pub struct Session {
     typing_calibration_run: Option<typing_calibration::TypingCalibrationRun>,
     /// How the last tap-along came out, until a frontend asks.
     typing_calibration_result: Option<Result<crate::settings::TypingCalibration, SessionError>>,
+    /// How the last tap-along on a MIDI keyboard came out, until a frontend asks.
+    midi_calibration_result: Option<Result<crate::settings::TypingCalibration, SessionError>>,
     /// The Japanese text frontend: the folder the settings name, or the shipped dictionary.
     ///
     /// `None` only where neither exists, and the session sings anyway: kana lyrics go
@@ -839,6 +841,7 @@ impl Session {
             note_take: None,
             typing_calibration_run: None,
             typing_calibration_result: None,
+            midi_calibration_result: None,
             calibration_result: None,
             graph_latency: 0,
             input: None,

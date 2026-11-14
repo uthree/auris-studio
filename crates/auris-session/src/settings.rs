@@ -189,6 +189,13 @@ pub struct AudioPreferences {
     /// none of which changes with the audio interface. See
     /// [`Session::start_typing_calibration`](crate::Session::start_typing_calibration).
     pub typing_calibration: Option<TypingCalibration>,
+    /// How late a MIDI keyboard's notes arrive against what is being heard, once measured.
+    ///
+    /// Measured the same way, by tapping along to a click, and kept beside it: the keyboard's
+    /// own scan, its USB link and driver, and the player's habit. One figure rather than one
+    /// per keyboard, because most desks have one. See
+    /// [`Session::start_midi_calibration`](crate::Session::start_midi_calibration).
+    pub midi_calibration: Option<TypingCalibration>,
 }
 
 /// How late the typing keyboard's notes arrive, as measured by tapping along to a click.
@@ -248,6 +255,7 @@ impl Default for AudioPreferences {
             block_frames: 512,
             input_calibrations: Vec::new(),
             typing_calibration: None,
+            midi_calibration: None,
         }
     }
 }
