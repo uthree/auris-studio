@@ -111,6 +111,7 @@ impl Session {
     pub fn apply_midi_preferences(&mut self, preferences: &crate::settings::MidiPreferences) {
         self.set_ignored_midi_inputs(preferences.ignored_inputs.clone());
         self.set_midi_velocity(preferences.velocity.response());
+        self.midi.inputs.set_octave(preferences.octave);
         self.set_note_record_mode(preferences.record_mode);
         self.set_record_quantize(preferences.record_quantize());
     }
@@ -398,6 +399,20 @@ mod tests {
         let quantize = session.record_quantize().unwrap();
         assert_eq!(quantize.grid, auris_core::Ticks(240), "a sixteenth");
         assert_eq!(quantize.strength, 0.5);
+    }
+
+    #[test]
+    fn the_octave_in_the_preferences_moves_what_a_key_sounds() {
+        let mut session = session();
+        let lead = session.add_default_instrument_track("Lead").unwrap();
+        session.set_midi_target(Some(lead));
+        session.apply_midi_preferences(&crate::settings::MidiPreferences {
+            octave: -1,
+            ..Default::default()
+        });
+        session.midi.inputs.receive(&[0x90, 60, 100]);
+        assert_eq!(session.midi_sounding(), vec![48]);
+        session.release_midi_notes();
     }
 
     #[test]

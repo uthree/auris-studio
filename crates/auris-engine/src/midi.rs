@@ -248,10 +248,10 @@ pub struct MidiEvent {
 /// tested without a keyboard plugged in. [`MidiInputs`] owns one and carries out its answers.
 #[derive(Clone, Debug, Default)]
 pub struct LivePlayer {
-    /// Keys that are down: channel, note, and the track the note went to.
-    held: Vec<(u8, u8, LiveTarget)>,
+    /// Keys that are down.
+    held: Vec<Key>,
     /// Notes whose keys came up under the pedal, still sounding.
-    sustained: Vec<(u8, u8, LiveTarget)>,
+    sustained: Vec<Key>,
     /// Channels whose pedal is down.
     pedal: u16,
     /// Tracks this keyboard has bent or moved a controller on, and which controllers, so that
@@ -259,9 +259,58 @@ pub struct LivePlayer {
     touched: Vec<(LiveTarget, Option<u8>)>,
     /// How a strike's reading becomes a velocity.
     response: VelocityResponse,
+    /// How many octaves up (or down, below zero) a key sounds from the note it sends.
+    octave: i8,
 }
 
+/// A key that is down, or that the pedal is holding.
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct Key {
+    /// The channel it came on.
+    channel: u8,
+    /// The note the keyboard sent for it.
+    key: u8,
+    /// The track the note went to.
+    target: LiveTarget,
+    /// The note that sounded: the key moved by the octave in force when it went down.
+    sounded: u8,
+}
+
+impl Key {
+    fn is(&self, channel: u8, key: u8) -> bool {
+        self.channel == channel && self.key == key
+    }
+
+    fn release(&self) -> (LiveTarget, Performed) {
+        (
+            self.target,
+            Performed::NoteOff {
+                pitch: self.sounded,
+            },
+        )
+    }
+}
+
+/// How far an octave shift can go either way.
+///
+/// Four, which takes the middle C of any keyboard to either end of the piano and a 25-key
+/// keyboard's whole span to the top or bottom of MIDI's — further would only put keys off the end.
+pub const MIDI_OCTAVE_LIMIT: i8 = 4;
+
 impl LivePlayer {
+    /// Moves what every key sounds by `octave` octaves, from the next key down.
+    ///
+    /// Keys already down keep sounding the note they struck and release it, as an instrument's
+    /// own octave switch does.
+    pub fn set_octave(&mut self, octave: i8) {
+        self.octave = octave.clamp(-MIDI_OCTAVE_LIMIT, MIDI_OCTAVE_LIMIT);
+    }
+
+    /// The octave shift in force.
+    pub fn octave(&self) -> i8 {
+        self.octave
+    }
+
     /// Chooses how a strike's reading becomes a velocity.
     pub fn set_response(&mut self, response: VelocityResponse) {
         self.response = response;
@@ -285,33 +334,40 @@ impl LivePlayer {
                 let Some(target) = target else {
                     return Vec::new();
                 };
+                // A key shifted past either end of MIDI's range sounds nothing, rather than a
+                // note folded back into it that nobody played.
+                let Ok(sounded) = u8::try_from(i16::from(pitch) + 12 * i16::from(self.octave))
+                else {
+                    return Vec::new();
+                };
+                if sounded > 127 {
+                    return Vec::new();
+                }
                 let mut out = Vec::with_capacity(2);
                 // Struck again while it was still sounding — through the pedal, or a second
                 // keyboard — ends the first note where the second begins.
                 for list in [&mut self.held, &mut self.sustained] {
-                    if let Some(position) = list
-                        .iter()
-                        .position(|held| held.0 == channel && held.1 == pitch)
-                    {
-                        let (_, _, before) = list.remove(position);
-                        out.push((before, Performed::NoteOff { pitch }));
+                    if let Some(position) = list.iter().position(|held| held.is(channel, pitch)) {
+                        out.push(list.remove(position).release());
                     }
                 }
-                self.held.push((channel, pitch, target));
+                self.held.push(Key {
+                    channel,
+                    key: pitch,
+                    target,
+                    sounded,
+                });
                 out.push((
                     target,
                     Performed::NoteOn {
-                        pitch,
+                        pitch: sounded,
                         velocity: self.response.shape(velocity),
                     },
                 ));
                 out
             }
             MidiMessage::NoteOff { channel, pitch } => {
-                let Some(position) = self
-                    .held
-                    .iter()
-                    .position(|held| held.0 == channel && held.1 == pitch)
+                let Some(position) = self.held.iter().position(|held| held.is(channel, pitch))
                 else {
                     return Vec::new();
                 };
@@ -320,7 +376,7 @@ impl LivePlayer {
                     self.sustained.push(held);
                     return Vec::new();
                 }
-                vec![(held.2, Performed::NoteOff { pitch })]
+                vec![held.release()]
             }
             MidiMessage::Controller {
                 channel,
@@ -334,12 +390,9 @@ impl LivePlayer {
                 self.pedal &= !(1 << channel);
                 let (released, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.sustained)
                     .into_iter()
-                    .partition(|held| held.0 == channel);
+                    .partition(|held| held.channel == channel);
                 self.sustained = kept;
-                released
-                    .into_iter()
-                    .map(|(_, pitch, target)| (target, Performed::NoteOff { pitch }))
-                    .collect()
+                released.iter().map(Key::release).collect()
             }
             MidiMessage::Controller { number, value, .. } => {
                 let Some(target) = target else {
@@ -377,7 +430,7 @@ impl LivePlayer {
             .held
             .drain(..)
             .chain(self.sustained.drain(..))
-            .map(|(_, pitch, target)| (target, Performed::NoteOff { pitch }))
+            .map(|held| held.release())
             .collect();
         self.pedal = 0;
         for (target, controller) in self.touched.drain(..) {
@@ -397,7 +450,7 @@ impl LivePlayer {
         self.held
             .iter()
             .chain(self.sustained.iter())
-            .map(|held| held.1)
+            .map(|held| held.sounded)
     }
 
     /// Remembers that a wheel on `target` has been moved away from rest.
@@ -623,6 +676,15 @@ impl MidiInputs {
         carry_out(&mut shared, performed, &self.log);
     }
 
+    /// Moves what every key sounds by `octave` octaves, from the next key down.
+    pub fn set_octave(&self, octave: i8) {
+        self.shared
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .player
+            .set_octave(octave);
+    }
+
     /// Chooses how a strike's reading becomes a velocity, from the next note on.
     pub fn set_velocity_response(&self, response: VelocityResponse) {
         self.shared
@@ -828,6 +890,38 @@ mod tests {
                 velocity: 0.5
             }
         );
+    }
+
+    #[test]
+    fn an_octave_shift_moves_every_key_and_a_held_key_releases_what_it_struck() {
+        let mut player = LivePlayer::default();
+        player.set_octave(1);
+        assert!(matches!(
+            player.play(on(60), Some(LEAD))[0].1,
+            Performed::NoteOn { pitch: 72, .. }
+        ));
+        // Moved back while the key is still down: the release still finds the note it struck.
+        player.set_octave(0);
+        assert_eq!(
+            player.play(off(60), Some(LEAD)),
+            vec![(LEAD, Performed::NoteOff { pitch: 72 })]
+        );
+        assert!(matches!(
+            player.play(on(60), Some(LEAD))[0].1,
+            Performed::NoteOn { pitch: 60, .. }
+        ));
+    }
+
+    #[test]
+    fn a_key_shifted_off_the_end_of_midi_sounds_nothing() {
+        let mut player = LivePlayer::default();
+        player.set_octave(MIDI_OCTAVE_LIMIT);
+        assert!(player.play(on(120), Some(LEAD)).is_empty());
+        assert!(player.play(off(120), Some(LEAD)).is_empty());
+        player.set_octave(-MIDI_OCTAVE_LIMIT);
+        assert!(player.play(on(10), Some(LEAD)).is_empty());
+        player.set_octave(100);
+        assert_eq!(player.octave(), MIDI_OCTAVE_LIMIT, "clamped");
     }
 
     #[test]

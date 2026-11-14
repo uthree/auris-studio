@@ -113,7 +113,8 @@ pub use handle::{EngineHandle, OutputPreviewOptions, OutputPreviewStatus, Stream
 pub use meter::MeterBank;
 pub use metronome::{Click, Metronome};
 pub use midi::{
-    LivePlayer, LiveTarget, MidiEvent, MidiInputs, MidiMessage, Performed, VelocityResponse,
+    LivePlayer, LiveTarget, MIDI_OCTAVE_LIMIT, MidiEvent, MidiInputs, MidiMessage, Performed,
+    VelocityResponse,
 };
 pub use monitor::MonitorRing;
 pub use offline::{

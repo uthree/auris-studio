@@ -858,6 +858,11 @@ pub struct MidiPreferences {
     pub ignored_inputs: Vec<String>,
     /// How hard a key has to be struck for how loud a note.
     pub velocity: VelocityCurve,
+    /// How many octaves up (below zero, down) every key sounds from the note it sends.
+    ///
+    /// Kept rather than reset on launch: a small keyboard is usually moved to where its owner
+    /// plays, and finding it back at the factory octave every morning would be a chore.
+    pub octave: i8,
     /// What a note take does with what was there before it.
     pub record_mode: crate::NoteRecordMode,
     /// The grid a note take is pulled to, as notes to a whole note: 4 is quarters, 16
@@ -873,6 +878,7 @@ impl Default for MidiPreferences {
             enabled: true,
             ignored_inputs: Vec::new(),
             velocity: VelocityCurve::default(),
+            octave: 0,
             record_mode: crate::NoteRecordMode::default(),
             quantize_division: 0,
             quantize_strength: 1.0,

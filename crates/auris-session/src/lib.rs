@@ -123,6 +123,7 @@ pub use auris_dsp::drum_analysis::{AcousticCharacter, DrumAcoustics, DrumSpectru
 pub use auris_dsp::timbre::MAX_TIMBRE_CLUSTERS;
 /// Workspace-owned engine error variants exposed for frontend localisation.
 pub use auris_engine::EngineError;
+pub use auris_engine::MIDI_OCTAVE_LIMIT;
 /// Completion status and cancellation of a queued or playing output audition.
 pub use auris_engine::{OutputPreviewOptions, OutputPreviewStatus};
 /// Workspace-owned file error variants exposed for frontend localisation.
