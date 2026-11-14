@@ -254,6 +254,27 @@ impl AurisApp {
         }
     }
 
+    /// Writes a chord clip with this many notes to each chord, or the chord's own for 0.
+    pub(crate) fn set_clip_voices(&mut self, clip: ClipId, voices: u8) {
+        let Some(recipe) = self.session.clip_recipe(clip) else {
+            return;
+        };
+        if recipe.voices == voices {
+            return;
+        }
+        let recipe = ClipRecipe {
+            voices,
+            ..recipe.clone()
+        };
+        match self.session.set_clip_recipe(clip, recipe) {
+            Ok(_) => {
+                self.forget_rewritten_notes(clip);
+                self.report_clip_preset(clip);
+            }
+            Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
+        }
+    }
+
     /// Writes a chord clip with or without its root struck below the voicing.
     pub(crate) fn set_clip_low_root(&mut self, clip: ClipId, low_root: bool) {
         let Some(recipe) = self.session.clip_recipe(clip) else {

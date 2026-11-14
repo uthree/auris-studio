@@ -83,8 +83,8 @@ pub use performance_preset::{
     PerformancePreset, PresetFamily, builtin_performance_preset, builtin_performance_presets,
 };
 pub use recipe::{
-    ClipPreset, ClipRecipe, DrumVoiceRecipe, PerformanceStyle, STRUM_VALUES, Subdivision,
-    strum_ticks,
+    CHORD_VOICES, ClipPreset, ClipRecipe, DEFAULT_CHORD_CENTRE, DrumVoiceRecipe, PerformanceStyle,
+    STRUM_VALUES, Subdivision, strum_ticks,
 };
 pub use routing::{Destination, EffectSlot, MixerStrip, Output, Tap};
 pub use track::{

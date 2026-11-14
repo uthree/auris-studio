@@ -209,20 +209,29 @@ impl Session {
                     expected: "a melodic part for a pitch range",
                 });
             }
-            // A writer folds its line into its own register, so an octave asked for is not the
-            // same as one heard: write each and keep the one whose middle lands nearest.
             let centre = f64::from(range.0) / 2.0 + f64::from(range.1) / 2.0;
-            let miss = |recipe: &ClipRecipe| {
-                middle_of(&self.phrase(start, length, recipe))
-                    .map_or(f64::MAX, |m| (m - centre).abs())
-            };
-            recipe.octave = (-2..=2)
-                .map(|octave| ClipRecipe {
-                    octave,
-                    ..recipe.clone()
-                })
-                .min_by(|a, b| miss(a).total_cmp(&miss(b)))
-                .map_or(0, |best| best.octave);
+            if matches!(
+                recipe.preset,
+                auris_core::ClipPreset::Chords | auris_core::ClipPreset::Pad
+            ) {
+                // A chord part is told its middle to the semitone, so the range's own middle is
+                // the answer and nothing has to be tried.
+                recipe.centre = Some(centre.round() as u8);
+            } else {
+                // A writer folds its line into its own register, so an octave asked for is not the
+                // same as one heard: write each and keep the one whose middle lands nearest.
+                let miss = |recipe: &ClipRecipe| {
+                    middle_of(&self.phrase(start, length, recipe))
+                        .map_or(f64::MAX, |m| (m - centre).abs())
+                };
+                recipe.octave = (-2..=2)
+                    .map(|octave| ClipRecipe {
+                        octave,
+                        ..recipe.clone()
+                    })
+                    .min_by(|a, b| miss(a).total_cmp(&miss(b)))
+                    .map_or(0, |best| best.octave);
+            }
         }
         let notes = self.phrase(start, length, &recipe);
         recipe.text_digest = auris_core::notes_digest(&notes);
