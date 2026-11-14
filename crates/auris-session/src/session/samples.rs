@@ -868,7 +868,12 @@ pub fn parse_root_note(text: &str) -> Option<u8> {
         _ => (0, rest.as_str()),
     };
     let octave: i32 = octave.parse().ok()?;
-    let number = (octave + 1) * 12 + base + accidental;
+    // Checked: an octave is whatever number was typed or found in a file name, and one large
+    // enough to overflow is out of range like any other, not a panic or a wrapped-round C.
+    let number = octave
+        .checked_add(1)?
+        .checked_mul(12)?
+        .checked_add(base + accidental)?;
     u8::try_from(number)
         .ok()
         .filter(|number| *number <= HIGHEST_NOTE)
@@ -928,6 +933,11 @@ mod tests {
         assert_eq!(parse_root_note("G#9"), None);
         assert_eq!(parse_root_note("H2"), None);
         assert_eq!(parse_root_note("200"), None);
+        // Octaves too large to multiply are out of range, whichever build is asked.
+        assert_eq!(parse_root_note("C2147483647"), None);
+        assert_eq!(parse_root_note("C178956971"), None);
+        assert_eq!(parse_root_note("Bb-2147483648"), None);
+        assert_eq!(root_note_in_name("Take_A1731600000.wav"), None);
     }
 
     #[test]

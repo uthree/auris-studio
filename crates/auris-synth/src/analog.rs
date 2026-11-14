@@ -100,6 +100,17 @@ const MIN_CUTOFF_HZ: f32 = 16.0;
 /// warp is already steep by here, so the filter is simply open above it.
 const MAX_CUTOFF_FRACTION: f32 = 0.45;
 
+/// The lowest and highest cutoff the filter may be asked for at `sample_rate`.
+///
+/// The ceiling is the one that has to hold, because the filter is unstable above it. At a rate
+/// so low that the ceiling falls under [`MIN_CUTOFF_HZ`] the floor comes down to meet it: a
+/// range whose low end is above its high end is one `clamp` panics on, and a host may hand any
+/// positive rate over.
+fn cutoff_bounds(sample_rate: f32) -> (f32, f32) {
+    let ceiling = MAX_CUTOFF_FRACTION * sample_rate;
+    (MIN_CUTOFF_HZ.min(ceiling), ceiling)
+}
+
 /// The resonant section's damping at full resonance: a Q of five, a clear vowel-like peak that
 /// stops short of self-oscillation, so no patch can whistle on its own with no note held.
 const MIN_DAMPING: f32 = 0.2;
@@ -726,8 +737,8 @@ impl Analog {
         let velocity_scale = 1.0 - self.filter_velocity + self.filter_velocity * velocity;
         let semitones = self.filter_env_semitones * envelope * velocity_scale
             + self.key_track * (pitch - KEY_TRACK_CENTRE);
-        (self.cutoff * (semitones / 12.0).exp2())
-            .clamp(MIN_CUTOFF_HZ, MAX_CUTOFF_FRACTION * self.sample_rate)
+        let (floor, ceiling) = cutoff_bounds(self.sample_rate);
+        (self.cutoff * (semitones / 12.0).exp2()).clamp(floor, ceiling)
     }
 
     fn note_on(&mut self, pitch: u8, velocity: f32) {
@@ -1116,7 +1127,7 @@ impl SegmentRenderer for Analog {
             let fixed = self.cutoff_for(pitch, velocity, 0.0);
             let velocity_scale = 1.0 - self.filter_velocity + self.filter_velocity * velocity;
             let sweep = self.filter_env_semitones * velocity_scale / 12.0;
-            let ceiling = MAX_CUTOFF_FRACTION * rate;
+            let (floor, ceiling) = cutoff_bounds(rate);
             let voice = &mut self.voices[index];
             voice.target = pitch_to_hz(pitch + bend);
 
@@ -1152,7 +1163,7 @@ impl SegmentRenderer for Analog {
                 }
 
                 let envelope = voice.filter_envelope.process();
-                let cutoff = (fixed * (sweep * envelope).exp2()).clamp(MIN_CUTOFF_HZ, ceiling);
+                let cutoff = (fixed * (sweep * envelope).exp2()).clamp(floor, ceiling);
                 voice.cutoff = cutoff;
                 let g = (PI * cutoff / rate).tan();
                 let resonant = SvfCoefficients::new(g, resonant_damping);

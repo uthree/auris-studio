@@ -133,6 +133,22 @@ const RETIRED_OPERATIONS: &[(&str, &[&str])] = &[
     ("transcribe_audio", &[]),
     ("list_instruments", &["search_instruments"]),
     ("similar_instruments", &["search_instruments"]),
+    // A send is an output with a level and a tap of its own now, so a denial of one is a denial
+    // of the other.
+    (
+        "edit_project.mixer_graph.add_send",
+        &["edit_project.mixer_graph.add_output"],
+    ),
+    (
+        "edit_project.mixer_graph.set_send",
+        &["edit_project.mixer_graph.set_output"],
+    ),
+    // Gone with nothing in their place: the whole-song composer and its two reference doors, and
+    // the stored title only an agent could rename.
+    ("edit_project.compose", &[]),
+    ("list_presets", &[]),
+    ("spec_reference", &[]),
+    ("edit_project.rename_project", &[]),
 ];
 
 fn retired_successors(operation: &str) -> Option<&'static [&'static str]> {
@@ -596,6 +612,178 @@ mod tests {
             let saved = serde_json::to_string(&policy).unwrap();
             assert_eq!(serde_json::from_str::<Policy>(&saved).unwrap(), policy);
         }
+    }
+
+    /// Every operation name a build has ever offered, whether or not it still does.
+    ///
+    /// A saved rule outlives the catalog it was written against, and a rule naming an operation
+    /// nobody knows denies every tool call. So a name is written here the day it joins
+    /// `OPERATIONS` and never taken out: the test below then fails for whoever removes an
+    /// operation without retiring it. Versions 0.8.0 to 0.21.0 are all here.
+    const EVER_OFFERED: &[&str] = &[
+        "capabilities",
+        "cli_command",
+        "cli_file_change",
+        "cli_file_read",
+        "discover_tools",
+        "edit_project.accompaniment",
+        "edit_project.add_clip",
+        "edit_project.add_note",
+        "edit_project.add_notes",
+        "edit_project.add_track",
+        "edit_project.analyze_lyrics",
+        "edit_project.apply_lint_fixes",
+        "edit_project.arrangement",
+        "edit_project.arrangement_shape",
+        "edit_project.audio_assets",
+        "edit_project.automation",
+        "edit_project.candidates",
+        "edit_project.checkpoints",
+        "edit_project.compose",
+        "edit_project.diagnose_song",
+        "edit_project.edit_clip",
+        "edit_project.edit_clip_curve",
+        "edit_project.edit_comments",
+        "edit_project.edit_harmony",
+        "edit_project.edit_lyrics",
+        "edit_project.edit_notes",
+        "edit_project.edit_recipe",
+        "edit_project.edit_sample_map",
+        "edit_project.edit_timeline",
+        "edit_project.edit_vocal_notes",
+        "edit_project.execution_trace",
+        "edit_project.export_midi",
+        "edit_project.generate_phrase",
+        "edit_project.history",
+        "edit_project.ignore_lint",
+        "edit_project.import_audio",
+        "edit_project.import_midi",
+        "edit_project.import_transcription",
+        "edit_project.inspect",
+        "edit_project.inspect_audio",
+        "edit_project.inspect_instrument",
+        "edit_project.inspect_performance",
+        "edit_project.inspect_singer",
+        "edit_project.layer",
+        "edit_project.lint_project",
+        "edit_project.list_voices",
+        "edit_project.listen",
+        "edit_project.load_sample",
+        "edit_project.lyric_accent",
+        "edit_project.lyric_rhythm",
+        "edit_project.melody_shape",
+        "edit_project.mixer_graph.add_effect",
+        "edit_project.mixer_graph.add_output",
+        "edit_project.mixer_graph.add_send",
+        "edit_project.mixer_graph.connect",
+        "edit_project.mixer_graph.disconnect",
+        "edit_project.mixer_graph.enable_effect",
+        "edit_project.mixer_graph.move_effect",
+        "edit_project.mixer_graph.parameters",
+        "edit_project.mixer_graph.read",
+        "edit_project.mixer_graph.remove_effect",
+        "edit_project.mixer_graph.set_output",
+        "edit_project.mixer_graph.set_outputs",
+        "edit_project.mixer_graph.set_parameter",
+        "edit_project.mixer_graph.set_send",
+        "edit_project.mixer_graph.set_sidechain",
+        "edit_project.mixer_graph.set_strip",
+        "edit_project.normalize_mix",
+        "edit_project.offer_choices",
+        "edit_project.performance_presets",
+        "edit_project.phrase_variation",
+        "edit_project.preview",
+        "edit_project.read_notes",
+        "edit_project.remove_notes",
+        "edit_project.remove_track",
+        "edit_project.rename_project",
+        "edit_project.rename_track",
+        "edit_project.render",
+        "edit_project.repair_lyrics",
+        "edit_project.replace_notes",
+        "edit_project.report_status",
+        "edit_project.set_drum_assignment",
+        "edit_project.set_instrument",
+        "edit_project.set_instrument_params",
+        "edit_project.set_level",
+        "edit_project.set_loop",
+        "edit_project.set_performance",
+        "edit_project.set_singer_voice",
+        "edit_project.set_tempo",
+        "edit_project.set_track_state",
+        "edit_project.sing",
+        "edit_project.source_material",
+        "edit_project.suggest_harmony",
+        "edit_project.suggest_issue_report",
+        "edit_project.verify_render",
+        "edit_project.workspace",
+        "edit_project.write_lyrics",
+        "export_audio_attachment",
+        "instrument_diagnostics",
+        "list_instruments",
+        "list_presets",
+        "list_progressions",
+        "production_record",
+        "read_report",
+        "search_documentation",
+        "search_instruments",
+        "search_internet",
+        "similar_instruments",
+        "spec_reference",
+        "tool_help",
+        "transcribe_audio",
+    ];
+
+    #[test]
+    fn every_operation_ever_offered_is_still_known_or_retired() {
+        use super::*;
+        for name in OPERATIONS {
+            assert!(
+                EVER_OFFERED.contains(name),
+                "{name} is new: add it to EVER_OFFERED, so that removing it later is noticed"
+            );
+        }
+        for name in EVER_OFFERED {
+            assert!(
+                OPERATIONS.contains(name) || retired_successors(name).is_some(),
+                "{name} was removed without an entry in RETIRED_OPERATIONS; a saved rule naming                  it would deny every agent tool"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rule_saved_for_an_operation_since_removed_does_not_stop_the_agent() {
+        use super::*;
+        let read = Operation {
+            name: "edit_project.read_notes".into(),
+            mutating: false,
+            confirm: false,
+        };
+        for name in EVER_OFFERED
+            .iter()
+            .filter(|name| !OPERATIONS.contains(name))
+        {
+            for field in ["allow", "deny"] {
+                let mut saved = serde_json::json!({"mode":"edit"});
+                saved[field] = serde_json::json!([name]);
+                let policy: Policy = serde_json::from_value(saved).unwrap();
+                assert_eq!(policy.decide(&read), Decision::Allow, "{field} {name}");
+            }
+        }
+        // A send's denial follows it to the output it became; the composer's has nowhere to go.
+        let policy: Policy = serde_json::from_value(serde_json::json!({"deny":[
+            "edit_project.mixer_graph.add_send",
+            "edit_project.mixer_graph.set_send",
+            "edit_project.compose"
+        ]}))
+        .unwrap();
+        assert_eq!(
+            policy.deny,
+            [
+                "edit_project.mixer_graph.add_output",
+                "edit_project.mixer_graph.set_output"
+            ]
+        );
     }
 
     #[test]

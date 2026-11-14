@@ -430,16 +430,25 @@ fn write_crash_report(dir: &Path, report: &str) -> io::Result<PathBuf> {
     let stamp = file_stamp(SystemTime::now());
     let pid = std::process::id();
     // Two panics in the same second — one on each of two threads — get two files, and the
-    // serial is zero-padded so that the second still sorts after the first.
-    let mut serial = 0u32;
-    let mut path = dir.join(format!("{CRASH_PREFIX}{stamp}-{pid}-{serial:03}.txt"));
-    while path.exists() {
-        serial += 1;
-        path = dir.join(format!("{CRASH_PREFIX}{stamp}-{pid}-{serial:03}.txt"));
+    // serial is zero-padded so that the second still sorts after the first. The name is claimed
+    // by creating the file: asking whether it exists and then writing it lets both threads hear
+    // "no" and write the same one, and one report is lost under the other.
+    for serial in 0..1000u32 {
+        let path = dir.join(format!("{CRASH_PREFIX}{stamp}-{pid}-{serial:03}.txt"));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                file.write_all(report.as_bytes())?;
+                prune(dir, CRASH_PREFIX, KEPT_CRASHES);
+                return Ok(path);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
     }
-    fs::write(&path, report)?;
-    prune(dir, CRASH_PREFIX, KEPT_CRASHES);
-    Ok(path)
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "every crash report name for this second is taken",
+    ))
 }
 
 /// A crash report found on disk.
@@ -642,6 +651,35 @@ mod tests {
         ] {
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
         }
+    }
+
+    #[test]
+    fn panics_in_the_same_second_each_keep_their_own_report() {
+        let folder = tempfile::tempdir().unwrap();
+        let dir = folder.path();
+        let start = std::sync::Barrier::new(8);
+        let written: Vec<PathBuf> = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..8)
+                .map(|thread| {
+                    let start = &start;
+                    scope.spawn(move || {
+                        start.wait();
+                        write_crash_report(dir, &format!("report {thread}")).unwrap()
+                    })
+                })
+                .collect();
+            threads
+                .into_iter()
+                .map(|thread| thread.join().unwrap())
+                .collect()
+        });
+        let mut reports: Vec<String> = written
+            .iter()
+            .map(|path| fs::read_to_string(path).unwrap())
+            .collect();
+        reports.sort();
+        let expected: Vec<String> = (0..8).map(|thread| format!("report {thread}")).collect();
+        assert_eq!(reports, expected, "{written:?}");
     }
 
     #[test]

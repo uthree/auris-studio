@@ -241,7 +241,26 @@ fn home() -> Option<PathBuf> {
 
 /// Quotes a path for the terminal the command will be pasted into.
 fn quoted(path: &Path) -> String {
-    format!("\"{}\"", path.display())
+    quoted_for(&path.display().to_string(), cfg!(target_os = "windows"))
+}
+
+/// [`quoted`] with the platform passed in, so that both ways of writing it are tested everywhere.
+///
+/// Double quotes are read alike by PowerShell, the old command prompt and a POSIX shell, so
+/// they stay for every path they are safe for. Inside them a `$` or a backtick still starts an
+/// expansion: a folder called `$(whoami)` would run a command and `$HOME` would be replaced.
+/// Such a path goes in single quotes, where PowerShell and a POSIX shell both read every
+/// character as itself; the two differ only in how a single quote is written between them.
+fn quoted_for(path: &str, windows: bool) -> String {
+    if !path.contains(['$', '`', '"', '!']) {
+        return format!("\"{path}\"");
+    }
+    let escaped = if windows {
+        path.replace('\'', "''")
+    } else {
+        path.replace('\'', r"'\''")
+    };
+    format!("'{escaped}'")
 }
 
 impl CargoInstall {
@@ -771,6 +790,27 @@ mod tests {
                 "cargo install --locked --root \"/home/me/.cargo\" --path crates/auris-cli",
             ]
         );
+    }
+
+    #[test]
+    fn a_path_a_shell_would_expand_is_quoted_so_that_it_is_not() {
+        // The ordinary path keeps the quotes every shell reads alike.
+        assert_eq!(
+            quoted_for("C:\\Users\\me\\auris studio", true),
+            "\"C:\\Users\\me\\auris studio\""
+        );
+        // A dollar sign or a backtick would be expanded inside them, on either platform.
+        assert_eq!(
+            quoted_for("D:\\src\\$(whoami)\\auris", true),
+            "'D:\\src\\$(whoami)\\auris'"
+        );
+        assert_eq!(
+            quoted_for("/home/me/$HOME/a`b`", false),
+            "'/home/me/$HOME/a`b`'"
+        );
+        // A single quote inside is written the way each shell writes one.
+        assert_eq!(quoted_for("D:\\it's $5", true), "'D:\\it''s $5'");
+        assert_eq!(quoted_for("/srv/it's $5", false), r"'/srv/it'\''s $5'");
     }
 
     #[test]
