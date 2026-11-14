@@ -179,6 +179,7 @@ pub use singer::{
 pub use song_sources::PartSource;
 pub use spectrogram::{RenderedSpectrogramJob, SpectrogramJob};
 
+pub use note_take::NoteRecordMode;
 pub use record::{
     Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport, input_level_of,
 };
@@ -645,6 +646,8 @@ pub struct Session {
     midi: midi_input::MidiInput,
     /// Notes written a step at a time, while that is on. See [`step_input`].
     step_input: Option<step_input::StepInput>,
+    /// What a note take does with what was already there. See [`note_take`].
+    note_record_mode: NoteRecordMode,
 
     /// Third-party CLAP plugins the document names.
     ///
@@ -841,6 +844,7 @@ impl Session {
             typing: MusicalTyping::default(),
             midi: midi_input::MidiInput::default(),
             step_input: None,
+            note_record_mode: NoteRecordMode::default(),
             take: None,
             japanese: None,
             shipped_dictionary: options.shipped_dictionary,
