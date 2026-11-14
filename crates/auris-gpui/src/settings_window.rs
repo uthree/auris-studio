@@ -36,6 +36,7 @@ mod appearance_editor;
 mod appearance_tests;
 mod chrome;
 mod dropdown;
+mod midi;
 mod personalization;
 mod search;
 mod toolbar;
@@ -52,6 +53,8 @@ pub enum SettingsTab {
     Audio,
     /// Key bindings.
     Keys,
+    /// MIDI keyboards and how notes are recorded from them.
+    Midi,
     /// Language-model connection and generation settings.
     Agent,
     /// Locally recorded song choices and their corrections.
@@ -86,6 +89,11 @@ pub struct SettingsWindow {
     font_families: Vec<String>,
     tab: SettingsTab,
     agent: agent::AgentSettings,
+    /// MIDI preferences as last applied.
+    midi: auris_session::MidiPreferences,
+    /// The MIDI inputs the system has, and which of them are being listened to, as of the
+    /// main window's last tick.
+    midi_ports: midi::MidiPorts,
     personalization: personalization::Personalization,
     /// What the host can see, refreshed on request or when the audio host changes.
     devices: AudioDevices,
@@ -195,6 +203,7 @@ impl SettingsWindow {
         export: ExportPreferences,
         panels: PanelLayout,
         agent: AgentPreferences,
+        midi: auris_session::MidiPreferences,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut font_families = cx.text_system().all_font_names();
@@ -206,7 +215,12 @@ impl SettingsWindow {
                 let panels = main.panels.clone();
                 let voice_paths = main.settings.voice_paths.clone();
                 let auto_update = main.settings.auto_update;
+                let ports = midi::MidiPorts::of(&main.session);
                 let mut changed = false;
+                if this.midi_ports != ports {
+                    this.midi_ports = ports;
+                    changed = true;
+                }
                 if this.panels != panels {
                     this.panels = panels;
                     changed = true;
@@ -251,6 +265,8 @@ impl SettingsWindow {
             font_families,
             tab: SettingsTab::General,
             agent: agent::AgentSettings::new(agent, cx),
+            midi,
+            midi_ports: midi::MidiPorts::default(),
             personalization: Default::default(),
             devices,
             hosts: Session::audio_hosts(),
@@ -606,6 +622,12 @@ impl SettingsWindow {
                 SettingsTab::Audio,
             ))
             .child(page(
+                "tab-midi",
+                Key::TabMidi,
+                IconName::Music,
+                SettingsTab::Midi,
+            ))
+            .child(page(
                 "tab-agent",
                 Key::AgentPanel,
                 IconName::Sparkles,
@@ -646,6 +668,7 @@ impl SettingsWindow {
             SettingsTab::Agent => (Key::AgentPanel, Key::SettingsAgentHelp),
             SettingsTab::Personalization => (Key::PreferenceHeading, Key::PreferenceHelp),
             SettingsTab::Keys => (Key::TabKeys, Key::SettingsKeysHelp),
+            SettingsTab::Midi => (Key::TabMidi, Key::SettingsMidiHelp),
         };
         Some(
             div()
@@ -2181,6 +2204,7 @@ impl Render for SettingsWindow {
                 SettingsTab::General => self.render_general(cx),
                 SettingsTab::Audio => self.render_audio(cx),
                 SettingsTab::Keys => self.render_keys(cx),
+                SettingsTab::Midi => self.render_midi(cx),
                 SettingsTab::Agent => self.render_agent(cx),
                 SettingsTab::Personalization => self.render_personalization(cx),
             }

@@ -2040,6 +2040,7 @@ impl AurisApp {
         // Where singer voices run their inference. Nothing is loaded yet, so this only sets
         // the course; the first voice loaded follows it.
         session.set_singer_acceleration(settings.singer_acceleration);
+        session.apply_midi_preferences(&settings.midi);
 
         let status = audio_line(&session.audio_status(), session.audio_suspended(), language);
         log::info!("{status}");
@@ -2851,7 +2852,8 @@ impl AurisApp {
     /// the selection, the same one the typing keyboard plays; the session lets a running take
     /// keep the keyboard on the track it is writing.
     pub(crate) fn poll_midi_input(&mut self) {
-        let listening = !cfg!(test) && !self.session.audio_suspended();
+        let listening =
+            !cfg!(test) && self.settings.midi.enabled && !self.session.audio_suspended();
         self.session.set_midi_input(listening);
         if !listening {
             return;
@@ -2862,6 +2864,22 @@ impl AurisApp {
         }
         if let Some(error) = self.session.take_midi_error() {
             self.set_failed_status(self.t(Key::MidiInputFailed).replace("{error}", &error));
+        }
+        // MIDI Learn takes the note a hardware key sends, as it takes one typed.
+        if let Some(&pitch) = self.session.take_midi_struck().last() {
+            self.accept_drum_learn(pitch);
+        }
+    }
+
+    /// Takes up edited MIDI preferences and remembers them.
+    pub(crate) fn apply_midi_preferences(&mut self, midi: auris_session::MidiPreferences) {
+        self.session.apply_midi_preferences(&midi);
+        if !midi.enabled {
+            self.session.set_midi_input(false);
+        }
+        self.settings.midi = midi;
+        if let Err(error) = self.save_settings() {
+            log::warn!("could not save settings: {error}");
         }
     }
 
@@ -3667,6 +3685,7 @@ impl AurisApp {
         let export = self.settings.export;
         let panels = self.panels.clone();
         let agent = self.settings.agent.clone();
+        let midi = self.settings.midi.clone();
 
         // Wide enough for the navigation column and a page beside it at its reading width.
         let bounds = Bounds::centered(None, size(px(820.), px(640.)), cx);
@@ -3699,6 +3718,7 @@ impl AurisApp {
                         export,
                         panels,
                         agent,
+                        midi,
                         cx,
                     )
                 })

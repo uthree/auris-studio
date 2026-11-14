@@ -411,7 +411,10 @@ hear and what the model is told stay one story.
 
 **Plug a MIDI keyboard in and play.** Every MIDI input the system has is listened to, from launch
 and whenever one is plugged in later — it is looked for every two seconds — and the status line
-names it when it opens. There is nothing to set up.
+names it when it opens. There is nothing to set up; **Settings → MIDI** is where to switch a
+particular input off (a control surface, a loopback port), turn MIDI off altogether, and choose a
+**velocity curve** — *Soft* for keys too stiff to reach the top of their range, *Hard* for a heavy
+hand, *Fixed* to play every note alike. The piano roll's keyboard lights the keys being held.
 
 **What you play sounds on the selected track**, the same track Musical Typing plays: an instrument
 track, or the first one in the song when the selection cannot play notes. A key let go of is
@@ -431,6 +434,12 @@ count lands in front of the downbeat.
   lanes, which **Lanes** opens in the piano roll.
 * **A sustain pedal** holds notes past their keys, and a take writes each note as long as it was
   heard — held notes become long notes rather than a pedal lane.
+* **Quantize while recording** (Settings → MIDI) pulls each note of a take towards a grid — 1/4 to
+  1/32, triplets included — by a strength of 25 to 100 %, as the take is written. Each note keeps
+  the length it was held for, and nothing already on the track is touched.
+
+**MIDI Learn** in the drum editor takes the next note struck on a MIDI keyboard as it takes one
+from Musical Typing.
 
 **What a take does with what is already there** is the note recording mode, in **Settings → MIDI**:
 

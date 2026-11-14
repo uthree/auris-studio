@@ -948,6 +948,9 @@ impl AurisApp {
                                         .child({
                                             let theme = theme.clone();
                                             let pitch_view = pitch_view.clone();
+                                            let mut sounding = self.session.midi_sounding();
+                                            sounding
+                                                .extend(self.session.typing_keyboard().sounding());
                                             canvas(
                                                 |_, _, _| (),
                                                 move |bounds, _, window, cx| {
@@ -957,6 +960,7 @@ impl AurisApp {
                                                             cx,
                                                             bounds,
                                                             &pitch_view,
+                                                            &sounding,
                                                             &theme,
                                                         );
                                                     });
