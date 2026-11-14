@@ -479,7 +479,7 @@ version = "=0.26.0"
 version = "=0.2.0"
 
 [target.'cfg(target_os = "macos")'.dependencies.core-foundation]
-version = "=0.10.0"
+version = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies.core-foundation-sys]
 version = "0.8.6"

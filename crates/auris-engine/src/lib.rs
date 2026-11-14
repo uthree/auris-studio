@@ -84,6 +84,7 @@ pub mod graph;
 pub mod handle;
 pub mod meter;
 pub mod metronome;
+pub mod midi;
 pub mod monitor;
 pub mod offline;
 pub mod renderer;
@@ -111,6 +112,7 @@ pub use graph::{
 pub use handle::{EngineHandle, OutputPreviewOptions, OutputPreviewStatus, StreamNotices};
 pub use meter::MeterBank;
 pub use metronome::{Click, Metronome};
+pub use midi::{LivePlayer, LiveTarget, MidiEvent, MidiInputs, MidiMessage, Performed};
 pub use monitor::MonitorRing;
 pub use offline::{
     OfflineOptions, OfflineRender, OfflineStreamError, RenderProgress, render_project,
