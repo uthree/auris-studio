@@ -1037,6 +1037,28 @@ pub mod architecture {
     //! which is the one refinement worth remembering — replaying a third of a second of somebody's
     //! own voice is a worse noise than the gap that prompted it.
     //!
+    //! # Playing a MIDI keyboard
+    //!
+    //! A hardware keyboard is the typing keyboard with real keys, and shares everything with it
+    //! that can be shared: the track it plays ([`audition_track`](crate::Session::audition_track)
+    //! of the selection, or the take's own track), the rule that a held note is released where it
+    //! went down, and the note take that writes it down. What cannot be shared is the timing. A
+    //! frontend services the session every thirty milliseconds or so, and a note that waited for
+    //! that would sound late by a different amount each time, so [`auris_engine::midi`] answers
+    //! each message on the MIDI backend's own thread — straight into the engine's command queue —
+    //! and stamps it with the frame being *heard* at that instant. The session reads the stamped
+    //! events on its next [`poll`](crate::Session::poll) and hands them to the take, which is why
+    //! a take is placed where the player was rather than on the timer's grid. That thread is not
+    //! the audio thread: it may lock, and the one lock it takes is held for one message.
+    //!
+    //! The sustain pedal is held there too rather than sent on, because no built-in instrument
+    //! knows what controller 64 means; a take therefore writes a pedalled note as the long note
+    //! that was heard. The bend wheel spans two semitones, the MIDI default.
+    //!
+    //! A headless session never listens: what it does must not depend on what is plugged into
+    //! the machine. [`set_midi_input`](crate::Session::set_midi_input) is the switch, and the
+    //! desktop keeps it on for the one window that holds the audio output.
+    //!
     //! # Playing when there is no MIDI keyboard on the desk
     //!
     //! The computer keyboard can be one, in Logic and GarageBand's layout key for key: `a` is C

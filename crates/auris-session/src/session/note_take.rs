@@ -24,6 +24,7 @@
 //! It ends where the take does. Letting go after pressing Stop is a release nobody wrote down,
 //! and a note that ran for ever would be worse than one cut at the end of the take.
 
+use auris_core::project::CurvePoint;
 use auris_core::{Note, Seconds, Ticks, TrackId};
 use auris_engine::EngineCommand;
 
@@ -45,6 +46,17 @@ pub(super) struct NoteTake {
     held: Vec<(u8, f32, f64)>,
     /// Notes struck and released: pitch, velocity, where struck, where released.
     played: Vec<(u8, f32, f64, f64)>,
+    /// Where the bend was moved to, and when, in the order it moved.
+    bend: Vec<(f64, f32)>,
+    /// Where each controller was moved to, and when: number, where, value.
+    controllers: Vec<(u8, f64, f32)>,
+}
+
+impl NoteTake {
+    /// The track being written onto.
+    pub(super) fn track(&self) -> TrackId {
+        self.track
+    }
 }
 
 impl Session {
@@ -91,6 +103,8 @@ impl Session {
             start,
             held: Vec::new(),
             played: Vec::new(),
+            bend: Vec::new(),
+            controllers: Vec::new(),
         });
         Ok(())
     }
@@ -112,17 +126,31 @@ impl Session {
         })
     }
 
+    /// The take listening to `track`, if there is one.
+    fn take_on(&mut self, track: TrackId) -> Option<&mut NoteTake> {
+        self.note_take.as_mut().filter(|take| take.track == track)
+    }
+
     /// Writes down a note the typing keyboard struck, if a note take is listening to its track.
     pub(super) fn note_take_struck(&mut self, track: TrackId, pitch: u8, velocity: f32) {
-        if !self
-            .note_take
-            .as_ref()
-            .is_some_and(|take| take.track == track)
-        {
-            return;
-        }
         let at = self.performed_frame();
-        let take = self.note_take.as_mut().expect("checked above");
+        self.note_take_struck_at(track, pitch, velocity, at);
+    }
+
+    /// Writes down a note struck at the virtual frame `at`.
+    ///
+    /// The typing keyboard is stamped as it is heard of, less its calibrated lag; a MIDI
+    /// keyboard is stamped on the thread that heard it, before the session ever does.
+    pub(super) fn note_take_struck_at(
+        &mut self,
+        track: TrackId,
+        pitch: u8,
+        velocity: f32,
+        at: f64,
+    ) {
+        let Some(take) = self.take_on(track) else {
+            return;
+        };
         // A key struck again before it was let go — through sustain — ends the first note
         // where the second begins, which is what an instrument does with it too.
         close_held(take, pitch, at);
@@ -131,16 +159,35 @@ impl Session {
 
     /// Writes down the end of a note the typing keyboard let go of.
     pub(super) fn note_take_released(&mut self, track: TrackId, pitch: u8) {
-        if !self
-            .note_take
-            .as_ref()
-            .is_some_and(|take| take.track == track)
-        {
-            return;
-        }
         let at = self.performed_frame();
-        let take = self.note_take.as_mut().expect("checked above");
-        close_held(take, pitch, at);
+        self.note_take_released_at(track, pitch, at);
+    }
+
+    /// Writes down the end of a note at the virtual frame `at`.
+    pub(super) fn note_take_released_at(&mut self, track: TrackId, pitch: u8, at: f64) {
+        if let Some(take) = self.take_on(track) {
+            close_held(take, pitch, at);
+        }
+    }
+
+    /// Writes down the bend moving to `semitones` at the virtual frame `at`.
+    pub(super) fn note_take_bent_at(&mut self, track: TrackId, semitones: f32, at: f64) {
+        if let Some(take) = self.take_on(track) {
+            take.bend.push((at, semitones));
+        }
+    }
+
+    /// Writes down controller `number` moving to `value` at the virtual frame `at`.
+    pub(super) fn note_take_controller_at(
+        &mut self,
+        track: TrackId,
+        number: u8,
+        value: f32,
+        at: f64,
+    ) {
+        if let Some(take) = self.take_on(track) {
+            take.controllers.push((number, at, value));
+        }
     }
 
     /// Ends the note take and turns what was played into a clip.
@@ -198,8 +245,29 @@ impl Session {
                 return Err(error);
             }
         };
+        let tempo = &self.project.tempo_map;
+        let to_ticks = |frame: f64| tempo.seconds_to_ticks(Seconds(frame.max(0.0) / rate));
+        let bend = written_curve(&take.bend, clip_start, clip_end, to_ticks);
+        let mut controllers = std::collections::BTreeMap::new();
+        for number in take.controllers.iter().map(|moved| moved.0) {
+            if controllers.contains_key(&number) {
+                continue;
+            }
+            let moves: Vec<(f64, f32)> = take
+                .controllers
+                .iter()
+                .filter(|moved| moved.0 == number)
+                .map(|&(_, at, value)| (at, value))
+                .collect();
+            let curve = written_curve(&moves, clip_start, clip_end, to_ticks);
+            if !curve.is_empty() {
+                controllers.insert(number, curve);
+            }
+        }
         if let Some(target) = self.project.midi_clip_mut(clip) {
             target.notes = notes;
+            target.bend = bend;
+            target.controllers = controllers;
         }
         self.invalidate_graph();
         self.end_transaction();
@@ -222,6 +290,41 @@ fn close_held(take: &mut NoteTake, pitch: u8, at: f64) {
         let (pitch, velocity, struck) = take.held.remove(position);
         take.played.push((pitch, velocity, struck, at.max(struck)));
     }
+}
+
+/// A wheel's movements during a take, as a curve across the clip it wrote.
+///
+/// Measured from the clip's start. A movement made before the clip began is where the wheel
+/// already *was* when it did, so the last of them is kept, at the clip's first tick; one made
+/// after it ended is dropped. A movement to where the wheel already was writes nothing, so a
+/// wheel at rest for a whole take leaves no curve at all.
+pub(crate) fn written_curve(
+    moves: &[(f64, f32)],
+    clip_start: Ticks,
+    clip_end: Ticks,
+    to_ticks: impl Fn(f64) -> Ticks,
+) -> Vec<CurvePoint> {
+    let mut curve: Vec<CurvePoint> = Vec::new();
+    for &(at, value) in moves {
+        let tick = to_ticks(at).max(clip_start);
+        if tick > clip_end {
+            break;
+        }
+        let point = CurvePoint {
+            at: Ticks(tick.raw() - clip_start.raw()),
+            value,
+        };
+        match curve.last_mut() {
+            Some(last) if last.at == point.at => last.value = value,
+            Some(last) if last.value == value => {}
+            _ => curve.push(point),
+        }
+    }
+    // A wheel that only ever rested where it starts moved nothing worth a lane.
+    if curve.iter().all(|point| point.value == 0.0) {
+        curve.clear();
+    }
+    curve
 }
 
 /// The clip a finished note take writes: where it starts and ends, and its notes.
@@ -290,6 +393,8 @@ mod tests {
             track: TrackId(1),
             start,
             held: Vec::new(),
+            bend: Vec::new(),
+            controllers: Vec::new(),
             played: played
                 .iter()
                 .map(|&(pitch, on, off)| (pitch, 0.7, on, off))
@@ -335,6 +440,30 @@ mod tests {
             "the note that ended before the song is gone"
         );
         assert_eq!((notes[0].start, notes[0].length), (Ticks(0), Ticks(400)));
+    }
+
+    #[test]
+    fn a_wheel_is_written_from_where_it_stood_when_the_clip_began() {
+        let moves = [
+            (500.0, 0.5),
+            (800.0, 1.0),
+            (1_200.0, 1.0),
+            (1_500.0, 0.0),
+            (3_000.0, 2.0),
+        ];
+        let curve = written_curve(&moves, Ticks(1_000), Ticks(2_000), one_to_one);
+        let points: Vec<(i64, f32)> = curve.iter().map(|p| (p.at.raw(), p.value)).collect();
+        assert_eq!(
+            points,
+            vec![(0, 1.0), (500, 0.0)],
+            "the last move before the clip, then each change, none after it"
+        );
+    }
+
+    #[test]
+    fn a_wheel_left_at_rest_writes_no_curve() {
+        let moves = [(100.0, 0.0), (200.0, 0.0)];
+        assert!(written_curve(&moves, Ticks(0), Ticks(1_000), one_to_one).is_empty());
     }
 
     #[test]

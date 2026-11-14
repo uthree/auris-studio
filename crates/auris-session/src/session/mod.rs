@@ -83,6 +83,7 @@ pub(crate) mod lyric_slots;
 mod lyrics;
 pub mod melody_form;
 pub mod melody_shape;
+mod midi_input;
 mod mixer;
 mod monitor;
 mod multitrack_transcription;
@@ -638,6 +639,8 @@ pub struct Session {
     /// are on is how they are playing, not something they wrote, and an Undo that moved the
     /// keyboard under them would be a surprise mid-phrase.
     typing: MusicalTyping,
+    /// The MIDI keyboards, when they are being listened to. See [`midi_input`].
+    midi: midi_input::MidiInput,
 
     /// Third-party CLAP plugins the document names.
     ///
@@ -832,6 +835,7 @@ impl Session {
             input: None,
             monitored: Vec::new(),
             typing: MusicalTyping::default(),
+            midi: midi_input::MidiInput::default(),
             take: None,
             japanese: None,
             shipped_dictionary: options.shipped_dictionary,
@@ -1199,6 +1203,7 @@ impl Session {
         self.recover_lost_output(std::time::Instant::now());
         self.service_calibration();
         self.service_typing_calibration();
+        self.service_midi(std::time::Instant::now());
         // Writing a parameter is the one edit that reaches a plugin without rebuilding, so it is
         // also the one that can leave the tracks compensated for the wrong number of frames.
         // Rebuilding re-measures every chain and re-sizes the delay lines to match — and going
