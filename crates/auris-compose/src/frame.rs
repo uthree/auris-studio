@@ -138,6 +138,18 @@ pub struct Frame {
     pub mood: Mood,
 }
 
+/// How much of the melody's range the arch a section's structural pitches draw is as tall as.
+///
+/// Three tenths of two octaves is a little over a fifth. It was half, an octave, and the tune
+/// hung a figure a sixth tall on it: sixteen bars of lead covered nineteen semitones where
+/// sixteen bars of a sung pop line cover fourteen. A bar's own span and four bars' were already
+/// close to a singer's, so it was the arch that was too tall and not the figure.
+const ARCH: f32 = 0.3;
+
+/// How far a take may sit above or below where the brightness puts its arch, as a share of the
+/// melody's range: a tenth of two octaves is a little over a tone.
+const LIFT: f32 = 0.1;
+
 /// One structural pitch per chord, chosen so the line makes musical sense as a whole.
 ///
 /// A dynamic program rather than a series of local choices: picking each note from its
@@ -170,6 +182,22 @@ pub(crate) fn skeleton(
         ],
     );
     let peak = 0.55 + rng.unit() * 0.25;
+    // And how high the take sits, a little either side of where the brightness puts it. An arch
+    // this low hardly moves a chord tone by moving its peak, and without this every take of a
+    // chart hung its tune on the same structural pitches. Keyed by the seed alone, so that a
+    // take's sections share one height and the tune they share is said at one level.
+    let lift = (Rng::stream(
+        seed,
+        &[
+            RngKey::Word("frame"),
+            RngKey::Word("skeleton"),
+            RngKey::Word("lift"),
+        ],
+    )
+    .unit()
+        - 0.5)
+        * 2.0
+        * LIFT;
 
     let candidates: Vec<Vec<i32>> = events
         .iter()
@@ -200,11 +228,11 @@ pub(crate) fn skeleton(
         } else {
             1.0 - (position - peak) / (1.0 - peak).max(0.001)
         };
-        // Where in the role's range the arch sits. The arch spans half the range and brightness
-        // slides that half: 0 writes the line low, 1 writes it high, and 0.5 leaves it exactly
-        // where it has always been. See `Mood::brightness` for why this is what that dial does.
-        let floor = 0.5 * brightness.clamp(0.0, 1.0);
-        let target = low as f32 + (high - low) as f32 * (floor + 0.5 * height);
+        // Where in the role's range the arch sits. The arch spans `ARCH` of the range and
+        // brightness slides it: 0 writes the line low, 1 writes it high, and 0.5 centres it.
+        // See `Mood::brightness` for why this is what that dial does.
+        let floor = (1.0 - ARCH) * brightness.clamp(0.0, 1.0) + lift;
+        let target = low as f32 + (high - low) as f32 * (floor + ARCH * height).clamp(0.0, 1.0);
         let final_event = index + 1 == candidates.len();
 
         let mut row = Vec::with_capacity(options.len());
@@ -361,10 +389,46 @@ mod tests {
         let b = seeded(1);
         assert_eq!(a.sections[0].skeleton, b.sections[0].skeleton);
 
-        let c = seeded(2);
-        // Not a guarantee for every seed pair, but these two do differ, and the test pins that
-        // the seed is actually reaching the plan.
-        assert_ne!(a.sections[0].skeleton, c.sections[0].skeleton);
+        // Not a guarantee for every seed pair — the seed moves where the arch peaks, and two
+        // peaks can ask for the same chord tones — but some of these do differ, and the test
+        // pins that the seed is actually reaching the plan.
+        assert!(
+            (2..=16).any(|seed| seeded(seed).sections[0].skeleton != a.sections[0].skeleton),
+            "sixteen seeds planned one skeleton"
+        );
+    }
+
+    #[test]
+    fn the_arch_is_a_singers_and_not_the_whole_range() {
+        // The arch the structural pitches draw was an octave tall, and the tune hung its figure
+        // on that: sixteen bars covered nineteen semitones. `ARCH` of two octaves is a little
+        // over a fifth, and a chord tone can sit a third either side of where the arch asks.
+        let (low, high) = crate::spec::Role::Melody.range();
+        let tallest = ARCH * (high - low) as f32 + 8.0;
+        let reach = (0.5 * ARCH + LIFT) * (high - low) as f32 + 4.0;
+        let middle = (low + high) as f32 / 2.0;
+        for seed in 0..16u64 {
+            let frame = Song {
+                chords: "@canon".into(),
+                bars: 16,
+                seed,
+                ..Song::default()
+            }
+            .frame();
+            let skeleton = &frame.sections[0].skeleton;
+            let span = skeleton.iter().max().unwrap() - skeleton.iter().min().unwrap();
+            assert!(
+                span as f32 <= tallest,
+                "seed {seed}: the skeleton spans {span} semitones: {skeleton:?}"
+            );
+            // Wherever the take lifts it, the arch stays about the middle of the range.
+            assert!(
+                skeleton
+                    .iter()
+                    .all(|pitch| (*pitch as f32 - middle).abs() <= reach),
+                "seed {seed}: the skeleton leaves the middle of the range: {skeleton:?}"
+            );
+        }
     }
 
     #[test]

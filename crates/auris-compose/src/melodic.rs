@@ -290,19 +290,94 @@
 //! Two tests in `parts::melody` hold the table: `a_section_is_not_one_bar_said_sixteen_times`
 //! and `the_line_crosses_bar_lines_and_some_phrases_are_led_into`.
 //!
+//! # The sixth pass: which corpus
+//!
+//! The first four passes held the line to 68 steps and 11 repeated notes in a hundred. Those
+//! are Palestrina's figures, and they were met: the composer wrote a tune that walked up and
+//! down a scale and seldom said a note twice, which is well formed and does not sound sung. The
+//! fifth pass measured the pitches against sung pop while it was there, and the same takes and
+//! the same 607 windows say this:
+//!
+//! | | before | after | sung pop |
+//! | --- | --- | --- | --- |
+//! | repeated note | 11% | 26% | 29% |
+//! | step (1–2 semitones) | 59% | 45% | 42% |
+//! | third (3–4) | 21% | 19% | 17% |
+//! | fourth or wider | 9% | 10% | 12% |
+//! | a repeat after a repeat | 14% | 34% | 48% |
+//! | a repeat after a move | 11% | 24% | 21% |
+//! | a step up carried on up | 36% | 26% | 27% |
+//! | a step down carried on down | 39% | 30% | 33% |
+//! | a leap carried on the same way | **41%** | 23% | 17% |
+//! | a leap followed by its own landed note | 8% | 27% | 28% |
+//! | notes inside a stepwise run of four or more | **24%** | 10% | 12% |
+//! | entering after a rest by a third or wider | 22% | 47% | 57% |
+//! | span of sixteen bars, in semitones | 19.2 | 15.6 | 13.7 |
+//! | span of four bars | 11.6 | 10.1 | 8.8 |
+//!
+//! POP909's melody tracks agree with the first two rows at 22% and 47%, so this is not one
+//! corpus's habit. Three things in it are not about how often an interval is drawn at all, and
+//! no table of weights could have reached them:
+//!
+//! * **A sung line recites.** Its repeated notes come in runs — a repeat is more than twice as
+//!   likely after a repeat as after a move — where the composer sprinkled its few evenly.
+//! * **Step inertia belongs to falling lines only.** A step down is followed by another more
+//!   often than not; a step *up* is followed by a turn slightly more often than by another.
+//!   The walk applied it both ways at 85 in a hundred, and that is where the scale runs came
+//!   from.
+//! * **A leap is not carried on.** The note after one turns back, or says the landed note
+//!   again. The walk has always turned its own leaps round, but most of the leaps on the page
+//!   are made after the walk, by the chord a strong beat is moved onto and by the join between
+//!   two bars.
+//!
+//! What changed, in `parts::melody` unless it says otherwise:
+//!
+//! 1. **The table is a singer's.** A repeated note is 23 draws in a hundred rather than 11,
+//!    and after one a move is turned into another a third of the time.
+//! 2. **Inertia only falls**, and at the strength it is found at.
+//! 3. **A repeat reaches the page.** A figure no busier than the germ takes the germ's own
+//!    notes rather than a line interpolated between them, which had been blurring every
+//!    repeated note into a slope; and a note the figure says twice is said again at the pitch
+//!    that was *played*, which a strong beat may have moved. With the table at 23 in a hundred
+//!    and recitation on top of it, 17 notes in a hundred had been coming out repeated.
+//! 4. **A leap is answered where it is made.** A weak note that would carry a leap of a fourth
+//!    or more on the way it went says the landed note again instead.
+//! 5. **A bar line is joined only when it needs to be.** A bar that would enter within a
+//!    fourth of where the last one left off is left where its anchor puts it, and a repeat
+//!    ranks with a third rather than below a fourth. Joining every bar line left a fourth or
+//!    wider at six crossings in a hundred, where a sung line has twenty: it moves *more* across
+//!    a bar line than inside one.
+//! 6. **A phrase falls, and the next one starts again.** The answer aims a third under the
+//!    degree the call began on, and a phrase after the first starts from its own anchor rather
+//!    than from the note the last was let go of on.
+//! 7. **The arch is a singer's.** The structural pitches in `frame` arch over three tenths of
+//!    the range rather than half of it, and a take sits a little above or below the middle so
+//!    that two takes of a chart are not hung on the same pitches.
+//!
+//! One thing was tried and taken out. A continuation was made to follow the call's own closing
+//! gesture, sign and all, instead of pointing every move at where it has to arrive; it moved
+//! the continuation's share of scale runs from 18.5% to 17.5% and was not worth its code.
+//!
+//! `the_tune_still_measures_like_a_tune` and `the_tune_moves_the_way_a_sung_line_does` hold
+//! the table, and the first of them now guards both sides: the arpeggio the line was before the
+//! first pass, and the scale it was before this one.
+//!
 //! # What is still wrong
 //!
-//! Steps sit at 60.5% where a corpus says 68. One thing is known and not fixed: resolving a
-//! dissonance onto a chord tone sometimes lands on the note beside it, which is refused where it
-//! would stutter but not otherwise.
+//! One thing is known and not fixed from the early passes: resolving a dissonance onto a chord
+//! tone sometimes lands on the note beside it, which is refused where it would stutter but not
+//! otherwise.
 //!
-//! The larger thing is which corpus. The 68 and the 11 are Palestrina's, and the fifth pass
-//! measured the pitches against sung pop while it was there: a repeated note is 28% of those
-//! lines (22% in POP909's melody tracks) where the composer writes 12, a step is 43% where it
-//! writes 59, a quarter of its notes sit inside a stepwise run of four or more where an eighth
-//! of theirs do, and sixteen bars of it span nineteen semitones against fourteen. A tune that
-//! walks up and down a scale and seldom says a note twice is well formed and still does not
-//! sound sung. None of the five changes above touches it.
+//! Against sung pop, a bar line is still crossed too smoothly — by a fourth or wider 11 times
+//! in a hundred where a singer does it 20 — and a continuation, the third bar of a phrase, is
+//! still the most scale-like bar there is, with 17% of its notes in a stepwise run and one
+//! move in twenty a leap. Sixteen bars span two semitones more than a singer's. And a bar
+//! resembles the bar two before it in rhythm but not in contour: the correlation is −0.11
+//! where the corpus has 0.23.
+//!
+//! The corpus is sung. A lead that is not a voice may want fewer repeated notes than a line
+//! with a syllable on every one of them, and nothing here measures an instrumental line against
+//! instrumental lines.
 //!
 //! # What is not a code problem
 //!

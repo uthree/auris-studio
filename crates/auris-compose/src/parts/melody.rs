@@ -40,18 +40,18 @@ const MOTIF_MINIMUM: usize = 3;
 /// The moves a figure may make, in scale steps, and how often each is drawn.
 ///
 /// A scale step is a second, two is a third, three is a fourth — so this table *is* the melodic
-/// interval distribution, and it was measured against the corpus figures rather than guessed at.
+/// interval distribution, and it was measured against corpus figures rather than guessed at.
 /// See [`crate::melodic`] for where the numbers come from and what the figure used to draw from,
 /// which was half seconds and a quarter *fourths*: an arpeggio's distribution rather than a
 /// tune's.
 ///
-/// Zero is here because a repeated note is a melodic move like any other and one in nine of them
-/// is one. Without it every note had to go somewhere, and the repeats that did occur were
-/// accidents of the range clamp rather than anything anybody wrote.
+/// Zero is here because a repeated note is a melodic move like any other, and in a sung line
+/// it is more than a quarter of them. The table used to give it one draw in nine, which is
+/// Palestrina's share and not a pop singer's; see the sixth pass in [`crate::melodic`].
 const MOVES: [i32; 7] = [-3, -2, -1, 0, 1, 2, 3];
 
 /// How often each of [`MOVES`] is drawn.
-const MOVE_WEIGHTS: [f32; 7] = [3.0, 7.5, 34.0, 11.0, 34.0, 7.5, 3.0];
+const MOVE_WEIGHTS: [f32; 7] = [4.5, 10.0, 24.0, 23.0, 24.0, 10.0, 4.5];
 
 /// A style changes the melodic vocabulary without changing the range or disabling any move.
 /// Repetition belongs to a hook; a jazz line admits more thirds; sustained textures favour
@@ -59,45 +59,67 @@ const MOVE_WEIGHTS: [f32; 7] = [3.0, 7.5, 34.0, 11.0, 34.0, 7.5, 3.0];
 fn move_weights(style: Option<PerformanceStyle>) -> [f32; 7] {
     match style {
         Some(PerformanceStyle::Rock | PerformanceStyle::Chiptune) => {
-            [2.5, 7.0, 32.0, 18.0, 32.0, 7.0, 2.5]
+            [4.0, 9.0, 22.5, 29.0, 22.5, 9.0, 4.0]
         }
         Some(PerformanceStyle::JazzTrio | PerformanceStyle::CityPop) => {
-            [3.5, 10.0, 32.0, 9.0, 32.0, 10.0, 3.5]
+            [5.0, 13.0, 23.5, 17.0, 23.5, 13.0, 5.0]
         }
         Some(PerformanceStyle::Ambient | PerformanceStyle::Orchestral) => {
-            [1.5, 6.0, 38.0, 14.0, 38.0, 6.0, 1.5]
+            [2.5, 8.0, 28.5, 22.0, 28.5, 8.0, 2.5]
         }
         _ => MOVE_WEIGHTS,
     }
 }
 
-/// How often a figure keeps the move it drew rather than being turned by [`shaped`].
+/// How often a figure keeps the move it drew after a leap rather than being turned by
+/// [`shaped`].
 ///
-/// Neither of the two regularities is a law — a melody that filled in every one of its leaps
-/// would be as mechanical as one that never did — and this is the room left for the exceptions.
-/// Huron reports post-leap reversal at about seven times in ten, which is what this lands near
-/// once the drawn direction is taken into account.
+/// The regularity is not a law — a melody that filled in every one of its leaps would be as
+/// mechanical as one that never did — and this is the room left for the exceptions. Huron
+/// reports post-leap reversal at about seven times in ten, which is what this lands near once
+/// the drawn direction is taken into account.
 const HOLD: f32 = 0.3;
+
+/// How often a figure that has just stepped *down* is made to step down again when it drew a
+/// step either way.
+///
+/// Step inertia, at the strength and on the side it is actually found. Measured over the PDMX
+/// pop and rock vocal parts, a step that follows a descending step goes on down 59 times in a
+/// hundred, and one that follows an ascending step goes on *up* 46 times: the regularity
+/// belongs to falling lines only, which is how Huron reports it too. It used to be applied
+/// both ways at 85 in a hundred, and a quarter of the composer's notes sat inside a scale run
+/// of four or more where an eighth of a sung line's do.
+const DESCENT: f32 = 0.18;
+
+/// How often a figure that has just repeated a note is made to repeat it again when it drew a
+/// move.
+///
+/// A sung line does not sprinkle its repeated notes, it recites: over the same corpus a
+/// repeat follows a repeat 48 times in a hundred and follows a move 21 times. Drawn from the
+/// table alone the two would be the same number.
+const RECITES: f32 = 0.34;
 
 /// The move a figure makes next, given the one it just made.
 ///
-/// Two regularities that every corpus of tonal melody shows, and that a memoryless walk cannot
-/// have: after a leap the line turns and fills the gap in, and after a step it tends to carry on
-/// the same way. `drawn` is what the table gave; `hold` is the caller's roll for leaving it alone.
+/// Two regularities a memoryless walk cannot have: after a leap the line turns and fills the
+/// gap in, and a line that is falling by step tends to go on falling. `drawn` is what the
+/// table gave; `hold` is the caller's roll for leaving a leap unanswered, and `falls` its roll
+/// for the descent carrying on.
 ///
-/// A drawn *leap* is never turned by the inertia rule, only a drawn step. That is what keeps the
-/// line from running to the end of its range: with every step redirected and no leap free to
-/// answer, a figure that started upward would only ever go up.
-fn shaped(previous: i32, drawn: i32, hold: bool) -> i32 {
-    if drawn == 0 || previous == 0 || hold {
+/// A drawn *leap* is never turned by the inertia rule, only a drawn step.
+fn shaped(previous: i32, drawn: i32, hold: bool, falls: bool) -> i32 {
+    if drawn == 0 || previous == 0 {
         return drawn;
     }
     if previous.abs() >= 2 {
+        if hold {
+            return drawn;
+        }
         // Gap-fill: a leap implies a turn, and what fills a gap is a step rather than a leap back.
         -previous.signum() * drawn.abs().min(2)
-    } else if drawn.abs() == 1 {
-        // Step inertia.
-        previous.signum()
+    } else if previous < 0 && drawn.abs() == 1 && falls {
+        // Step inertia, which only a falling line has.
+        -1
     } else {
         drawn
     }
@@ -139,26 +161,42 @@ fn toward_middle(degree: i32, move_by: i32) -> i32 {
 /// the next was whatever fell out of the difference between two anchors — a leap of a fourth on
 /// average, nearly half of them wider than that, and not one of them chosen by anything.
 ///
-/// Anything up to a *fourth* is preferred to landing on the note the last bar ended on. Restating
-/// a figure from the note it just finished on is a real melodic move and not one to make a third
-/// of the time, which is what taking the nearest landing outright did: the smoothest join
-/// available is always the one that does not move. The rank was 3 — a repeat lost only to a step
-/// — and a fifth of all bar crossings still restated the last note, because the landings are
-/// chord-snapped now and the nearest *other* chord tone is usually a third or a fourth away. At 5
-/// those win too, and what is left repeating is the join whose every alternative is a real leap,
-/// which is the one a repeat genuinely beats. Measured at 3, 4 and 5 over the presets: the mean
-/// join and the leap share did not move, and only the repeats did.
+/// At a bar line it is called only for a join that needs making: a bar that would enter within
+/// a fourth of where the last one left off is left where its own anchor puts it — see `LEAP`.
+/// A bar line is where a sung line moves most, by a fourth or wider one crossing in five, and
+/// joining every one of them shut that down to one in sixteen. A chord change inside a bar is
+/// always joined, because a line is one thing inside a bar.
+///
+/// A landing on the note the last bar ended on ranks as a third would: it loses to a step and
+/// to nothing else. Taking the nearest landing outright restated a third of all bars from the
+/// note before, because the smoothest join available is always the one that does not move. The
+/// rank was then raised to 5, which left a repeat at one bar crossing in ten — right for the
+/// eleven in a hundred the line as a whole was being held to, and half of the 21 a sung line
+/// restates across a bar line.
 fn join_offset(previous: i32, landings: &[(i32, i32)]) -> i32 {
     landings
         .iter()
         .min_by_key(|(offset, pitch)| {
             let distance = (pitch - previous).abs();
-            let ranked = if distance == 0 { 5 } else { distance };
+            let ranked = if distance == 0 { 3 } else { distance };
             (ranked, offset.abs())
         })
         .map(|(offset, _)| *offset)
         .unwrap_or(0)
 }
+
+/// The narrowest interval, in semitones, that the line is not allowed to carry on from in the
+/// direction it was made in: a fourth.
+///
+/// Measured over the PDMX pop and rock vocal parts, the note after a leap of a fourth or more
+/// turns back 55 times in a hundred, says the landed note again 28 times and goes on the same
+/// way 17. The composer went on the same way 41 times: the walk turns its own leaps round, but
+/// most of the leaps on the page are made afterwards, by the chord a strong beat is moved onto
+/// and by the join between two bars, where nothing was looking.
+///
+/// It is also the widest a bar may enter from where the last one left off before the join is
+/// made for it: up to here the line is moving, and past here the anchor is.
+const LEAP: i32 = 5;
 
 /// How long the last note of a closing phrase sounds for, so that the phrase is let go of.
 ///
@@ -281,7 +319,14 @@ fn contour(
         // that wandered off would not be recognisable when it came back.
         if position > 0 {
             let drawn = MOVES[rng.weighted(&move_weights(style))];
-            let move_by = toward_middle(degree, shaped(previous_move, drawn, rng.chance(HOLD)));
+            // Every roll is made whichever of them ends up deciding, so the stream does not
+            // shift with the shape of the line it is drawing.
+            let (hold, falls, recites) =
+                (rng.chance(HOLD), rng.chance(DESCENT), rng.chance(RECITES));
+            // A note said twice is likelier to be said a third time: recitation.
+            let recited = position > 1 && previous_move == 0 && recites;
+            let drawn = if recited { 0 } else { drawn };
+            let move_by = toward_middle(degree, shaped(previous_move, drawn, hold, falls));
             let landed = (degree + move_by).clamp(-6, 6);
             // What the figure *did*, not what it was asked to do. At the edge of the clamp the
             // two differ, and remembering the request would have the next note fill in a leap
@@ -449,17 +494,36 @@ fn dressed(rhythm: &Motif, contour: &Motif) -> Motif {
     }
     let last = contour.cells.len() - 1;
     let count = rhythm.cells.len();
+    let place = |position: usize| {
+        if count == 1 {
+            0.0
+        } else {
+            position as f32 * last as f32 / (count - 1) as f32
+        }
+    };
+    if count <= contour.cells.len() {
+        // No busier than the germ: every note takes a note the germ wrote, the one nearest its
+        // own place in the line, and the ones between are left out. Nothing is interpolated,
+        // because there is nothing to fill in — and interpolating anyway blurred the germ's
+        // repeated notes into slopes, which the rule below then turned into steps.
+        let cells = rhythm
+            .cells
+            .iter()
+            .enumerate()
+            .map(|(position, cell)| Cell {
+                degree: contour.cells[(place(position).round() as usize).min(last)].degree,
+                ..*cell
+            })
+            .collect();
+        return Motif { cells };
+    }
     // The germ's line at each cell's proportional position, as a continuous value: rounding is
     // done afterwards, because rounding alone turns every gentle slope into a staircase of
     // repeated notes — landings at 0.0, 0.33, 0.67 and 1.0 came out 0, 0, 1, 1, and the figure
     // stood still twice where the line never stopped moving.
     let line: Vec<f32> = (0..count)
         .map(|position| {
-            let t = if count == 1 {
-                0.0
-            } else {
-                position as f32 * last as f32 / (count - 1) as f32
-            };
+            let t = place(position);
             let before = (t.floor() as usize).min(last);
             let after = (before + 1).min(last);
             let fraction = t - before as f32;
@@ -696,7 +760,13 @@ pub(super) fn melody(
         // joins it to the bar before, within `JOIN_REACH` of the structural pitch. Mutable
         // because a chord change *inside* the bar re-joins the figure the same way — see the
         // cell loop below.
-        let mut offset = match (left_off, cells.cells.first()) {
+        // A phrase after the first starts where its own anchor puts it, as the section's first
+        // does, rather than being joined to the note the phrase before was let go of on. The
+        // join is what keeps a line together, and across a breath there is no line to keep:
+        // a sung line enters after a rest of a beat or more by a fourth or wider one time in
+        // three, and the composer, joining every bar alike, did it one time in sixteen.
+        let joined = if position == 0 { None } else { left_off };
+        let mut offset = match (joined, cells.cells.first()) {
             (Some(previous), Some(first)) => {
                 let at = bar_start + grid.tick_of(first.step);
                 match section.chord_at(at) {
@@ -726,7 +796,15 @@ pub(super) fn melody(
                                 (offset, pitch)
                             })
                             .collect();
-                        join_offset(previous, &landings)
+                        let unjoined = landings
+                            .iter()
+                            .find(|(offset, _)| *offset == 0)
+                            .map(|(_, pitch)| (pitch - previous).abs());
+                        if unjoined.is_some_and(|interval| interval <= LEAP) {
+                            0
+                        } else {
+                            join_offset(previous, &landings)
+                        }
                     }
                     None => 0,
                 }
@@ -795,10 +873,26 @@ pub(super) fn melody(
             if weight >= 3 || cadence {
                 pitch = fold_into(event.chord.nearest_tone(pitch), low, high);
             } else if let Some(&(previous_position, previous_pitch, _)) = bar_notes.last() {
-                // Two cells that asked for different degrees and arrived on one pitch: the range
-                // has folded the walk flat, and the repeat is nobody's. See `unstick`.
                 let asked = cell.degree - cells.cells[previous_position].degree;
-                if pitch == previous_pitch && asked != 0 {
+                // The interval the line arrived on the note before by, across the bar line
+                // when that note opened the bar.
+                let arrived = match bar_notes.len().checked_sub(2) {
+                    Some(index) => Some(previous_pitch - bar_notes[index].1),
+                    None => joined.map(|before| previous_pitch - before),
+                };
+                let carries_a_leap = arrived.is_some_and(|leap| {
+                    leap.abs() >= LEAP && (pitch - previous_pitch).signum() == leap.signum()
+                });
+                if asked == 0 || carries_a_leap {
+                    // The figure said this note twice, so it is the note that was *played* that
+                    // is said again — the one before may have been moved onto a chord tone, and
+                    // answering it from the scale turned a repeat somebody drew into a step
+                    // nobody did. And a line that has just leapt does not carry on the way it
+                    // leapt: it turns, which the walk sees to, or it stays where it landed.
+                    pitch = previous_pitch;
+                } else if pitch == previous_pitch {
+                    // Two cells that asked for different degrees and arrived on one pitch: the
+                    // range has folded the walk flat, and the repeat is nobody's. See `unstick`.
                     pitch = unstick(&scale, pitch, asked.signum(), low, high);
                 }
             }
@@ -1555,6 +1649,22 @@ mod tests {
         let degrees: Vec<i32> = sparse.cells.iter().map(|cell| cell.degree).collect();
         assert_eq!(degrees, [0, 2]);
 
+        // No busier than the germ, a section says notes the germ wrote and nothing between
+        // them — so a note the germ said twice is said twice, where interpolating between its
+        // neighbours made a slope of it and the stammer rule then made a step of the slope.
+        let recited = dressed(
+            &figure_of(&[(0, 9), (2, 9), (4, 9), (6, 9)]),
+            &figure_of(&[(0, 0), (1, 0), (2, 1), (3, 1), (4, 3)]),
+        );
+        assert_eq!(
+            recited
+                .cells
+                .iter()
+                .map(|cell| cell.degree)
+                .collect::<Vec<_>>(),
+            [0, 0, 1, 3]
+        );
+
         // A germ with no line in it dresses nothing.
         let own = figure_of(&[(0, 3), (2, 5)]);
         assert_eq!(
@@ -1720,7 +1830,7 @@ mod tests {
         // because the presets' charts are all one chord to the bar and nothing measured it. A
         // busy written chart meets it head on.
         let (mut across, mut inside) = (Vec::new(), Vec::new());
-        for seed in 1..=8u64 {
+        for seed in 1..=16u64 {
             let (frame, parts) = lead("| I V | vi IV | I vi | ii V |", 8, seed, |_| {}).draft();
             let lead = part(&parts, "lead");
             let section = &frame.sections[0];
@@ -1796,27 +1906,39 @@ mod tests {
     }
 
     #[test]
-    fn a_leap_is_filled_in_and_a_step_carries_on() {
-        // The two regularities of `crate::melodic`. A memoryless walk has neither, and the
+    fn a_leap_is_filled_in_and_only_a_falling_step_carries_on() {
+        // The regularities of `crate::melodic`. A memoryless walk has neither, and the
         // composer's line had neither: it drew every move from the same table whatever it had
         // just done.
-        assert_eq!(shaped(3, 2, false), -2, "a leap up is answered downward");
-        assert_eq!(shaped(-3, 1, false), 1, "and a leap down, upward");
         assert_eq!(
-            shaped(2, 3, false),
+            shaped(3, 2, false, false),
+            -2,
+            "a leap up is answered downward"
+        );
+        assert_eq!(shaped(-3, 1, false, false), 1, "and a leap down, upward");
+        assert_eq!(
+            shaped(2, 3, false, false),
             -2,
             "what fills a gap is a step, not a leap back"
         );
-        assert_eq!(shaped(1, 1, false), 1, "a step up carries on up");
-        assert_eq!(shaped(-1, 1, false), -1, "a step down carries on down");
+        // Step inertia belongs to a falling line, and only when the roll says so: a rising
+        // step is followed by whatever was drawn.
+        assert_eq!(
+            shaped(-1, 1, false, true),
+            -1,
+            "a step down carries on down"
+        );
+        assert_eq!(shaped(-1, 1, false, false), 1);
+        assert_eq!(shaped(1, -1, false, true), -1, "a step up has no inertia");
+        assert_eq!(shaped(1, 1, false, true), 1);
         // A drawn leap after a step goes where it was drawn. Redirecting those too would leave a
-        // figure that started upward with nothing able to turn it round.
-        assert_eq!(shaped(1, -3, false), -3);
-        // Neither rule is absolute, a repeated note is always allowed, and the first move of a
-        // figure has nothing to answer.
-        assert_eq!(shaped(3, 2, true), 2);
-        assert_eq!(shaped(3, 0, false), 0);
-        assert_eq!(shaped(0, 3, false), 3);
+        // figure that started downward with nothing able to turn it round.
+        assert_eq!(shaped(-1, 3, false, true), 3);
+        // The gap-fill is not absolute, a repeated note is always allowed, and the first move
+        // of a figure has nothing to answer.
+        assert_eq!(shaped(3, 2, true, false), 2);
+        assert_eq!(shaped(3, 0, false, false), 0);
+        assert_eq!(shaped(0, 3, false, true), 3);
     }
 
     #[test]
@@ -1840,11 +1962,10 @@ mod tests {
         // smoothest join available is always the one that does not move, and taking it outright
         // restated a third of all bars from a repeated note.
         assert_eq!(join_offset(60, &[(-1, 60), (0, 62), (1, 67)]), 0);
-        // And to a third. The landings are chord-snapped now, so the nearest *other* landing is
-        // usually a chord tone a third or fourth away — at the old rank of 3 the repeat beat
-        // every one of those, and a fifth of all bar crossings still restated the last note.
+        // A minor third ties with it and wins on the smaller shift; a major third or anything
+        // wider loses, and the bar starts on the note the last one ended on.
         assert_eq!(join_offset(60, &[(-1, 60), (0, 63), (1, 67)]), 0);
-        // Unless nothing else is anywhere near, where repeating beats leaping off the note.
+        assert_eq!(join_offset(60, &[(-1, 60), (0, 64), (1, 67)]), -1);
         assert_eq!(join_offset(60, &[(-1, 60), (0, 67), (1, 69)]), -1);
     }
 
@@ -1922,13 +2043,13 @@ mod tests {
         );
     }
 
-    /// Every melodic interval the lead writes, and the ones that cross a bar line.
+    /// The lead's notes in every take the measurements are made over, each with its bar length.
     ///
     /// The measurement [`crate::melodic`] describes: eight-bar takes over several charts, keys
-    /// and styles at four seeds each, verse and chorus intensities alternating, and the signed
-    /// difference between consecutive pitches. The seeds count from one, as a clip's do.
-    fn intervals() -> (Vec<i32>, Vec<i32>, Vec<i32>) {
-        let (mut all, mut crossing, mut inside) = (Vec::new(), Vec::new(), Vec::new());
+    /// and styles at four seeds each, verse and chorus intensities alternating. The seeds count
+    /// from one, as a clip's do.
+    fn takes() -> Vec<(i64, Vec<Draft>)> {
+        let mut takes = Vec::new();
         use crate::PerformanceStyle::{Chiptune, CityPop, Orchestral, PopBand, Rock};
         for (key, chart, style, mood) in [
             ("C major", "@axis", Some(Chiptune), "bright"),
@@ -1946,16 +2067,25 @@ mod tests {
                 song.settings.style = style;
                 song.settings.mood = crate::Mood::named(mood).unwrap();
                 let (frame, parts) = song.draft();
-                let bar = frame.grid.bar_ticks().raw().max(1);
                 let mut notes = part(&parts, "lead").notes.clone();
                 notes.sort_by_key(|note| note.start.raw());
-                for pair in notes.windows(2) {
-                    let step = i32::from(pair[1].pitch) - i32::from(pair[0].pitch);
-                    all.push(step);
-                    match pair[0].start.raw() / bar == pair[1].start.raw() / bar {
-                        true => inside.push(step),
-                        false => crossing.push(step),
-                    }
+                takes.push((frame.grid.bar_ticks().raw().max(1), notes));
+            }
+        }
+        takes
+    }
+
+    /// Every melodic interval the lead writes over [`takes`], as the signed difference between
+    /// consecutive pitches, and the ones that cross a bar line and the ones that do not.
+    fn intervals() -> (Vec<i32>, Vec<i32>, Vec<i32>) {
+        let (mut all, mut crossing, mut inside) = (Vec::new(), Vec::new(), Vec::new());
+        for (bar, notes) in takes() {
+            for pair in notes.windows(2) {
+                let step = i32::from(pair[1].pitch) - i32::from(pair[0].pitch);
+                all.push(step);
+                match pair[0].start.raw() / bar == pair[1].start.raw() / bar {
+                    true => inside.push(step),
+                    false => crossing.push(step),
                 }
             }
         }
@@ -1969,7 +2099,7 @@ mod tests {
         // page silently stops describing the composer. The bands are wide on purpose — this is
         // not a fingerprint, and taste is allowed to move inside them — but each one sits between
         // the figure that page reports and the figure it reports for the writer *before* those
-        // rules existed, so a regression to the old shape cannot pass.
+        // rules existed, so a regression to an old shape cannot pass.
         let (all, crossing, inside) = intervals();
         let share = |count: usize| 100.0 * count as f64 / all.len() as f64;
         let mean = |steps: &[i32]| {
@@ -1978,46 +2108,100 @@ mod tests {
         };
 
         // A third of every move being a fourth or wider is an arpeggio's distribution, not a
-        // tune's. It was 34.3 per cent; the page reports 15.0 and a corpus 21 for all leaps.
+        // tune's. It was 34.3 per cent; sung pop lines leap 12 times in a hundred.
         let leaps = share(all.iter().filter(|step| step.abs() >= 5).count());
         assert!(
             leaps < 18.0,
             "a leap of a fourth or wider is {leaps:.1}% of the line"
         );
 
-        // Steps were 31.4 per cent, then 41.8 after the five rules; the page reports 53.3 after
-        // the second pass took the accidental repeats out, against a corpus 68.
+        // Steps were 31.4 per cent when the line was an arpeggio and 61 when it was a scale;
+        // a sung line steps 42 times in a hundred. The band guards both directions: under 34 is
+        // the arpeggio coming back and over 54 is the scale.
         let steps = share(
             all.iter()
                 .filter(|step| (1..=2).contains(&step.abs()))
                 .count(),
         );
-        assert!(steps > 48.0, "only {steps:.1}% of the line moves by a step");
+        assert!(
+            (34.0..54.0).contains(&steps),
+            "{steps:.1}% of the line moves by a step"
+        );
         assert!(steps > leaps, "the line leaps as readily as it steps");
 
-        // A repeated note is a melodic move like any other and `MOVES` gives it one weight in
-        // nine. The page reports 10.5 per cent against a corpus 11 — the second pass took out
-        // the repeats the range clamp and the unsnapped join were writing, and the band guards
-        // both directions: over 15 is the accidents coming back, and under 6 is something eating
-        // the repeats the table legitimately draws.
+        // A repeated note is a melodic move like any other, and in a sung line it is 29 of every
+        // hundred. The writer was held to an eleven counted in Palestrina until the sixth pass,
+        // and wrote 10. Under 18 is that coming back; over 38 is a line that has stopped going
+        // anywhere.
         let repeats = share(all.iter().filter(|step| **step == 0).count());
         assert!(
-            (6.0..15.0).contains(&repeats),
+            (18.0..38.0).contains(&repeats),
             "{repeats:.1}% of the line stands still"
         );
 
-        // 3.89 before, 2.84 on the page, 2.8 in folk song with repetitions removed.
-        assert!(mean(&all) < 3.0, "the mean interval is {:.2}", mean(&all));
+        // 3.89 before any of the passes; 2.97 in sung pop with repetitions removed.
+        assert!(mean(&all) < 3.3, "the mean interval is {:.2}", mean(&all));
 
-        // The rule that was worth the most. The figure used to restart from its anchor every bar,
-        // so the join between one bar and the next was whatever fell out of the difference
-        // between two structural pitches and nothing had chosen it: a mean of 4.24 against 3.10
-        // inside a bar. `join_offset` is what chooses it, and what the page claims is that the
-        // crossings are now in line with the rest of the line rather than twice as wide.
+        // The figure used to restart from its anchor every bar, so the join between one bar and
+        // the next was whatever fell out of the difference between two structural pitches and
+        // nothing had chosen it: a mean of 4.24 against 3.10 inside a bar. A sung line does move
+        // more across a bar line than inside one — 3.51 against 2.81 — but by a quarter, not by
+        // a third and more.
         let (across, within) = (mean(&crossing), mean(&inside));
         assert!(
             across < within * 1.4,
             "a bar line costs {across:.2} semitones against {within:.2} inside one"
         );
+    }
+
+    #[test]
+    fn the_tune_moves_the_way_a_sung_line_does() {
+        // The sixth pass of `crate::melodic`: what a note does given the one before it, which a
+        // table of intervals cannot say. Each band sits between what the writer does now and
+        // what it did before that pass.
+        let (mut leapt, mut carried) = (0, 0);
+        let (mut said, mut said_again, mut moved, mut then_said) = (0, 0, 0, 0);
+        let mut spans = Vec::new();
+        for (_, notes) in takes() {
+            let pitches: Vec<i32> = notes.iter().map(|note| i32::from(note.pitch)).collect();
+            spans.push(pitches.iter().max().unwrap() - pitches.iter().min().unwrap());
+            for trio in pitches.windows(3) {
+                let (first, second) = (trio[1] - trio[0], trio[2] - trio[1]);
+                if first.abs() >= LEAP {
+                    leapt += 1;
+                    carried += usize::from(second != 0 && second.signum() == first.signum());
+                }
+                if first == 0 {
+                    said += 1;
+                    said_again += usize::from(second == 0);
+                } else {
+                    moved += 1;
+                    then_said += usize::from(second == 0);
+                }
+            }
+        }
+        let percent = |count: usize, of: usize| 100.0 * count as f64 / of.max(1) as f64;
+
+        // After a leap of a fourth or more a sung line goes on the same way 17 times in a
+        // hundred. The composer did 41 times.
+        assert!(leapt >= 40, "only {leapt} leaps to measure");
+        let carried = percent(carried, leapt);
+        assert!(
+            carried < 32.0,
+            "{carried:.1}% of leaps are carried on the way they were made"
+        );
+
+        // A sung line recites: a repeated note follows a repeated note 48 times in a hundred and
+        // follows a move 21 times. The composer's two figures were 14 and 11.
+        let (recited, stopped) = (percent(said_again, said), percent(then_said, moved));
+        assert!(
+            recited > stopped + 8.0,
+            "a repeat follows a repeat {recited:.1}% of the time and a move {stopped:.1}%"
+        );
+
+        // Eight bars of lead, where sixteen used to cover nineteen semitones and a sung line's
+        // sixteen cover fourteen.
+        let span = f64::from(spans.iter().sum::<i32>()) / spans.len() as f64;
+        assert!(span < 14.5, "eight bars span {span:.1} semitones");
     }
 }
