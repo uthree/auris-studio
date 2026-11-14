@@ -587,17 +587,23 @@ impl Session {
     fn perform(&mut self, played: Played) -> bool {
         for (track, semitones) in played.bend {
             self.pitch_bend(track, semitones);
+            let at = self.performed_frame();
+            self.note_take_bent_at(track, semitones, at);
         }
         for (track, amount) in played.modulation {
             self.controller(track, CC_MODULATION, amount);
+            let at = self.performed_frame();
+            self.note_take_controller_at(track, CC_MODULATION, amount, at);
         }
         for (track, pitch) in played.released {
             self.note_off(track, pitch);
             self.note_take_released(track, pitch);
+            self.step_released(track, pitch);
         }
         if let Some(struck) = played.struck {
             self.note_on(struck.track, struck.pitch, struck.velocity);
             self.note_take_struck(struck.track, struck.pitch, struck.velocity);
+            self.step_struck(struck.track, struck.pitch, struck.velocity);
         }
         played.claimed
     }

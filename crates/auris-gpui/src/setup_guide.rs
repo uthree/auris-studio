@@ -79,6 +79,7 @@ pub(crate) const STEPS: &[Key] = &[
     Key::SetupAudio,
     Key::SetupAgent,
     Key::SetupInput,
+    Key::SetupMidi,
     Key::SetupSinging,
     Key::SetupAppearance,
 ];
@@ -276,6 +277,32 @@ impl AurisApp {
                 ));
             }
             3 => {
+                // What is plugged in now, read off the session, so the page answers "does it
+                // see my keyboard?" before anybody has to go looking in the settings.
+                let found = self.session.midi_inputs();
+                let seen = if found.is_empty() {
+                    self.t(Key::SetupMidiNoneFound).to_string()
+                } else {
+                    self.t(Key::SetupMidiFound)
+                        .replace("{names}", &found.join(", "))
+                };
+                detail = detail
+                    .child(paragraph(Key::SetupMidiHelp))
+                    .child(
+                        Label::new(seen)
+                            .size(atelier::TextSize::Small)
+                            .color(TextColor::Faint),
+                    )
+                    .child(paragraph(Key::SetupMidiCalibrate))
+                    .child(paragraph(Key::SetupMidiOctave));
+                actions = actions.child(self.setup_action(
+                    "setup-midi",
+                    Key::SetupOpenMidi,
+                    Destination::Settings(SettingsTab::Midi),
+                    cx,
+                ));
+            }
+            4 => {
                 detail = detail.child(paragraph(Key::SetupSingingHelp));
                 for (name, help, url) in [
                     (
@@ -367,11 +394,10 @@ impl AurisApp {
                     .description(self.t(Key::SetupWelcomeHelp)),
             )
             .child(steps)
-            .child(
-                detail
-                    .child(actions)
-                    .when(matches!(step, 1 | 3), |detail| detail.child(guidance)),
-            )
+            .child(detail.child(actions).when(
+                matches!(STEPS[step], Key::SetupAgent | Key::SetupSinging),
+                |detail| detail.child(guidance),
+            ))
             .child(
                 div()
                     .flex()
@@ -492,7 +518,7 @@ mod tests {
         });
         crate::harness::paint(&app, cx);
         app.update(cx, |app, cx| {
-            app.project_chooser.as_mut().unwrap().setup_step = 3;
+            app.project_chooser.as_mut().unwrap().setup_step = 4;
             cx.notify();
         });
         crate::harness::paint(&app, cx);
@@ -503,6 +529,15 @@ mod tests {
         );
         crate::harness::click("setup-voicevox", cx);
         app.read_with(cx, |app, _| assert!(app.voice_setup_window.is_some()));
+
+        // The MIDI step says what it can see and opens its own settings page.
+        app.update(cx, |app, cx| {
+            app.project_chooser.as_mut().unwrap().setup_step = 3;
+            cx.notify();
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("setup-midi", cx);
+        app.read_with(cx, |app, _| assert!(app.settings_window.is_some()));
 
         crate::harness::click("setup-later", cx);
         crate::harness::paint(&app, cx);

@@ -31,6 +31,73 @@ enum ExportDialogControl {
     Dither,
 }
 
+/// The MIDI keyboard's octave after moving it by `by`, kept within reach.
+fn shifted_octave(octave: i8, by: i8) -> i8 {
+    octave.saturating_add(by).clamp(
+        -auris_session::MIDI_OCTAVE_LIMIT,
+        auris_session::MIDI_OCTAVE_LIMIT,
+    )
+}
+
+/// An octave shift as a person reads it: signed, and zero as zero.
+pub(crate) fn octave_label(octave: i8) -> String {
+    match octave {
+        0 => "0".to_string(),
+        octave => format!("{octave:+}"),
+    }
+}
+
+#[cfg(test)]
+mod octave_tests {
+    use super::{octave_label, shifted_octave};
+
+    #[test]
+    fn the_octave_moves_one_at_a_time_and_stops_at_the_limit() {
+        assert_eq!(shifted_octave(0, 1), 1);
+        assert_eq!(shifted_octave(-1, 1), 0);
+        let top = auris_session::MIDI_OCTAVE_LIMIT;
+        assert_eq!(shifted_octave(top, 1), top);
+        assert_eq!(shifted_octave(-top, -1), -top);
+        assert_eq!(octave_label(0), "0");
+        assert_eq!(octave_label(2), "+2");
+        assert_eq!(octave_label(-1), "-1");
+    }
+}
+
+/// Which track and clip step input writes into.
+///
+/// The clip in the editor when there is one, on its own track — that is what somebody looking at
+/// a piano roll means to fill — and otherwise the track the keyboards play, with a clip made on
+/// the first chord.
+fn step_input_target(
+    selected_clip: Option<(ClipId, TrackId)>,
+    playing: Option<TrackId>,
+) -> (Option<TrackId>, Option<ClipId>) {
+    match selected_clip {
+        Some((clip, owner)) => (Some(owner), Some(clip)),
+        None => (playing, None),
+    }
+}
+
+#[cfg(test)]
+mod step_input_target_tests {
+    use super::step_input_target;
+    use auris_session::prelude::{ClipId, TrackId};
+
+    #[test]
+    fn the_clip_in_the_editor_wins_over_the_selected_track() {
+        assert_eq!(
+            step_input_target(Some((ClipId(7), TrackId(2))), Some(TrackId(1))),
+            (Some(TrackId(2)), Some(ClipId(7)))
+        );
+        assert_eq!(
+            step_input_target(None, Some(TrackId(1))),
+            (Some(TrackId(1)), None)
+        );
+        assert_eq!(step_input_target(None, None), (None, None));
+    }
+}
+
 fn export_dialog_rates(settings: ExportPreferences, project_rate: f64) -> Vec<Option<u32>> {
     let rate_choices: &[u32] = if matches!(settings.format, AudioExportFormat::Mp3) {
         &ExportPreferences::MP3_RATE_CHOICES
@@ -152,6 +219,7 @@ impl Render for AurisApp {
                 monitoring: self.session.monitoring(),
                 metronome: self.session.metronome(),
                 musical_typing: self.session.typing_keyboard().enabled(),
+                step_input: self.session.step_input().is_some(),
             };
             let snapshot = (self.language(), self.panels.clone(), state);
             if !self.main_was_active || self.native_menu_snapshot.as_ref() != Some(&snapshot) {
@@ -489,6 +557,9 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_toggle_recording))
                     .on_action(Self::window_listener(cx, Self::on_toggle_monitoring))
                     .on_action(Self::window_listener(cx, Self::on_toggle_musical_typing))
+                    .on_action(Self::window_listener(cx, Self::on_toggle_step_input))
+                    .on_action(Self::window_listener(cx, Self::on_midi_octave_down))
+                    .on_action(Self::window_listener(cx, Self::on_midi_octave_up))
                     .on_action(Self::window_listener(cx, Self::on_toggle_punch))
                     .on_action(Self::window_listener(cx, Self::on_new_project))
                     .on_action(Self::window_listener(cx, Self::on_open_project))
@@ -2689,6 +2760,72 @@ impl AurisApp {
         cx.notify();
     }
 
+    fn on_midi_octave_down(
+        &mut self,
+        _: &actions::MidiOctaveDown,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.shift_midi_octave(-1);
+        cx.notify();
+    }
+
+    fn on_midi_octave_up(
+        &mut self,
+        _: &actions::MidiOctaveUp,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.shift_midi_octave(1);
+        cx.notify();
+    }
+
+    /// Moves the MIDI keyboard by `by` octaves, remembers it, and says where it now is.
+    fn shift_midi_octave(&mut self, by: i8) {
+        let mut midi = self.settings.midi.clone();
+        midi.octave = shifted_octave(midi.octave, by);
+        let octave = midi.octave;
+        self.apply_midi_preferences(midi);
+        self.set_status(
+            self.t(Key::MidiOctaveNow)
+                .replace("{octave}", &octave_label(octave)),
+        );
+    }
+
+    fn on_toggle_step_input(
+        &mut self,
+        _: &actions::ToggleStepInput,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session.step_input().is_some() {
+            self.session.stop_step_input();
+            self.set_status(self.t(Key::StepInputOff));
+            cx.notify();
+            return;
+        }
+        let (track, clip) = step_input_target(
+            self.selected_clip.and_then(|clip| {
+                self.session
+                    .project()
+                    .midi_clip(clip)
+                    .map(|(owner, _)| (clip, owner))
+            }),
+            self.session.audition_track(self.selected_track),
+        );
+        let Some(track) = track else {
+            let line = self.t(Key::MusicalTypingNeedsInstrument).to_string();
+            self.set_failed_status(line);
+            cx.notify();
+            return;
+        };
+        match self.session.start_step_input(track, clip) {
+            Ok(()) => self.set_status(self.t(Key::StepInputOn)),
+            Err(error) => self.report_session_error(&error),
+        }
+        cx.notify();
+    }
+
     fn on_toggle_musical_typing(
         &mut self,
         _: &actions::ToggleMusicalTyping,
@@ -3207,6 +3344,13 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Under step input the arrows walk the step cursor, which is the playhead too: back
+        // takes the last step away so it can be played again, forward leaves a rest.
+        if self.session.step_input().is_some() {
+            self.session.step_back();
+            cx.notify();
+            return;
+        }
         self.step_playhead(-1);
         cx.notify();
     }
@@ -3217,6 +3361,11 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.session.step_input().is_some() {
+            self.session.step_rest();
+            cx.notify();
+            return;
+        }
         self.step_playhead(1);
         cx.notify();
     }

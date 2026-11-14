@@ -42,6 +42,10 @@ pub enum EngineError {
     #[error("unsupported sample format `{0}`")]
     UnsupportedSampleFormat(String),
 
+    /// The MIDI backend refused an operation, or the input asked for is not there.
+    #[error("MIDI input: {0}")]
+    Midi(String),
+
     /// The audio backend refused an operation.
     #[error("audio backend error: {0}")]
     Backend(#[from] cpal::Error),

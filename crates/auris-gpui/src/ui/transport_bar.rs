@@ -450,6 +450,33 @@ impl AurisApp {
             };
             items.push(control);
         }
+        // A keyboard moved off its own octave says so for as long as it is: a shift nobody can
+        // see is a melody played in the wrong register and blamed on the instrument. Clicking it
+        // puts the keyboard back.
+        let octave = self.settings.midi.octave;
+        if octave != 0 {
+            items.push(
+                div()
+                    .id("midi-octave-badge")
+                    .px_1()
+                    .rounded_sm()
+                    .bg(theme.accent_soft)
+                    .text_xs()
+                    .text_color(theme.text)
+                    .cursor_pointer()
+                    .child(format!("MIDI {}", crate::ui::root::octave_label(octave)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let midi = auris_session::MidiPreferences {
+                            octave: 0,
+                            ..this.settings.midi.clone()
+                        };
+                        this.apply_midi_preferences(midi);
+                        this.set_status(this.t(Key::MidiOctaveNow).replace("{octave}", "0"));
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            );
+        }
         div()
             .debug_selector(|| "transport-buttons".into())
             .flex()

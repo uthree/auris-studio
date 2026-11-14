@@ -1,4 +1,9 @@
-//! Measuring how late the typing keyboard's notes arrive.
+//! Measuring how late the typing keyboard's notes arrive, and a MIDI keyboard's.
+//!
+//! Both are measured the same way and kept apart, because they are late for different reasons:
+//! the typing keyboard by a window's event loop, a MIDI keyboard by its scan, its USB link and
+//! its driver. A MIDI tap is stamped on the thread that heard it rather than when the session
+//! reads it, exactly as the notes it corrects are.
 //!
 //! A note recorded from the typing keyboard is placed where the music being *heard* was when the
 //! key reached the session — see [`super::note_take`]. The output's own latency is already read
@@ -45,8 +50,19 @@ const TAIL_SECONDS: f64 = 0.4;
 /// How long past its own length the measurement is given before the output is taken as stalled.
 const STALL_SECONDS: f64 = 3.0;
 
+/// Which keyboard a tap-along is measuring.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(super) enum TapSource {
+    /// The computer keyboard played as Musical Typing.
+    Typing,
+    /// A MIDI keyboard.
+    Midi,
+}
+
 /// A tap-along under way.
 pub(super) struct TypingCalibrationRun {
+    /// Which keyboard is being measured.
+    source: TapSource,
     count: CountIn,
     /// Where the playhead was, so the measurement leaves it there.
     playhead: Ticks,
@@ -60,6 +76,14 @@ pub(super) struct TypingCalibrationRun {
     counted: Option<Instant>,
 }
 
+impl TypingCalibrationRun {
+    /// How many taps have been written down so far.
+    #[cfg(test)]
+    pub(super) fn tap_count(&self) -> usize {
+        self.taps.len()
+    }
+}
+
 impl Session {
     /// Plays three bars of click and measures how late taps on the keyboard arrive.
     ///
@@ -67,6 +91,20 @@ impl Session {
     /// tap to [`Self::tap_typing_calibration`]. The result arrives through
     /// [`Self::take_typing_calibration`] and is kept in the audio preferences.
     pub fn start_typing_calibration(&mut self) -> Result<(), SessionError> {
+        self.start_tap_along(TapSource::Typing)
+    }
+
+    /// Plays three bars of click and measures how late notes from a MIDI keyboard arrive.
+    ///
+    /// The person plays any key on every click from the second bar; the keyboard's notes are
+    /// the taps, so nothing has to be passed in. The result arrives through
+    /// [`Self::take_midi_calibration`] and is kept in the audio preferences.
+    pub fn start_midi_calibration(&mut self) -> Result<(), SessionError> {
+        self.start_tap_along(TapSource::Midi)
+    }
+
+    /// Starts a tap-along on either keyboard.
+    fn start_tap_along(&mut self, source: TapSource) -> Result<(), SessionError> {
         if self.typing_calibration_run.is_some()
             || self.calibration.is_some()
             || self.is_recording()
@@ -74,7 +112,10 @@ impl Session {
         {
             return Err(SessionError::CalibrationBusy);
         }
-        self.typing_calibration_result = None;
+        match source {
+            TapSource::Typing => self.typing_calibration_result = None,
+            TapSource::Midi => self.midi_calibration_result = None,
+        }
         let rate = self.engine.sample_rate().max(1.0);
         let beat_frames = (rate * BEAT_SECONDS).round().max(1.0) as u64;
         let count = CountIn::new(BEATS, beat_frames, 4);
@@ -85,6 +126,7 @@ impl Session {
         self.send(EngineCommand::CountIn(count));
         self.play();
         self.typing_calibration_run = Some(TypingCalibrationRun {
+            source,
             count,
             playhead: self.playhead(),
             first_click: playhead as f64 - count.total_frames() as f64,
@@ -96,18 +138,42 @@ impl Session {
         Ok(())
     }
 
-    /// `true` while the click of a tap-along is playing.
+    /// `true` while the click of a tap-along on the typing keyboard is playing.
     pub fn calibrating_typing(&self) -> bool {
-        self.typing_calibration_run.is_some()
+        self.tapping(TapSource::Typing)
     }
 
-    /// Writes down one tap of a tap-along. Does nothing when none is running.
+    /// `true` while the click of a tap-along on a MIDI keyboard is playing.
+    pub fn calibrating_midi(&self) -> bool {
+        self.tapping(TapSource::Midi)
+    }
+
+    fn tapping(&self, source: TapSource) -> bool {
+        self.typing_calibration_run
+            .as_ref()
+            .is_some_and(|run| run.source == source)
+    }
+
+    /// Writes down one tap of a tap-along on the typing keyboard. Does nothing when none is
+    /// running.
     pub fn tap_typing_calibration(&mut self) {
-        if self.typing_calibration_run.is_none() {
+        if !self.calibrating_typing() {
             return;
         }
         let at = self.heard_frame();
         if let Some(run) = self.typing_calibration_run.as_mut() {
+            run.taps.push(at);
+        }
+    }
+
+    /// Writes down a note from a MIDI keyboard as a tap, at the frame it was heard at, while a
+    /// tap-along on one is running.
+    pub(super) fn tap_midi_calibration(&mut self, at: f64) {
+        if let Some(run) = self
+            .typing_calibration_run
+            .as_mut()
+            .filter(|run| run.source == TapSource::Midi)
+        {
             run.taps.push(at);
         }
     }
@@ -117,6 +183,23 @@ impl Session {
     /// A success has already been written into [`Self::audio_preferences`].
     pub fn take_typing_calibration(&mut self) -> Option<Result<TypingCalibration, SessionError>> {
         self.typing_calibration_result.take()
+    }
+
+    /// The outcome of the last tap-along on a MIDI keyboard, once, after it has finished.
+    pub fn take_midi_calibration(&mut self) -> Option<Result<TypingCalibration, SessionError>> {
+        self.midi_calibration_result.take()
+    }
+
+    /// Forgets the measured MIDI keyboard latency.
+    pub fn clear_midi_calibration(&mut self) {
+        self.audio.midi_calibration = None;
+    }
+
+    /// The measured MIDI keyboard latency in milliseconds, zero when nothing has been measured.
+    pub(super) fn midi_lag_ms(&self) -> f64 {
+        self.audio
+            .midi_calibration
+            .map_or(0.0, |calibration| calibration.offset_ms)
     }
 
     /// Abandons a tap-along, leaving whatever was measured before.
@@ -174,10 +257,20 @@ impl Session {
                 .collect();
             measure_taps(&run.taps, &clicks, run.count.beat_frames as f64, rate)
         };
-        if let Ok(found) = result {
-            self.audio.typing_calibration = Some(found);
+        match run.source {
+            TapSource::Typing => {
+                if let Ok(found) = result {
+                    self.audio.typing_calibration = Some(found);
+                }
+                self.typing_calibration_result = Some(result);
+            }
+            TapSource::Midi => {
+                if let Ok(found) = result {
+                    self.audio.midi_calibration = Some(found);
+                }
+                self.midi_calibration_result = Some(result);
+            }
         }
-        self.typing_calibration_result = Some(result);
         self.seek(run.playhead);
     }
 

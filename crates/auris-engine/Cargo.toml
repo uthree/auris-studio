@@ -16,6 +16,7 @@ asio = ["cpal/asio"]
 [dependencies]
 auris-core.workspace = true
 cpal.workspace = true
+midir = "0.11"
 crossbeam-channel.workspace = true
 log.workspace = true
 rayon.workspace = true

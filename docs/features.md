@@ -407,6 +407,77 @@ changed). Pitch is the note plus its bend curve plus its ornaments; energy is th
 and the expression pedal (controller 11), which the preview instrument also obeys — what you
 hear and what the model is told stay one story.
 
+## Playing a MIDI keyboard
+
+**Plug a MIDI keyboard in and play.** Every MIDI input the system has is listened to, from launch
+and whenever one is plugged in later — it is looked for every two seconds — and the status line
+names it when it opens. There is nothing to set up; **Settings → MIDI** is where to switch a
+particular input off (a control surface, a loopback port), turn MIDI off altogether, and choose a
+**velocity curve** — *Soft* for keys too stiff to reach the top of their range, *Hard* for a heavy
+hand, *Fixed* to play every note alike. The piano roll's keyboard lights the keys being held.
+
+**What you play sounds on the selected track**, the same track Musical Typing plays: an instrument
+track, or the first one in the song when the selection cannot play notes. A key let go of is
+released on the track it went down on, so moving the selection with a chord held leaves nothing
+hanging. The note sounds the moment it arrives — it does not wait for the window's next frame.
+
+**A small keyboard reaches the whole range by moving its octave.** `Shift+Z` and `Shift+X` move
+every key of a MIDI keyboard down and up an octave, up to four either way — Musical Typing's own
+octave keys with Shift added, so they stay out of the letters it plays. **Transport → MIDI Keyboard
+Octave Down / Up** and **Settings → MIDI → Octave** do the same. While the keyboard is moved, the
+transport says so (`MIDI +1`); clicking that puts it back. A key held down while the octave moves
+still releases the note it struck. The shift is remembered across launches. A keyboard's own octave
+buttons, where it has them, work as well and add to this.
+
+**Latency** is measured once in **Settings → MIDI → Latency**: press Measure, listen to a bar of
+clicks, then play any key on every click for two more. The median distance from the click is kept
+and taken off every note a take writes from the keyboard, so notes land where you played them
+rather than where they reached the computer — the keyboard's scan, its USB link and driver, and
+your own habit of playing a shade early or late, all together. The first-run guide has a MIDI
+keyboard step that says which keyboards it can see and points here.
+
+**Record on an instrument track writes down what is played.** Select the track, press **Record**
+(or `R`), play, press it again: the notes become one clip at the position you were *hearing* when
+you struck them, as one undo step. A take keeps the keyboard on its own track even if the
+selection moves during it. The count-in works as it does for audio, and a pickup played during the
+count lands in front of the downbeat.
+
+* **Velocity** is how hard the key was struck, from the keyboard's own reading.
+* **The pitch bend wheel** bends two semitones each way, the range the MIDI specification gives a
+  keyboard, and is written into the clip's bend curve.
+* **The modulation wheel and every other controller** are written into the clip's controller
+  lanes, which **Lanes** opens in the piano roll.
+* **A sustain pedal** holds notes past their keys, and a take writes each note as long as it was
+  heard — held notes become long notes rather than a pedal lane.
+* **Quantize while recording** (Settings → MIDI) pulls each note of a take towards a grid — 1/4 to
+  1/32, triplets included — by a strength of 25 to 100 %, as the take is written. Each note keeps
+  the length it was held for, and nothing already on the track is touched.
+
+**MIDI Learn** in the drum editor takes the next note struck on a MIDI keyboard as it takes one
+from Musical Typing.
+
+**What a take does with what is already there** is the note recording mode, in **Settings → MIDI**:
+
+* **Takes** (the default) — every take is a clip of its own. With the loop on, every pass round it
+  is a clip of its own too, stacked on the same bars, and all but the last are muted. **Next Take**
+  on the clip's menu plays the next one in the stack and mutes the rest; nothing is deleted.
+* **Merge** — the notes go into the clip already on the track there, which grows to hold them.
+  Round a loop, every pass is laid on top of the last: the way to build a drum part a hit at a time.
+* **Replace** — the notes already on the track under the take are taken away first. Round a loop,
+  only the last pass is kept.
+
+**Step input** (**Transport → Step Input**, `⌘⇧K`; Ctrl+Shift+K on Windows) writes a part with
+the transport standing still. Play a note or a chord, and when every key is up again it is written
+at the playhead, one grid division long, and the playhead moves on a division. A chord is every key
+that was down together, so it can be rolled on rather than struck at once. **→** leaves a rest and
+**←** takes the last step away to be played again; each chord is one undo step. With a clip open in
+the editor the notes go into it; otherwise the first chord makes a clip on the selected track. The
+grid sets the step length, and Musical Typing feeds step input as well as a MIDI keyboard does.
+
+One project listens at a time: the one holding the audio output, or — since a project opens with
+its output asleep — the one in front, whose output the first key played wakes. That first note is
+spent waking it; everything after it is heard.
+
 ## MIDI files
 
 **File → Import MIDI File…**, or dropping a `.mid` on the window, reads it as a **new piece**: its
@@ -978,8 +1049,9 @@ answer, the take lands at the playhead as it did before.
 
 **The selected audio track is where the take lands**, and its **R** button is outlined to say so
 before you press anything. Selecting another audio track moves the take with it; selecting a track
-that could not hold one — an instrument track, a bus — leaves nowhere to record, and Record says
-that rather than reaching past it for the nearest audio track.
+that could not hold one — a bus — leaves nowhere to record, and Record says that rather than
+reaching past it for the nearest audio track. Record on an instrument track records **notes**
+instead; see [Playing a MIDI keyboard](#playing-a-midi-keyboard).
 
 **Filling that R button in aims a take somewhere other than where you are looking**, which is the
 only thing the selection cannot say: record the vocal while you read the drum part. It stays where

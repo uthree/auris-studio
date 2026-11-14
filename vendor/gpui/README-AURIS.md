@@ -26,6 +26,12 @@ column a width in pixels so that no flex layout measures it on the way
 (`the_transcript_ends_at_its_last_entry_at_every_width`); this change keeps the same trap from
 springing on text elsewhere.
 
+`Cargo.toml` asks for `core-foundation = "0.10"` where the published crate pins `=0.10.0`
+exactly, and `vendor/gpui_media` carries the same one-line change. The pin is what kept MIDI input
+out: `midir` reaches CoreMIDI through `coremidi` 0.9, which wants `core-foundation ^0.10.1`, and
+an exact pin admits no other version anywhere in the graph. 0.10.1 is a patch release of the same
+API, and nothing else in either crate changes.
+
 `src/gpui.rs` also allows warnings. From crates.io the crate was built under Cargo's
 `--cap-lints`; as a path dependency it would be held to CI's `-D warnings`, and Rust 1.100 already
 warns about two float literals in `src/taffy.rs`.

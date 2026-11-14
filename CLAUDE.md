@@ -65,6 +65,8 @@ vendor/rustysynth        somebody else's crate, forked — see its README; exclu
 vendor/vst3-host         VST3 host bindings, forked for a single-owner realtime path — see README-AURIS.md
 vendor/gpui              GPUI 0.2.2 without its examples, patched in for how text is measured at
                          widths narrower than a character — see README-AURIS.md
+                         and for a `core-foundation` pin MIDI input could not share
+vendor/gpui_media        gpui_media 0.2.2 with that same pin loosened — see README-AURIS.md
 crates/auris-core        types, music theory, plugin traits, project model — no local dependencies
 crates/auris-dsp         effects and DSP primitives
 crates/auris-synth       built-in chiptune instruments; depends on auris-dsp

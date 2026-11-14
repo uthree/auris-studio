@@ -182,7 +182,7 @@ pub struct AudioDevice {
     outputs: Vec<AudioDeviceInfo>,
     /// A second reading end of the command queue, so that a queue nothing is consuming — no
     /// device at all, or a stream that died — can still be drained from the UI thread.
-    idle_commands: Option<Receiver<EngineCommand>>,
+    pub(crate) idle_commands: Option<Receiver<EngineCommand>>,
     /// Shared with [`EngineHandle`] and with the stream's error callback, which clears it when
     /// the device disappears out from under the stream.
     running: Arc<AtomicBool>,

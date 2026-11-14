@@ -437,6 +437,8 @@ pub enum MenuCommand {
     LoopOverClip(ClipId),
     /// Repeat a clip out to the next one on its lane, or stop it repeating.
     ToggleClipLoop(ClipId),
+    /// Play the next of the takes stacked on a clip's bars, muting the others.
+    NextTake(ClipId),
     /// Open a clip in the piano roll.
     EditClip(ClipId),
     /// Create an empty clip on a track.
@@ -1345,6 +1347,19 @@ impl AurisApp {
                 }
             }
             MenuCommand::ToggleClipLoop(clip) => self.toggle_clip_loop(clip),
+            MenuCommand::NextTake(clip) => match self.session.next_take(clip) {
+                Ok(take) => {
+                    let name = self
+                        .session
+                        .project()
+                        .midi_clip(take)
+                        .map(|(_, found)| found.name.clone())
+                        .unwrap_or_default();
+                    self.select_clip(Some(take));
+                    self.set_status(self.t(Key::TakeChosen).replace("{name}", &name));
+                }
+                Err(error) => self.report_session_error(&error),
+            },
             MenuCommand::EditClip(clip) => self.open_clip_in_editor(clip),
             MenuCommand::NewClip { track, start } => self.create_clip_at(track, start),
 

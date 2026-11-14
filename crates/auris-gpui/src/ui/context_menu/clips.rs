@@ -121,6 +121,14 @@ impl AurisApp {
                 MenuCommand::ToggleClipMute(clip),
                 self.clip_is_muted(clip),
             )
+            // Only where takes are stacked: a cycle recorded in Takes mode, or a take laid over
+            // an earlier one. The row walks the stack, because the clips underneath cannot be
+            // clicked.
+            .item_if(
+                is_midi && !self.session.takes_over(clip).is_empty(),
+                self.t(Key::MenuNextTake),
+                MenuCommand::NextTake(clip),
+            )
             // Beside Mute rather than beside Cycle, because that is what it is: a switch on the
             // clip. "Cycle over Clip" a row below moves the *transport's* loop, and the two
             // reading as versions of one another is exactly the confusion to avoid.

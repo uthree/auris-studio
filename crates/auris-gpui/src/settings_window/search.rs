@@ -24,10 +24,12 @@ pub(super) enum Section {
     Rate,
     Buffer,
     Export,
+    MidiInputs,
+    MidiRecording,
 }
 
 impl Section {
-    const ALL: [Self; 19] = [
+    const ALL: [Self; 21] = [
         Self::Agent,
         Self::Personalization,
         Self::Appearance,
@@ -47,6 +49,8 @@ impl Section {
         Self::Rate,
         Self::Buffer,
         Self::Export,
+        Self::MidiInputs,
+        Self::MidiRecording,
     ];
 
     fn tab(self) -> SettingsTab {
@@ -56,12 +60,34 @@ impl Section {
             Self::Host | Self::Output | Self::Input | Self::Rate | Self::Buffer | Self::Export => {
                 SettingsTab::Audio
             }
+            Self::MidiInputs | Self::MidiRecording => SettingsTab::Midi,
             _ => SettingsTab::General,
         }
     }
 
     fn keys(self) -> &'static [Key] {
         match self {
+            Self::MidiInputs => &[
+                Key::TabMidi,
+                Key::MidiInputsGroup,
+                Key::MidiEnabled,
+                Key::MidiEnabledNote,
+                Key::MidiOctave,
+                Key::MidiOctaveNote,
+                Key::MidiLatency,
+                Key::MidiLatencyNote,
+                Key::MidiVelocity,
+                Key::MidiVelocityNote,
+            ],
+            Self::MidiRecording => &[
+                Key::TabMidi,
+                Key::MidiRecordingGroup,
+                Key::NoteRecordModeLabel,
+                Key::NoteRecordModeNote,
+                Key::RecordQuantizeLabel,
+                Key::RecordQuantizeNote,
+                Key::RecordQuantizeStrength,
+            ],
             Self::Personalization => &[
                 Key::PreferenceHeading,
                 Key::PreferenceHelp,
@@ -262,6 +288,7 @@ impl SettingsWindow {
         for tab in [
             SettingsTab::General,
             SettingsTab::Audio,
+            SettingsTab::Midi,
             SettingsTab::Agent,
             SettingsTab::Personalization,
             SettingsTab::Keys,
@@ -278,6 +305,7 @@ impl SettingsWindow {
                 SettingsTab::General => Key::TabGeneral,
                 SettingsTab::Audio => Key::TabAudio,
                 SettingsTab::Keys => Key::TabKeys,
+                SettingsTab::Midi => Key::TabMidi,
                 SettingsTab::Agent => Key::AgentPanel,
                 SettingsTab::Personalization => Key::PreferenceHeading,
             };
@@ -286,6 +314,7 @@ impl SettingsWindow {
                 SettingsTab::General => self.render_general(cx),
                 SettingsTab::Audio => self.render_audio(cx),
                 SettingsTab::Keys => self.render_keys(cx),
+                SettingsTab::Midi => self.render_midi(cx),
                 SettingsTab::Agent => self.render_agent(cx),
                 SettingsTab::Personalization => self.render_personalization(cx),
             });

@@ -56,6 +56,24 @@ fn projects(cx: &App) -> Vec<Entity<AurisApp>> {
         .collect()
 }
 
+/// Which project listens to the MIDI keyboards, out of every open one and whether its audio
+/// output is asleep.
+///
+/// The one holding the output, because a keyboard played anywhere else would be silent; with
+/// none holding it — which is how every project opens — the one in front, since that is the one
+/// somebody reaching for the keyboard is looking at; failing that, the first.
+pub(crate) fn midi_listener<Id: Copy + PartialEq>(
+    projects: &[(Id, bool)],
+    frontmost: Option<Id>,
+) -> Option<Id> {
+    projects
+        .iter()
+        .find(|(_, asleep)| !asleep)
+        .map(|(id, _)| *id)
+        .or(frontmost.filter(|front| projects.iter().any(|(id, _)| id == front)))
+        .or_else(|| projects.first().map(|(id, _)| *id))
+}
+
 fn activate(project: &Entity<AurisApp>, cx: &mut App) {
     let owner = project.read(cx).project_tabs.clone();
     let id = project.entity_id();
@@ -355,6 +373,36 @@ impl AurisApp {
     }
 
     /// Switch only for an explicit audio command, never because focus changed.
+    /// Whether this project is the one listening to the MIDI keyboards; see [`midi_listener`].
+    pub(crate) fn listens_to_midi(&self, cx: &mut Context<Self>) -> bool {
+        if !installed(cx) {
+            return true;
+        }
+        let me = cx.entity_id();
+        // Every project but this one is read through its entity; this one is being updated and
+        // answers for itself, since reading it back would panic.
+        let open: Vec<(EntityId, bool)> = projects(cx)
+            .into_iter()
+            .map(|project| {
+                let id = project.entity_id();
+                let asleep = if id == me {
+                    self.session.audio_suspended()
+                } else {
+                    project.read(cx).session.audio_suspended()
+                };
+                (id, asleep)
+            })
+            .collect();
+        let front = |window: Option<gpui::AnyWindowHandle>, cx: &App| {
+            window
+                .and_then(|window| window.downcast::<crate::project_tabs::ProjectTabs>())
+                .and_then(|tabs| tabs.read(cx).ok().map(|tabs| tabs.active().entity_id()))
+        };
+        let frontmost = front(cx.active_window(), cx)
+            .or_else(|| front(windows(cx).first().map(|window| (*window).into()), cx));
+        midi_listener(&open, frontmost).is_none_or(|listener| listener == me)
+    }
+
     pub(crate) fn acquire_audio(&mut self, cx: &mut Context<Self>) -> bool {
         if !installed(cx) || !self.session.audio_suspended() {
             return true;
@@ -609,5 +657,27 @@ mod tests {
         first.update(cx, |view, _| view.cancel_prompt());
         cx.cx
             .update(|cx| assert!(!restart_requested_elsewhere(None, cx)));
+    }
+}
+
+#[cfg(test)]
+mod midi_listener_tests {
+    use super::midi_listener;
+
+    #[test]
+    fn the_project_holding_the_output_listens_and_otherwise_the_one_in_front() {
+        assert_eq!(midi_listener(&[(1, true), (2, false)], Some(1)), Some(2));
+        assert_eq!(
+            midi_listener(&[(1, true), (2, true)], Some(2)),
+            Some(2),
+            "every project opens asleep, and the one in front still has to listen"
+        );
+        assert_eq!(midi_listener(&[(1, true), (2, true)], None), Some(1));
+        assert_eq!(
+            midi_listener(&[(1, true)], Some(9)),
+            Some(1),
+            "a window in front that is not a project"
+        );
+        assert_eq!(midi_listener::<u8>(&[], None), None);
     }
 }

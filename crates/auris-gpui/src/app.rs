@@ -2048,6 +2048,7 @@ impl AurisApp {
         // Where singer voices run their inference. Nothing is loaded yet, so this only sets
         // the course; the first voice loaded follows it.
         session.set_singer_acceleration(settings.singer_acceleration);
+        session.apply_midi_preferences(&settings.midi);
 
         let status = audio_line(&session.audio_status(), session.audio_suspended(), language);
         log::info!("{status}");
@@ -2076,6 +2077,7 @@ impl AurisApp {
                         // input peak is destroyed by being read, so it has to be read exactly
                         // once, on a tick of a known length, by the one thing that shows it.
                         this.sample_input_level();
+                        this.poll_midi_input(cx);
                         this.poll_visualizer();
                         this.poll_physical_view();
                         this.poll_track_grid();
@@ -2101,6 +2103,7 @@ impl AurisApp {
                         this.finish_punch();
                         this.finish_input_calibration();
                         this.finish_typing_calibration();
+                        this.finish_midi_calibration();
                         this.poll_singer_portrait(cx);
                         this.poll_voicevox_shelf(cx);
                         this.poll_singer_icons(cx);
@@ -2850,6 +2853,50 @@ impl AurisApp {
             .unwrap_or_default()
     }
 
+    /// Keeps the MIDI keyboards playing the track this window would play.
+    ///
+    /// One project listens at a time — on Windows an input one program has open cannot be opened
+    /// by another, so two asking would leave the second refused — and it is the one
+    /// [`crate::project_windows::midi_listener`] picks: the project holding the audio output, or
+    /// with none holding it, the one in front. Projects open with their output asleep, so a key
+    /// played into one is what wakes it, the way a key typed on Musical Typing does; the first
+    /// note is lost to the waking, and every one after it is heard. The track is the selection,
+    /// the same one the typing keyboard plays; the session lets a running take keep the keyboard
+    /// on the track it is writing.
+    pub(crate) fn poll_midi_input(&mut self, cx: &mut Context<Self>) {
+        let listening = !cfg!(test) && self.settings.midi.enabled && self.listens_to_midi(cx);
+        self.session.set_midi_input(listening);
+        if !listening {
+            return;
+        }
+        if self.session.take_midi_activity() && self.session.audio_suspended() {
+            self.acquire_audio(cx);
+        }
+        self.session.set_midi_target(self.selected_track);
+        if let Some(name) = self.session.take_opened_midi_inputs().pop() {
+            self.set_status(self.t(Key::MidiInputOpened).replace("{name}", &name));
+        }
+        if let Some(error) = self.session.take_midi_error() {
+            self.set_failed_status(self.t(Key::MidiInputFailed).replace("{error}", &error));
+        }
+        // MIDI Learn takes the note a hardware key sends, as it takes one typed.
+        if let Some(&pitch) = self.session.take_midi_struck().last() {
+            self.accept_drum_learn(pitch);
+        }
+    }
+
+    /// Takes up edited MIDI preferences and remembers them.
+    pub(crate) fn apply_midi_preferences(&mut self, midi: auris_session::MidiPreferences) {
+        self.session.apply_midi_preferences(&midi);
+        if !midi.enabled {
+            self.session.set_midi_input(false);
+        }
+        self.settings.midi = midi;
+        if let Err(error) = self.save_settings() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
     /// Takes this tick's input peak and folds it into the reading the meter draws.
     ///
     /// Called from the repaint loop and nowhere else. See [`Self::input_level`].
@@ -3347,6 +3394,49 @@ impl AurisApp {
         Ok(())
     }
 
+    /// Starts a tap-along measuring a MIDI keyboard, waking the output it needs first.
+    pub(crate) fn start_midi_calibration(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<(), SessionError> {
+        // A project opens with its output asleep, and a click nobody can hear is a measurement
+        // that stalls; the keyboard has to be listened to by this project too.
+        if !self.acquire_audio(cx) {
+            return Err(SessionError::CalibrationStalled);
+        }
+        self.session.set_midi_input(self.settings.midi.enabled);
+        self.session.start_midi_calibration()?;
+        self.set_status(Key::MidiTappingAlong.get(self.language).to_owned());
+        Ok(())
+    }
+
+    /// Forgets the measured MIDI keyboard latency, and saves that.
+    pub(crate) fn clear_midi_calibration(&mut self) {
+        self.session.clear_midi_calibration();
+        self.settings.audio = self.session.audio_preferences().clone();
+        if let Err(error) = self.save_settings() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
+    /// Keeps the result of a MIDI tap-along that has just finished, and reports it.
+    fn finish_midi_calibration(&mut self) {
+        let Some(result) = self.session.take_midi_calibration() else {
+            return;
+        };
+        let line = match result {
+            Ok(found) => {
+                self.settings.audio = self.session.audio_preferences().clone();
+                if let Err(error) = self.save_settings() {
+                    log::warn!("could not save settings: {error}");
+                }
+                messages::typing_latency_measured(self.language, found.offset_ms, found.spread_ms)
+            }
+            Err(error) => crate::i18n::error_text(&error, self.language),
+        };
+        self.set_status(line);
+    }
+
     /// Forgets the measured typing latency, and saves that.
     pub(crate) fn clear_typing_calibration(&mut self) {
         self.session.clear_typing_calibration();
@@ -3398,6 +3488,7 @@ impl AurisApp {
             monitoring: self.session.monitoring(),
             metronome: self.session.metronome(),
             musical_typing: self.session.typing_keyboard().enabled(),
+            step_input: self.session.step_input().is_some(),
         };
         cx.set_menus(crate::menu::menus(self.language, &self.panels, state));
         self.native_menu_snapshot = Some((self.language, self.panels.clone(), state));
@@ -3651,6 +3742,7 @@ impl AurisApp {
         let export = self.settings.export;
         let panels = self.panels.clone();
         let agent = self.settings.agent.clone();
+        let midi = self.settings.midi.clone();
 
         // Wide enough for the navigation column and a page beside it at its reading width.
         let bounds = Bounds::centered(None, size(px(820.), px(640.)), cx);
@@ -3683,6 +3775,7 @@ impl AurisApp {
                         export,
                         panels,
                         agent,
+                        midi,
                         cx,
                     )
                 })

@@ -1169,6 +1169,7 @@ pub fn keyboard(
     cx: &mut App,
     bounds: Bounds<Pixels>,
     pitch_view: &PitchView,
+    sounding: &[u8],
     theme: &Theme,
 ) {
     rect(window, bounds, theme.surface);
@@ -1204,7 +1205,11 @@ pub fn keyboard(
                 top_right: radius,
                 bottom_right: radius,
             },
-            if black {
+            // A key a keyboard is holding down is lit, the way the drawn typing keyboard lights
+            // its own: what is being played is shown where it would be written.
+            if sounding.contains(&pitch) {
+                theme.accent
+            } else if black {
                 theme.key_black
             } else {
                 theme.key_white

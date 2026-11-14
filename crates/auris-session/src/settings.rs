@@ -189,6 +189,13 @@ pub struct AudioPreferences {
     /// none of which changes with the audio interface. See
     /// [`Session::start_typing_calibration`](crate::Session::start_typing_calibration).
     pub typing_calibration: Option<TypingCalibration>,
+    /// How late a MIDI keyboard's notes arrive against what is being heard, once measured.
+    ///
+    /// Measured the same way, by tapping along to a click, and kept beside it: the keyboard's
+    /// own scan, its USB link and driver, and the player's habit. One figure rather than one
+    /// per keyboard, because most desks have one. See
+    /// [`Session::start_midi_calibration`](crate::Session::start_midi_calibration).
+    pub midi_calibration: Option<TypingCalibration>,
 }
 
 /// How late the typing keyboard's notes arrive, as measured by tapping along to a click.
@@ -248,6 +255,7 @@ impl Default for AudioPreferences {
             block_frames: 512,
             input_calibrations: Vec::new(),
             typing_calibration: None,
+            midi_calibration: None,
         }
     }
 }
@@ -808,8 +816,99 @@ pub struct Settings {
     pub voice_paths: Vec<PathBuf>,
     /// How the built-in agent dials a language model.
     pub agent: AgentPreferences,
+    /// MIDI keyboards, and what a note take does with what they play.
+    pub midi: MidiPreferences,
     /// Manual library family/icon corrections, keyed by stable source identity.
     pub sound_icons: std::collections::BTreeMap<String, crate::SoundIcon>,
+}
+
+/// How hard a key has to be struck for how loud a note.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VelocityCurve {
+    /// As the keyboard reads it.
+    #[default]
+    Linear,
+    /// A light touch plays louder — for stiff keys, whose top is out of reach.
+    Soft,
+    /// A light touch plays quieter — for a heavy hand.
+    Hard,
+    /// Every note at the same velocity.
+    Fixed,
+}
+
+impl VelocityCurve {
+    /// Every curve, in the order a picker lists them.
+    pub const ALL: [Self; 4] = [Self::Linear, Self::Soft, Self::Hard, Self::Fixed];
+
+    /// The engine's reading of this curve.
+    pub fn response(self) -> auris_engine::VelocityResponse {
+        use auris_engine::VelocityResponse;
+        match self {
+            Self::Linear => VelocityResponse::Curve(1.0),
+            Self::Soft => VelocityResponse::Curve(0.6),
+            Self::Hard => VelocityResponse::Curve(1.6),
+            Self::Fixed => VelocityResponse::Fixed(crate::DEFAULT_VELOCITY),
+        }
+    }
+}
+
+/// MIDI keyboards, and what a note take does with what they play.
+///
+/// A fact about this machine and its player, not about a song: which keyboards are plugged in,
+/// how heavy their keys are, how somebody likes to record.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MidiPreferences {
+    /// Whether MIDI keyboards are listened to at all.
+    pub enabled: bool,
+    /// Inputs not to listen to, by name: a control surface that sends notes, a loopback port.
+    pub ignored_inputs: Vec<String>,
+    /// How hard a key has to be struck for how loud a note.
+    pub velocity: VelocityCurve,
+    /// How many octaves up (below zero, down) every key sounds from the note it sends.
+    ///
+    /// Kept rather than reset on launch: a small keyboard is usually moved to where its owner
+    /// plays, and finding it back at the factory octave every morning would be a chore.
+    pub octave: i8,
+    /// What a note take does with what was there before it.
+    pub record_mode: crate::NoteRecordMode,
+    /// The grid a note take is pulled to, as notes to a whole note: 4 is quarters, 16
+    /// sixteenths, 12 and 24 triplets. Zero leaves a take as it was played.
+    pub quantize_division: u32,
+    /// How far towards the grid, 0 to 1.
+    pub quantize_strength: f32,
+}
+
+impl Default for MidiPreferences {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            ignored_inputs: Vec::new(),
+            velocity: VelocityCurve::default(),
+            octave: 0,
+            record_mode: crate::NoteRecordMode::default(),
+            quantize_division: 0,
+            quantize_strength: 1.0,
+        }
+    }
+}
+
+impl MidiPreferences {
+    /// The divisions a picker offers, coarsest first, zero being off.
+    pub const DIVISIONS: [u32; 7] = [0, 4, 8, 12, 16, 24, 32];
+
+    /// The quantise a note take applies, if any.
+    pub fn record_quantize(&self) -> Option<crate::RecordQuantize> {
+        if self.quantize_division == 0 {
+            return None;
+        }
+        let whole = auris_core::time::TICKS_PER_QUARTER * 4;
+        Some(crate::RecordQuantize {
+            grid: auris_core::Ticks(whole / i64::from(self.quantize_division).max(1)),
+            strength: self.quantize_strength.clamp(0.0, 1.0),
+        })
+    }
 }
 
 impl Default for Settings {
@@ -837,6 +936,7 @@ impl Default for Settings {
             singer_acceleration: auris_singer::Acceleration::default(),
             voice_paths: Vec::new(),
             agent: AgentPreferences::default(),
+            midi: MidiPreferences::default(),
             sound_icons: Default::default(),
         }
     }

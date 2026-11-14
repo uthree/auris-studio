@@ -83,6 +83,7 @@ pub(crate) mod lyric_slots;
 mod lyrics;
 pub mod melody_form;
 pub mod melody_shape;
+mod midi_input;
 mod mixer;
 mod monitor;
 mod multitrack_transcription;
@@ -115,6 +116,7 @@ mod singer;
 mod singer_names;
 pub mod source_material;
 mod spectrogram;
+mod step_input;
 mod timbre;
 mod tracks;
 mod transport;
@@ -177,9 +179,11 @@ pub use singer::{
 pub use song_sources::PartSource;
 pub use spectrogram::{RenderedSpectrogramJob, SpectrogramJob};
 
+pub use note_take::{NoteRecordMode, RecordQuantize, record_quantized};
 pub use record::{
     Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport, input_level_of,
 };
+pub use step_input::StepInputState;
 pub use timbre::{
     TimbreCluster, TimbreMap, TimbreMapControl, TimbreMapJob, TimbrePreviewJob, TimbreSound,
 };
@@ -601,6 +605,8 @@ pub struct Session {
     typing_calibration_run: Option<typing_calibration::TypingCalibrationRun>,
     /// How the last tap-along came out, until a frontend asks.
     typing_calibration_result: Option<Result<crate::settings::TypingCalibration, SessionError>>,
+    /// How the last tap-along on a MIDI keyboard came out, until a frontend asks.
+    midi_calibration_result: Option<Result<crate::settings::TypingCalibration, SessionError>>,
     /// The Japanese text frontend: the folder the settings name, or the shipped dictionary.
     ///
     /// `None` only where neither exists, and the session sings anyway: kana lyrics go
@@ -638,6 +644,14 @@ pub struct Session {
     /// are on is how they are playing, not something they wrote, and an Undo that moved the
     /// keyboard under them would be a surprise mid-phrase.
     typing: MusicalTyping,
+    /// The MIDI keyboards, when they are being listened to. See [`midi_input`].
+    midi: midi_input::MidiInput,
+    /// Notes written a step at a time, while that is on. See [`step_input`].
+    step_input: Option<step_input::StepInput>,
+    /// What a note take does with what was already there. See [`note_take`].
+    note_record_mode: NoteRecordMode,
+    /// How a note take's notes are pulled to the grid, if they are. See [`note_take`].
+    record_quantize: Option<RecordQuantize>,
 
     /// Third-party CLAP plugins the document names.
     ///
@@ -827,11 +841,16 @@ impl Session {
             note_take: None,
             typing_calibration_run: None,
             typing_calibration_result: None,
+            midi_calibration_result: None,
             calibration_result: None,
             graph_latency: 0,
             input: None,
             monitored: Vec::new(),
             typing: MusicalTyping::default(),
+            midi: midi_input::MidiInput::default(),
+            step_input: None,
+            note_record_mode: NoteRecordMode::default(),
+            record_quantize: None,
             take: None,
             japanese: None,
             shipped_dictionary: options.shipped_dictionary,
@@ -1199,6 +1218,7 @@ impl Session {
         self.recover_lost_output(std::time::Instant::now());
         self.service_calibration();
         self.service_typing_calibration();
+        self.service_midi(std::time::Instant::now());
         // Writing a parameter is the one edit that reaches a plugin without rebuilding, so it is
         // also the one that can leave the tracks compensated for the wrong number of frames.
         // Rebuilding re-measures every chain and re-sizes the delay lines to match — and going

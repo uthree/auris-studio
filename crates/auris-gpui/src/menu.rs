@@ -41,6 +41,8 @@ pub struct MenuState {
     pub metronome: bool,
     /// The computer keyboard is playing notes.
     pub musical_typing: bool,
+    /// Notes are being written a step at a time.
+    pub step_input: bool,
 }
 
 /// One row of a menu.
@@ -724,6 +726,22 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 actions::ToggleMusicalTyping,
                 "transport.musical_typing",
                 state.musical_typing,
+            ),
+            toggle(
+                t(Key::CmdStepInput),
+                actions::ToggleStepInput,
+                "transport.step_input",
+                state.step_input,
+            ),
+            command(
+                t(Key::CmdMidiOctaveDown),
+                actions::MidiOctaveDown,
+                "transport.midi_octave_down",
+            ),
+            command(
+                t(Key::CmdMidiOctaveUp),
+                actions::MidiOctaveUp,
+                "transport.midi_octave_up",
             ),
             MenuRow::Separator,
             command(
