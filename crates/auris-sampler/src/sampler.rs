@@ -87,6 +87,9 @@ const INTERNAL_BLOCK: usize = 32;
 /// else does.
 const MAX_VOICES: usize = 128;
 
+/// The first bank General MIDI gives to percussion: a preset here is a kit, whose keys are drums.
+const PERCUSSION_BANK: i32 = 128;
+
 /// Semitones of pitch bend at full deflection.
 ///
 /// [`NoteEvent::PitchBend`] carries semitones, so the range only has to be wide enough to hold
@@ -411,20 +414,31 @@ impl Sampler {
         };
         match event {
             NoteEvent::NoteOn {
-                key: pitch,
+                key,
+                pitch,
                 velocity,
                 ..
             } => {
                 self.held = self.held.saturating_add(1);
                 // See `midi_velocity`: the number handed over is pre-compensated, because the
                 // synthesiser squares it and the rest of the application does not.
-                synth.note_on(CHANNEL, pitch as i32, midi_velocity(velocity));
+                let velocity = midi_velocity(velocity);
+                // A kit's keys name drums, so a percussion bank plays the key whatever pitch a
+                // tuning gives it; anything else plays the sample nearest where the note sounds,
+                // at that pitch exactly.
+                match self
+                    .selected
+                    .is_some_and(|preset| preset.bank >= PERCUSSION_BANK)
+                {
+                    true => synth.note_on(CHANNEL, i32::from(key), velocity),
+                    false => synth.note_on_at(CHANNEL, i32::from(key), velocity, pitch),
+                }
             }
-            NoteEvent::NoteOff { key: pitch, .. } => {
+            NoteEvent::NoteOff { key, .. } => {
                 self.held = self.held.saturating_sub(1);
                 // The vendored synthesiser ends the *oldest* note with this key, which is the
                 // answer `auris_synth::VoiceAllocator::note_off` gives every built-in voice too.
-                synth.note_off(CHANNEL, pitch as i32);
+                synth.note_off(CHANNEL, i32::from(key));
             }
             NoteEvent::AllNotesOff { .. } => {
                 self.held = 0;
@@ -907,6 +921,88 @@ mod tests {
         }
         let sum: f32 = samples.iter().map(|s| s * s).sum();
         (sum / samples.len() as f32).sqrt()
+    }
+
+    /// Frequency from positive-going zero crossings.
+    fn crossing_hz(samples: &[f32]) -> f64 {
+        let crossings: Vec<usize> = samples
+            .windows(2)
+            .enumerate()
+            .filter(|(_, pair)| pair[0] <= 0.0 && pair[1] > 0.0)
+            .map(|(index, _)| index)
+            .collect();
+        let span = (crossings[crossings.len() - 1] - crossings[0]) as f64;
+        (crossings.len() - 1) as f64 * RATE / span
+    }
+
+    fn retuned(key: u8, pitch: f32) -> NoteEvent {
+        NoteEvent::NoteOn {
+            frame: 0,
+            key,
+            pitch,
+            velocity: 1.0,
+        }
+    }
+
+    #[test]
+    fn a_retuned_note_plays_the_font_at_its_pitch_and_answers_to_its_key() {
+        // Key 100 asked to sound a quarter-tone above A4, the font's 440 Hz recording.
+        let mut sampler = playing(stocked(), 0, 4096);
+        let mut out = AudioBuffer::stereo(4096, RATE);
+        let ctx = ProcessContext::realtime(RATE, 4096, 0, 120.0, true);
+        sampler.process(&[retuned(100, 69.5)], &mut out, &ctx);
+        let measured = crossing_hz(&out.channel(0)[512..]);
+        let wanted = 440.0 * 2f64.powf(0.5 / 12.0);
+        assert!(
+            (measured / wanted - 1.0).abs() < 0.002,
+            "{measured:.2} Hz, wanted {wanted:.2}"
+        );
+        // The key it sounds near names another note; its own key lets it go.
+        let off = |key| NoteEvent::NoteOff { frame: 0, key };
+        sampler.process(&[off(69)], &mut out, &ctx);
+        assert!(
+            rms(&out.channel(0)[2048..]) > 0.01,
+            "key 69 ended key 100's note"
+        );
+        sampler.process(&[off(100)], &mut out, &ctx);
+        sampler.process(&[], &mut out, &ctx);
+        assert!(
+            rms(out.channel(0)) < 1e-6,
+            "key 100 did not end its own note"
+        );
+    }
+
+    #[test]
+    fn a_kit_plays_its_key_whatever_pitch_a_tuning_gives_it() {
+        let bank = SoundFontBank::shared();
+        bank.insert(
+            FONT,
+            crate::test_support::soundfont(
+                &[crate::test_support::Voice {
+                    name: "Kit",
+                    bank: 128,
+                    patch: 0,
+                    amplitude: 0.5,
+                }],
+                RATE as i32,
+            ),
+        );
+        let mut sampler = Sampler::new(bank);
+        sampler.preset = Some(PresetRef {
+            font: FONT,
+            bank: 128,
+            patch: 0,
+        });
+        sampler.prepare(&PrepareContext::new(RATE, 4096, 2));
+        let mut out = AudioBuffer::stereo(4096, RATE);
+        let ctx = ProcessContext::realtime(RATE, 4096, 0, 120.0, true);
+        sampler.process(
+            &[retuned(crate::test_support::ROOT_KEY, 57.0)],
+            &mut out,
+            &ctx,
+        );
+        let measured = crossing_hz(&out.channel(0)[512..]);
+        assert!((measured / 440.0 - 1.0).abs() < 0.002, "{measured:.2} Hz");
     }
 
     #[test]
