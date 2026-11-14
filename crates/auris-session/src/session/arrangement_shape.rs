@@ -122,12 +122,15 @@ pub fn arrangement_shape(project: &Project) -> Value {
         sets.push(playing);
         densities.push(density);
     }
+    let checks = super::style_checks::style_checks(project.style);
     let sounding: Vec<&BTreeSet<&str>> = sets.iter().filter(|set| !set.is_empty()).collect();
-    if sounding.len() >= 3 && sounding.windows(2).all(|pair| pair[0] == pair[1]) {
+    // A style that does not build towards a fuller chorus skips both fullness checks.
+    let same_parts = sounding.len() >= 3 && sounding.windows(2).all(|pair| pair[0] == pair[1]);
+    if checks.chorus_fuller && same_parts {
         warnings.push(
             "Every section has the same parts playing; thin the verses or a bridge so the choruses arrive fuller".to_owned(),
         );
-    } else {
+    } else if checks.chorus_fuller {
         for (index, span) in spans.iter().enumerate() {
             if !is_chorus(&span.label) || index == 0 || is_chorus(&spans[index - 1].label) {
                 continue;
@@ -180,7 +183,9 @@ pub fn arrangement_shape(project: &Project) -> Value {
 
     // Sections that share one main drum bar, and choruses that loop the verse's progression.
     warnings.extend(shared_grooves(project, &spans, &parts));
-    warnings.extend(borrowed_progressions(project, &spans));
+    if checks.chorus_own_progression {
+        warnings.extend(borrowed_progressions(project, &spans));
+    }
     warnings.extend(flat_drums(project, &spans));
     let fills = phrase_fills(project, &spans, &parts);
     if let Some(warning) = fills.1 {
@@ -197,15 +202,15 @@ pub fn arrangement_shape(project: &Project) -> Value {
         let outro = (end - last).raw().max(0) as f64 / bar_length(last);
         (intro, outro)
     });
-    if let Some((intro, outro)) = frame {
-        if intro < MIN_FRAME_BARS {
+    if let (Some((intro, outro)), Some(least)) = (frame, checks.frame_bars) {
+        if intro < least {
             warnings.push(format!(
-                "The voice enters after {intro:.1} bars; give the song an intro of at least {MIN_FRAME_BARS} bars"
+                "The voice enters after {intro:.1} bars; give the song an intro of at least {least} bars"
             ));
         }
-        if outro < MIN_FRAME_BARS {
+        if outro < least {
             warnings.push(format!(
-                "The song ends {outro:.1} bars after the voice; give it an outro of at least {MIN_FRAME_BARS} bars"
+                "The song ends {outro:.1} bars after the voice; give it an outro of at least {least} bars"
             ));
         }
     }
@@ -750,6 +755,10 @@ mod tests {
                 .any(|w| w.contains("サビ loops Aメロ's progression")),
             "{found:?}"
         );
+        // A lo-fi track is built on its one loop: the same progression is the idiom there.
+        project.style.genre = Some(auris_core::style::Genre::HipHopLofi);
+        assert!(!warnings(&project).iter().any(|w| w.contains("loops")));
+        project.style.genre = None;
         project
             .harmony
             .chords
