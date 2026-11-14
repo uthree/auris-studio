@@ -74,6 +74,8 @@ impl Section {
                 Key::MidiEnabledNote,
                 Key::MidiOctave,
                 Key::MidiOctaveNote,
+                Key::MidiLatency,
+                Key::MidiLatencyNote,
                 Key::MidiVelocity,
                 Key::MidiVelocityNote,
             ],

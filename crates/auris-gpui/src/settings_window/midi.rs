@@ -48,6 +48,72 @@ pub(super) fn division_label(division: u32) -> Option<&'static str> {
 }
 
 impl SettingsWindow {
+    /// The measured MIDI keyboard latency, and the button that starts a tap-along on it.
+    fn render_midi_latency(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let tapping = self
+            .app
+            .read_with(cx, |app, _| app.session.calibrating_midi())
+            .unwrap_or(false);
+        let measured = self.audio.midi_calibration;
+        let note = if tapping {
+            self.t(Key::MidiTappingAlong).to_owned()
+        } else {
+            measured.map_or_else(
+                || self.t(Key::MidiLatencyUncalibrated).to_owned(),
+                |found| {
+                    messages::typing_latency_measured(
+                        self.language,
+                        found.offset_ms,
+                        found.spread_ms,
+                    )
+                },
+            )
+        };
+        let mut buttons = div().flex().gap_2().child(
+            Button::new("measure-midi-latency", self.t(Key::MeasureInputLatency))
+                .size(ControlSize::Small)
+                .disabled(tapping)
+                .on_click(cx.listener(|this, _, _, cx| this.measure_midi_latency(cx))),
+        );
+        if measured.is_some() && !tapping {
+            buttons = buttons.child(
+                Button::new("reset-midi-latency", self.t(Key::ResetInputLatency))
+                    .ghost()
+                    .size(ControlSize::Small)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let _ = this.app.update(cx, |app, _| app.clear_midi_calibration());
+                        this.refresh_audio(cx);
+                    })),
+            );
+        }
+        FormField::new(self.t(Key::MidiLatency))
+            .description(self.t(Key::MidiLatencyNote))
+            .note(note)
+            .child(buttons)
+            .into_any_element()
+    }
+
+    /// Starts a tap-along on the MIDI keyboard and watches it until it has finished.
+    ///
+    /// The taps are the keyboard's own notes, which reach the session whichever window has the
+    /// focus, so nothing here has to listen for keys.
+    pub(super) fn measure_midi_latency(&mut self, cx: &mut Context<Self>) {
+        let Ok(started) = self
+            .app
+            .update(cx, |app, cx| app.start_midi_calibration(cx))
+        else {
+            return;
+        };
+        if let Err(error) = started {
+            self.status = crate::i18n::error_text(&error, self.language);
+            cx.notify();
+            return;
+        }
+        self.status = self.t(Key::MidiTappingAlong).to_owned();
+        cx.notify();
+        self.watch_measurement(|app| app.session.calibrating_midi(), cx);
+    }
+
     /// Hands edited MIDI preferences to the application, which applies and saves them.
     fn apply_midi(&mut self, midi: MidiPreferences, cx: &mut Context<Self>) {
         self.midi = midi.clone();
@@ -157,6 +223,7 @@ impl SettingsWindow {
                     .description(self.t(Key::MidiOctaveNote))
                     .child(octave),
             );
+            inputs = inputs.child(self.render_midi_latency(cx));
             inputs = inputs.child(
                 FormField::new(self.t(Key::MidiVelocity))
                     .description(self.t(Key::MidiVelocityNote))

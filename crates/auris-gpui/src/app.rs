@@ -2095,6 +2095,7 @@ impl AurisApp {
                         this.finish_punch();
                         this.finish_input_calibration();
                         this.finish_typing_calibration();
+                        this.finish_midi_calibration();
                         this.poll_singer_portrait(cx);
                         this.poll_voicevox_shelf(cx);
                         this.poll_singer_icons(cx);
@@ -3383,6 +3384,49 @@ impl AurisApp {
         self.session.start_typing_calibration()?;
         self.set_status(Key::TappingAlong.get(self.language).to_owned());
         Ok(())
+    }
+
+    /// Starts a tap-along measuring a MIDI keyboard, waking the output it needs first.
+    pub(crate) fn start_midi_calibration(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<(), SessionError> {
+        // A project opens with its output asleep, and a click nobody can hear is a measurement
+        // that stalls; the keyboard has to be listened to by this project too.
+        if !self.acquire_audio(cx) {
+            return Err(SessionError::CalibrationStalled);
+        }
+        self.session.set_midi_input(self.settings.midi.enabled);
+        self.session.start_midi_calibration()?;
+        self.set_status(Key::MidiTappingAlong.get(self.language).to_owned());
+        Ok(())
+    }
+
+    /// Forgets the measured MIDI keyboard latency, and saves that.
+    pub(crate) fn clear_midi_calibration(&mut self) {
+        self.session.clear_midi_calibration();
+        self.settings.audio = self.session.audio_preferences().clone();
+        if let Err(error) = self.save_settings() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
+    /// Keeps the result of a MIDI tap-along that has just finished, and reports it.
+    fn finish_midi_calibration(&mut self) {
+        let Some(result) = self.session.take_midi_calibration() else {
+            return;
+        };
+        let line = match result {
+            Ok(found) => {
+                self.settings.audio = self.session.audio_preferences().clone();
+                if let Err(error) = self.save_settings() {
+                    log::warn!("could not save settings: {error}");
+                }
+                messages::typing_latency_measured(self.language, found.offset_ms, found.spread_ms)
+            }
+            Err(error) => crate::i18n::error_text(&error, self.language),
+        };
+        self.set_status(line);
     }
 
     /// Forgets the measured typing latency, and saves that.
