@@ -102,6 +102,19 @@ impl Session {
         self.set_tuning(tuning);
         Ok(())
     }
+
+    /// Places the document's tuning on the keyboard as a Scala `.kbm` file says, its scale kept.
+    ///
+    /// The other half of [`Self::import_scala`], for a scale already chosen — a preset, or a
+    /// `.scl` read on its own — that wants its root on another key or its pitch pinned elsewhere.
+    pub fn apply_keyboard_map(&mut self, keyboard: &Path) -> Result<(), SessionError> {
+        let tuning = self
+            .project
+            .tuning
+            .with_keyboard_map(&read_scala(keyboard)?)?;
+        self.set_tuning(tuning);
+        Ok(())
+    }
 }
 
 /// A Scala file's text, refused before it is read when it is too big to be one.

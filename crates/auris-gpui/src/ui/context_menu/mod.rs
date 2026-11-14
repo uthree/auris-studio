@@ -31,7 +31,7 @@ pub use menu::ContextMenu;
 pub use menu::MenuEntry;
 
 pub(crate) use recipe::{preset_key, subdivision_key};
-pub(crate) use timeline::count_in_label;
+pub(crate) use timeline::{count_in_label, tuning_name};
 
 #[cfg(test)]
 use auris_session::prelude::SignatureMap;

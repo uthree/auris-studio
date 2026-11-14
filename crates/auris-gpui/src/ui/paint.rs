@@ -1127,21 +1127,23 @@ pub fn clip_fades(
     }
 }
 
-/// Draws the piano-roll row backgrounds and horizontal separators.
+/// Draws the piano-roll row backgrounds and horizontal separators, each row as `faces` says —
+/// see [`super::key_face`] for how a tuning decides.
 pub fn pitch_rows(
     window: &mut Window,
     bounds: Bounds<Pixels>,
     pitch_view: &PitchView,
+    faces: &[super::key_face::KeyFace],
     theme: &Theme,
 ) {
     let rows = (f32::from(bounds.size.height) / pitch_view.row_height).ceil() as i32 + 1;
     for row in 0..rows {
         let pitch = pitch_view.top_pitch as i32 - row;
-        if !(0..=127).contains(&pitch) {
+        let Some(face) = usize::try_from(pitch).ok().and_then(|key| faces.get(key)) else {
             continue;
-        }
+        };
         let y = bounds.origin.y + px(row as f32 * pitch_view.row_height);
-        if super::timeline::is_black_key(pitch as u8) {
+        if face.black {
             rect(
                 window,
                 Bounds {
@@ -1151,8 +1153,9 @@ pub fn pitch_rows(
                 theme.key_row_black,
             );
         }
-        // A brighter separator under every B/C boundary marks the octave.
-        if pitch % 12 == 0 {
+        // A brighter separator under every B/C boundary marks the octave, and under each root
+        // the period of a scale that does not repeat at twelve keys.
+        if face.period_start {
             hline(
                 window,
                 bounds,
@@ -1169,6 +1172,7 @@ pub fn keyboard(
     cx: &mut App,
     bounds: Bounds<Pixels>,
     pitch_view: &PitchView,
+    faces: &[super::key_face::KeyFace],
     sounding: &[u8],
     theme: &Theme,
 ) {
@@ -1176,12 +1180,12 @@ pub fn keyboard(
     let rows = (f32::from(bounds.size.height) / pitch_view.row_height).ceil() as i32 + 1;
     for row in 0..rows {
         let pitch = pitch_view.top_pitch as i32 - row;
-        if !(0..=127).contains(&pitch) {
+        let Some(face) = usize::try_from(pitch).ok().and_then(|key| faces.get(key)) else {
             continue;
-        }
+        };
         let pitch = pitch as u8;
         let y = bounds.origin.y + px(row as f32 * pitch_view.row_height);
-        let black = super::timeline::is_black_key(pitch);
+        let black = face.black;
         // Only the inner end of a key is rounded: the outer end butts against the panel edge
         // exactly as the keys of a real keyboard butt against the cheek block.
         let radius = px((pitch_view.row_height * 0.25).min(3.0));
@@ -1215,8 +1219,11 @@ pub fn keyboard(
                 theme.key_white
             },
         );
-        // Only C gets a name, otherwise the strip is unreadable at small row heights.
-        if pitch.is_multiple_of(12) && pitch_view.row_height >= 9.0 {
+        // Only C gets a name — or a scale's root, where it repeats at something other than
+        // twelve keys — otherwise the strip is unreadable at small row heights.
+        if let Some(name) = face.label.clone()
+            && pitch_view.row_height >= 9.0
+        {
             label(
                 window,
                 cx,
@@ -1224,7 +1231,7 @@ pub fn keyboard(
                     bounds.origin.x + bounds.size.width - px(24.0),
                     y + px((pitch_view.row_height - 9.0) / 2.0),
                 ),
-                super::timeline::pitch_name(pitch),
+                name,
                 px(9.0),
                 // The colour of the black keys, because it is on a white one. It used to be the
                 // recessed surface, which happens to be dark in a dark scheme and is near-white

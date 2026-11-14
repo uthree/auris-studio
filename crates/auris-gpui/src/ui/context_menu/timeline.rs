@@ -355,8 +355,64 @@ impl AurisApp {
                     // the ruler shows even where one of them is in a different meter.
                     to: signatures.bar_start(signatures.bar_of(from) + bars.max(1) as u32),
                 },
+            )
+            // The tuning is here because it is the same kind of fact as the key: the pitch
+            // system every chord on this lane is written in.
+            .separator()
+            .item(
+                messages::tuning_menu_current(
+                    self.language(),
+                    tuning_name(&self.project().tuning, self.language()),
+                ),
+                MenuCommand::ShowTuningMenu { anchor },
             );
         self.with_lane_toggles(menu)
+    }
+
+    /// Every tuning that can be chosen by name, with the ways to bring in one that cannot.
+    ///
+    /// The twelve-note tunings with a root are offered on the song's own key, which is where
+    /// somebody tuning a song justly means them; a different root is a Scala file away.
+    pub(crate) fn tuning_menu(&self, anchor: Point<Pixels>) -> ContextMenu {
+        let tuning = &self.project().tuning;
+        let root = self.project().harmony.key_at(Ticks::ZERO).tonic;
+        let mut menu = ContextMenu::new(anchor, self.t(Key::TuningTitle));
+        for preset in tuning_presets(root) {
+            let checked = preset
+                .tuning()
+                .is_ok_and(|named| same_scale(&named, tuning));
+            menu = menu.toggle(
+                preset_name(preset, self.language()),
+                MenuCommand::SetTuningPreset(preset),
+                checked,
+            );
+        }
+        menu.separator()
+            .item(
+                self.t(Key::MenuTuningReference),
+                MenuCommand::PromptTuningReference,
+            )
+            .item(self.t(Key::MenuImportScala), MenuCommand::ImportScala)
+            .item(
+                self.t(Key::MenuImportKeyboardMap),
+                MenuCommand::ImportKeyboardMap,
+            )
+    }
+
+    /// Opens the sheet that sets the frequency the tuning is pinned to.
+    ///
+    /// The pinned key is the tuning's own — A4 in the standard tuning, the root at middle C in a
+    /// scale from a file — and the sheet names the note it sounds nearest, so "Frequency of A4"
+    /// means what a musician tuning to 442 expects.
+    pub(crate) fn prompt_for_tuning_reference(&mut self) {
+        let tuning = &self.project().tuning;
+        let key = tuning.reference_key();
+        let title = messages::tuning_reference_title(
+            self.language(),
+            crate::ui::key_face::sounding_name(&Tuning::standard(), key),
+        );
+        let current = format!("{:.2}", tuning.reference_hz());
+        self.open_prompt(Prompt::new(title, PromptTarget::TuningReference, current));
     }
 
     /// Every progression the composer knows by name, aimed at one position.
@@ -377,6 +433,57 @@ impl AurisApp {
         }
         menu
     }
+}
+
+/// The tunings the menu offers, the twelve-note ones with a root built on `root`.
+pub(crate) fn tuning_presets(root: PitchClass) -> Vec<TuningPreset> {
+    let mut presets = vec![TuningPreset::Standard];
+    presets.extend([19, 22, 24, 31, 53].map(TuningPreset::Edo));
+    presets.extend([
+        TuningPreset::Just(root),
+        TuningPreset::Meantone(root),
+        TuningPreset::Pythagorean(root),
+        TuningPreset::Werckmeister,
+        TuningPreset::BohlenPierce,
+    ]);
+    presets
+}
+
+/// `true` when `a` and `b` are the same scale on the same root, whatever pitch each is pinned
+/// to — so choosing A = 442 leaves the standard tuning ticked in the menu.
+pub(crate) fn same_scale(a: &Tuning, b: &Tuning) -> bool {
+    a.degrees() == b.degrees() && a.root_key() == b.root_key()
+}
+
+/// What a preset is called, in `language`.
+pub(crate) fn preset_name(preset: TuningPreset, language: Language) -> String {
+    match preset {
+        TuningPreset::Standard => Key::TuningStandardName.get(language).to_string(),
+        TuningPreset::Edo(steps) => messages::tuning_edo(language, steps),
+        TuningPreset::Just(root) => messages::tuning_just(language, root.sharp_name()),
+        TuningPreset::Meantone(root) => messages::tuning_meantone(language, root.sharp_name()),
+        TuningPreset::Pythagorean(root) => {
+            messages::tuning_pythagorean(language, root.sharp_name())
+        }
+        TuningPreset::Werckmeister => Key::TuningWerckmeister.get(language).to_string(),
+        TuningPreset::BohlenPierce => Key::TuningBohlenPierce.get(language).to_string(),
+    }
+}
+
+/// What the document's tuning is called, in `language`: a preset's own name when it is one —
+/// whatever pitch it is pinned to — and otherwise the name it came with, from a Scala file.
+pub(crate) fn tuning_name(tuning: &Tuning, language: Language) -> String {
+    let roots = (0..12).map(PitchClass::new);
+    let candidates = roots.flat_map(tuning_presets);
+    for preset in candidates {
+        if preset
+            .tuning()
+            .is_ok_and(|named| same_scale(&named, tuning))
+        {
+            return preset_name(preset, language);
+        }
+    }
+    tuning.name().to_string()
 }
 
 /// Where a progression goes, and across how many bars.

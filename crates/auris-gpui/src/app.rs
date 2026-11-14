@@ -1550,6 +1550,10 @@ pub struct AurisApp {
     pub(crate) sung_badges: std::collections::HashMap<TrackId, auris_session::SingerTakeState>,
     /// The revision [`Self::sung_badges`] was computed under.
     pub(crate) sung_badges_revision: u64,
+    /// The tracks playing every note on the nearest semitone, and the revision that was asked
+    /// under: the answer means asking each hosted plugin what it speaks, which is not a question
+    /// for thirty repaints a second. See [`AurisApp::track_plays_untuned`].
+    pub(crate) untuned_tracks: (u64, Vec<TrackId>),
     /// The background re-render keeping voiced singer tracks abreast of their notes.
     ///
     /// Editing the score is the ask; this is the performer noticing. The repaint timer
@@ -2177,6 +2181,7 @@ impl AurisApp {
             export: None,
             sung_badges: std::collections::HashMap::new(),
             sung_badges_revision: 0,
+            untuned_tracks: (u64::MAX, Vec::new()),
             auto_sing: None,
             auto_sing_seen: (0, std::time::Instant::now()),
             sung_failures: std::collections::HashMap::new(),

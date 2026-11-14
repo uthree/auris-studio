@@ -1512,6 +1512,23 @@ EditChangeTempo = "テンポの変更"
 EditSetTempoPoint = "テンポチェンジの追加"
 EditSetStyle = "ジャンルと用途の設定"
 EditSetTuning = "調律の変更"
+MenuTuning = "調律…"
+TuningTitle = "調律"
+TuningStandardName = "12平均律"
+TuningWerckmeister = "ヴェルクマイスター第3"
+TuningBohlenPierce = "ボーレン＝ピアース音階"
+MenuTuningReference = "基準ピッチ…"
+MenuImportScala = "Scala の音階を読み込む（.scl）…"
+MenuImportKeyboardMap = "キーボードマップを読み込む（.kbm）…"
+DialogImportScala = "Scala の音階を読み込む"
+DialogImportKeyboardMap = "Scala のキーボードマップを読み込む"
+FilterScala = "Scala の音階"
+FilterKeyboardMap = "Scala のキーボードマップ"
+CmdImportScala = "Scala ファイルの読み込み"
+# A track whose plugin cannot play between keys, in its header.
+TrackUntunedBadge = "12平均律"
+TrackUntunedTip = "このプラグインは MIDI 1.0 しか受け取れないため、調律どおりの高さではなく、12平均律の一番近い鍵盤で鳴ります。"
+HintFrequency = "440 や 432.5 のような、Hz 単位の周波数"
 EditRemoveTempoPoint = "テンポチェンジの削除"
 EditChangeSignature = "拍子の変更"
 EditSetSignaturePoint = "拍子記号の追加"
@@ -2606,6 +2623,24 @@ recorded_take = "{duration} を録音しました"
 count_in_bars = "{bars} 小節"
 # How long the count in front of the next take will be.
 count_in_set = "録音の前に {length} カウントします"
+# A tuning of equal steps, by how many it divides the octave into.
+tuning_edo = "{steps}平均律"
+# Five-limit just intonation on a root.
+tuning_just = "{root} の純正律"
+# Quarter-comma meantone on a root.
+tuning_meantone = "{root} の1/4コンマ・ミーントーン"
+# Pythagorean tuning on a root.
+tuning_pythagorean = "{root} のピタゴラス音律"
+# The harmony lane's way into the tuning menu, naming the tuning in use.
+tuning_menu_current = "調律（{name}）…"
+# The prompt for the reference pitch, naming the note whose frequency it is.
+tuning_reference_title = "{note} の周波数（Hz）"
+# The tuning has been changed.
+tuning_set = "調律：{name}"
+# Text typed where a frequency was wanted.
+not_a_frequency = "`{text}` は周波数ではありません — `440` や `432.5` のように"
+# How many tracks play on the nearest semitone because their plugin only speaks MIDI 1.0.
+tuning_untuned_tracks = "{count} トラックは MIDI 1.0 のプラグインのため、一番近い半音で鳴ります"
 # A note-roll video was written.
 exported_video = "{path} を書き出しました · {duration}"
 # The ffmpeg a video will be encoded with.
