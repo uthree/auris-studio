@@ -247,6 +247,12 @@ impl AurisApp {
             Rule::Clipping => Key::LintClipping,
             Rule::TooLoud => Key::LintTooLoud,
             Rule::TooQuiet => Key::LintTooQuiet,
+            Rule::OffTargetLoudness
+                if diagnostic.value.unwrap_or_default() < diagnostic.limit.unwrap_or_default() =>
+            {
+                Key::LintOffTargetQuiet
+            }
+            Rule::OffTargetLoudness => Key::LintOffTargetLoud,
             Rule::SilentTrack => Key::LintSilentTrack,
         };
         let pitches = diagnostic
@@ -496,6 +502,7 @@ impl AurisApp {
             Rule::Clipping => Key::LintNameClipping,
             Rule::TooLoud => Key::LintNameTooLoud,
             Rule::TooQuiet => Key::LintNameTooQuiet,
+            Rule::OffTargetLoudness => Key::LintNameOffTargetLoudness,
             Rule::SilentTrack => Key::LintNameSilentTrack,
         })
     }

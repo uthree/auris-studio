@@ -93,6 +93,8 @@ enum Work {
     Verify {
         path: PathBuf,
         target_lufs: Option<f32>,
+        /// The style's loudness range, which holds the file when no target was named.
+        style_loudness: Option<(f32, f32)>,
         ceiling_db: f32,
         tolerance_lu: f32,
         ending_rms_max_db: Option<f32>,
@@ -210,6 +212,28 @@ fn local_path(value: &str) -> Result<PathBuf, String> {
         return Err("Use a path relative to the project workspace (renders/mix.wav) or an absolute local file path".into());
     }
     Ok(path)
+}
+
+/// What a file that failed on loudness is told to do. A model that verifies after the last edit
+/// otherwise reads the failure as something to report rather than to fix.
+const LOUDNESS_FIX: &str = "The file is not delivered yet: call normalize_mix (without target_lufs, it aims at the style's level), render to the same path again and verify again. Changing the faders this way keeps every note and sound.";
+
+/// Whether an encoded file's loudness passes: within `tolerance` of a named target, inside the
+/// style's range when none was named, and unchecked when neither says a level. A silent file
+/// has no loudness and passes only where nothing was asked of it.
+fn loudness_ok(
+    measured: Option<f32>,
+    target: Option<f32>,
+    style: Option<(f32, f32)>,
+    tolerance: f32,
+) -> bool {
+    match (target, style) {
+        (Some(target), _) => measured.is_some_and(|value| (value - target).abs() <= tolerance),
+        (None, Some(range)) => {
+            measured.is_some_and(|value| crate::lint::off_target(value, range).is_none())
+        }
+        (None, None) => true,
+    }
 }
 
 impl Session {
@@ -379,21 +403,28 @@ impl FileJob {
             Work::Verify {
                 path,
                 target_lufs,
+                style_loudness,
                 ceiling_db,
                 tolerance_lu,
                 ending_rms_max_db,
             } => {
                 let encoded = crate::inspect_export(&path).map_err(|e| e.to_string())?;
                 check()?;
-                let loudness_ok = target_lufs.is_none_or(|target| {
-                    encoded
-                        .lufs
-                        .is_some_and(|value| (value - target).abs() <= tolerance_lu)
-                });
+                let loudness_ok =
+                    loudness_ok(encoded.lufs, target_lufs, style_loudness, tolerance_lu);
                 let peak_ok = encoded.true_peak_db <= ceiling_db && encoded.full_scale_samples == 0;
                 let ending_ok =
                     ending_rms_max_db.is_none_or(|limit| encoded.ending_rms_db <= limit);
-                Outcome::Verified(serde_json::json!({"path":path,"verdict":if loudness_ok&&peak_ok&&ending_ok {"PASS"}else{"FAIL"},"loudness_ok":loudness_ok,"peak_ok":peak_ok,"ending_ok":ending_ok,"encoded":encoded}).to_string())
+                let held_to = match (target_lufs, style_loudness) {
+                    (Some(target), _) => {
+                        serde_json::json!({"target_lufs":target,"tolerance_lu":tolerance_lu})
+                    }
+                    (None, Some((low, high))) => {
+                        serde_json::json!({"style_range_lufs":[low, high]})
+                    }
+                    (None, None) => serde_json::Value::Null,
+                };
+                Outcome::Verified(serde_json::json!({"path":path,"verdict":if loudness_ok&&peak_ok&&ending_ok {"PASS"}else{"FAIL"},"loudness_ok":loudness_ok,"loudness_held_to":held_to,"next":(!loudness_ok).then_some(LOUDNESS_FIX),"peak_ok":peak_ok,"ending_ok":ending_ok,"encoded":encoded}).to_string())
             }
         };
         check()?;
@@ -668,6 +699,10 @@ impl Session {
                 Work::Verify {
                     path: self.agent_path(&path)?,
                     target_lufs,
+                    style_loudness: crate::session::style_checks::style_checks(
+                        self.project().style,
+                    )
+                    .loudness,
                     ceiling_db,
                     tolerance_lu,
                     ending_rms_max_db,
@@ -848,6 +883,17 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_without_a_named_target_is_held_to_its_styles_range() {
+        let neo_soul = Some((-15.0, -13.0));
+        assert!(!loudness_ok(Some(-23.9), None, neo_soul, 1.0));
+        assert!(loudness_ok(Some(-14.2), None, neo_soul, 1.0));
+        // A named target wins over the style, and no level at all checks nothing.
+        assert!(loudness_ok(Some(-23.9), Some(-24.0), neo_soul, 1.0));
+        assert!(loudness_ok(Some(-23.9), None, None, 1.0));
+        assert!(!loudness_ok(None, None, neo_soul, 1.0));
+    }
 
     #[test]
     fn overloaded_mix_is_attenuated_before_integer_encoding_without_document_edits() {
@@ -1276,6 +1322,10 @@ mod tests {
             serde_json::from_str(&session.continue_agent_file_job(verify, &cancelled).unwrap())
                 .unwrap();
         assert_eq!(report["verdict"], "FAIL");
+        // A loudness failure says how to repair it, and what the file was held to.
+        assert_eq!(report["loudness_ok"], false);
+        assert!(report["next"].as_str().unwrap().contains("normalize_mix"));
+        assert_eq!(report["loudness_held_to"]["target_lufs"], -6.0);
     }
 
     #[test]

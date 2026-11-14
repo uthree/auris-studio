@@ -10,6 +10,12 @@ pub(super) struct State {
     document: Value,
 }
 
+/// What introduces the song's style guidance at the end of a phase's instructions. It is read
+/// last and says it wins: the general guidance, before it and in the system prompt, was written
+/// for songs with a chorus that lifts, and the style is where a jazz head or a lo-fi loop is
+/// told otherwise.
+const STYLE_HEADING: &str = "\nThis song's style (where it differs from the general guidance, here or in the system prompt, follow it)\n";
+
 /// The record as a tool answers with it, with the current phase's instructions when asked for.
 ///
 /// The instructions go on after the record is paged, not inside it: a long record is cut into
@@ -23,11 +29,7 @@ fn record_view(record: &Record, document: &Value, instructions: bool) -> Result<
         let mut text =
             toolbox::composition_workflows::instructions(state.phase, state.writing_order);
         if let Some(style) = toolbox::styles::guidance(&document["style"], state.phase) {
-            text.push_str(
-                "
-This song's style
-",
-            );
+            text.push_str(STYLE_HEADING);
             text.push_str(&style);
         }
         view["phase_instructions"] = text.into();
@@ -229,13 +231,7 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned();
-        let style = text
-            .split_once(
-                "This song's style
-",
-            )
-            .unwrap()
-            .1;
+        let style = text.split_once(STYLE_HEADING).unwrap().1;
         assert!(style.starts_with("Genre: Jazz."), "{style}");
         assert!(
             style.contains(

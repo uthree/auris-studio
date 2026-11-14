@@ -298,12 +298,15 @@ impl ToolHost {
                 )?;
             }
         } else if reply["ok"] == true && name == "edit_timeline" {
-            let value: Value = reply["text"]
+            let mut value: Value = reply["text"]
                 .as_str()
                 .and_then(|text| serde_json::from_str(text).ok())
                 .unwrap_or_default();
             if let Some(style) = value.get("style") {
                 self.bridge.observed_style(style.clone())?;
+            }
+            if attach_style_guidance(&args, &mut value) {
+                reply["text"] = value.to_string().into();
             }
         } else if reply["ok"] == true && name == "inspect_project" {
             let mut value: Value =
@@ -329,9 +332,45 @@ impl ToolHost {
     }
 }
 
+/// Add the chosen style's pages to an `edit_timeline` result when the call was `set_style`, and
+/// say whether it did.
+///
+/// The choice itself carries the pages: a short piece is often written without ever entering
+/// the phase whose instructions would have brought them.
+fn attach_style_guidance(args: &Value, result: &mut Value) -> bool {
+    if args["operation"]["kind"] != "set_style" {
+        return false;
+    }
+    let Some(text) = toolbox::styles::whole(&result["style"]) else {
+        return false;
+    };
+    result["style_guidance"] = text.into();
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn choosing_a_style_returns_its_pages_and_other_timeline_edits_do_not() {
+        let styled = json!({"style":{"genre":"hip_hop_lofi","usage":"song"}});
+        let mut result = styled.clone();
+        let chosen = json!({"operation":{"kind":"set_style","genre":"hip_hop_lofi"}});
+        assert!(attach_style_guidance(&chosen, &mut result));
+        let text = result["style_guidance"].as_str().unwrap();
+        assert!(text.starts_with("# Genre: Hip-hop"), "{text}");
+        assert!(text.contains("## Mix"), "{text}");
+
+        let mut tempo = styled.clone();
+        let other = json!({"operation":{"kind":"set_tempo","at_tick":0,"bpm":80}});
+        assert!(!attach_style_guidance(&other, &mut tempo));
+        assert_eq!(tempo, styled);
+
+        let mut cleared = json!({"style":{}});
+        assert!(!attach_style_guidance(&chosen, &mut cleared));
+        assert!(cleared.get("style_guidance").is_none());
+    }
 
     #[tokio::test]
     async fn production_reads_reinspect_the_document_and_share_permissions() {

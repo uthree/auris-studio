@@ -99,6 +99,8 @@ pub struct AudioLintJob {
     has_notes: bool,
     /// For each checked track, the notes it plays alone, by start.
     pitched: Vec<Vec<PitchNote>>,
+    /// The loudness range the document's style asks for, lowest and highest in LUFS.
+    loudness: Option<(f32, f32)>,
 }
 
 /// The audio pass's findings, tagged with the revision they describe.
@@ -120,6 +122,7 @@ impl Session {
         let events = super::score::events(project);
         let tracks = checked_tracks(project, &events);
         let has_notes = !events.is_empty();
+        let loudness = crate::session::style_checks::style_checks(project.style).loudness;
         let pitched = tracks
             .iter()
             .map(|(track, _, _)| {
@@ -137,6 +140,7 @@ impl Session {
             tracks,
             has_notes,
             pitched,
+            loudness,
         }
     }
 
@@ -457,6 +461,20 @@ impl AudioLintJob {
                 diagnostic.fix = Some(Fix::NormalizeMix);
                 diagnostics.push(diagnostic);
             }
+            Some(lufs) if self.has_notes => {
+                if let Some(limit) = self.loudness.and_then(|range| off_target(lufs, range)) {
+                    let mut diagnostic = Diagnostic::new(
+                        Rule::OffTargetLoudness,
+                        Severity::Warning,
+                        Ticks::ZERO,
+                        song_end,
+                    );
+                    diagnostic.value = Some(lufs);
+                    diagnostic.limit = Some(limit);
+                    diagnostic.fix = Some(Fix::NormalizeMix);
+                    diagnostics.push(diagnostic);
+                }
+            }
             _ => {}
         }
 
@@ -519,6 +537,20 @@ impl AudioLintJob {
                 tracks_checked: self.tracks.len(),
             },
         })
+    }
+}
+
+/// The edge of `range` a mix at `lufs` falls past, or `None` inside it. Half a unit either side
+/// is allowed: integrated loudness moves that much between two renders of one mix at the lint's
+/// rate and at the delivery rate.
+pub(crate) fn off_target(lufs: f32, (low, high): (f32, f32)) -> Option<f32> {
+    const SLACK: f32 = 0.5;
+    if lufs < low - SLACK {
+        Some(low)
+    } else if lufs > high + SLACK {
+        Some(high)
+    } else {
+        None
     }
 }
 
@@ -699,6 +731,43 @@ mod tests {
             "{:?}",
             result.diagnostics
         );
+    }
+
+    #[test]
+    fn a_mix_is_held_to_its_styles_loudness_and_only_when_it_has_one() {
+        let (mut session, _) = session_with_a_phrase();
+        let plain = run(&mut session);
+        let lufs = plain.summary.integrated_lufs.unwrap();
+        let off = |result: &AudioLintResult| {
+            result
+                .diagnostics
+                .iter()
+                .find(|d| d.rule == Rule::OffTargetLoudness)
+                .cloned()
+        };
+        assert_eq!(off(&plain), None, "no style, no target");
+        // One soft phrase on the default voice is nowhere near a dance mix's level.
+        assert!(lufs < -12.0 && lufs > QUIET_LUFS, "{lufs}");
+        session.set_style(auris_core::style::Style {
+            genre: Some(auris_core::style::Genre::DanceElectronic),
+            usage: None,
+        });
+        let dance = off(&run(&mut session)).expect("a quiet dance mix is reported");
+        assert_eq!(dance.limit, Some(-11.0));
+        assert_eq!(dance.fix, Some(Fix::NormalizeMix));
+        assert!(
+            dance
+                .describe()
+                .contains("quieter than this style's -11 LUFS")
+        );
+    }
+
+    #[test]
+    fn half_a_unit_past_the_range_is_still_on_target() {
+        assert_eq!(off_target(-14.4, (-15.0, -13.0)), None);
+        assert_eq!(off_target(-15.4, (-15.0, -13.0)), None);
+        assert_eq!(off_target(-15.6, (-15.0, -13.0)), Some(-15.0));
+        assert_eq!(off_target(-12.4, (-15.0, -13.0)), Some(-13.0));
     }
 
     fn sawtooth(hz: f32, seconds: f64) -> Vec<f32> {

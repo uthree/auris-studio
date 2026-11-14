@@ -38,13 +38,19 @@ headings of [composition techniques](composition-techniques.md), which
 `search_documentation` returns. When the song's genre and usage are chosen
 (`edit_timeline` `set_style`, stored in the document), the instructions end
 with that genre's and that usage's page under `docs/genres/` and
-`docs/usages/`: its summary and its section for the phase in force. The checks
+`docs/usages/`: its summary and its section for the phase in force. The
+`set_style` result itself carries both pages whole, as `style_guidance`,
+because a short piece is often written without entering another phase. The checks
 follow the style too (`auris_session::session::style_checks` is the table): a
 loop or a cue is not asked for an intro and an outro, a genre without a
 register-lifted chorus (jazz, orchestral, ambient, hip-hop and lo-fi, dance) is
 not asked for one, loop-built genres may keep the verse's progression in the
 chorus, and in jazz, R&B, city pop and Latin a held note outside the key is
-reported as information rather than a warning. Going back to an earlier phase keeps the later
+reported as information rather than a warning. Where the style's page names a
+loudness, `lint_project`'s audio pass reports a mix outside it as
+`off_target_loudness` (a single level is held within a unit either way), and
+`normalize_mix` without a target aims at the middle of that range, and
+`verify_render` without one fails a file outside it. Going back to an earlier phase keeps the later
 phases' work and lists them under `phase.revisit`. `phase.checks` reports the
 unmet structural conditions of the current and earlier phases, read from
 `inspect_project`'s `phase_facts`: sections covering the song, chords in every
