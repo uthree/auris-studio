@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 use tiny_skia::{LineCap, LineJoin, Paint, Path as SkPath, PathBuilder, Pixmap, Stroke, Transform};
 
 use crate::chords::{FontData, system_font, unit_byte};
-use crate::{NoteRollStyle, NoteScore};
+use crate::{NoteRollStyle, NoteScore, VideoSize};
 
 /// Height of the text's em square, as a fraction of the frame's shorter side.
 const SIZE: f64 = 0.062;
@@ -23,6 +23,41 @@ const BOTTOM: f64 = 0.07;
 const MAX_WIDTH: f64 = 0.9;
 /// How long a line takes to fade in and out, in seconds.
 const FADE_SECONDS: f64 = 0.15;
+
+/// The most ems a line may measure before a frame of `size` shrinks it below the full
+/// subtitle size.
+///
+/// A line is drawn at `SIZE` of the frame's shorter side until it would run wider than
+/// `MAX_WIDTH` of the frame, and from there it is shrunk to fit. On a landscape frame of any
+/// of the 16:9 sizes that is about 25.8 ems; on a square or portrait one, where the width *is*
+/// the shorter side, only about 14.5.
+pub fn lyric_fit_ems(size: VideoSize) -> f64 {
+    let width = f64::from(size.width.max(1));
+    let short = width.min(f64::from(size.height.max(1)));
+    width * MAX_WIDTH / (short * SIZE)
+}
+
+/// How wide `text` is drawn, in ems, estimated without a font.
+///
+/// The faces subtitles are drawn from are Japanese gothics, whose kanji, kana and full-width
+/// signs are one em across and whose Latin letters average a little over half of one. So a
+/// character East Asian text counts as wide is one em, a space a third, a half-width kana half,
+/// and anything else 0.6. It is what the linter measures a line with: the same answer on every
+/// machine, whichever faces happen to be installed, and within a few percent of the drawn width.
+pub fn lyric_line_ems(text: &str) -> f64 {
+    use unicode_width::UnicodeWidthChar;
+    text.chars()
+        .map(|character| match character {
+            ' ' => 0.33,
+            '\u{ff61}'..='\u{ff9f}' => 0.5,
+            _ => match character.width() {
+                Some(0) | None => 0.0,
+                Some(2) => 1.0,
+                Some(_) => 0.6,
+            },
+        })
+        .sum()
+}
 
 /// Japanese faces tried in order: macOS, Windows, then what a Linux machine has.
 const FAMILIES: [&str; 10] = [
@@ -372,6 +407,45 @@ mod tests {
                     "inside the frame"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_line_fits_about_twenty_five_ems_landscape_and_fourteen_portrait() {
+        for size in &VideoSize::CHOICES[..3] {
+            let fit = lyric_fit_ems(*size);
+            assert!((25.0..26.5).contains(&fit), "{size:?}: {fit}");
+        }
+        for size in &VideoSize::CHOICES[3..] {
+            let fit = lyric_fit_ems(*size);
+            assert!((14.0..15.0).contains(&fit), "{size:?}: {fit}");
+        }
+    }
+
+    #[test]
+    fn a_line_is_measured_in_full_width_characters() {
+        assert_eq!(lyric_line_ems("桜咲いた"), 4.0);
+        assert_eq!(lyric_line_ems("ＡＢ。"), 3.0);
+        assert!((lyric_line_ems("Hello 春") - 4.33).abs() < 1e-9);
+        assert_eq!(lyric_line_ems("ｻｸﾗ"), 1.5);
+    }
+
+    #[test]
+    fn the_estimate_is_close_to_the_width_the_line_is_drawn() {
+        if !japanese_installed() {
+            return;
+        }
+        let faces: Vec<_> = lyric_fonts()
+            .iter()
+            .filter_map(|font| ttf_parser::Face::parse(&font.bytes, font.index).ok())
+            .collect();
+        for text in ["君の名前を呼んだ夜に星が降る", "さくら さくら"] {
+            let drawn = outline(&faces, text).advance;
+            let estimate = lyric_line_ems(text);
+            assert!(
+                (estimate - drawn).abs() / drawn < 0.15,
+                "{text}: estimated {estimate}, drawn {drawn}"
+            );
         }
     }
 

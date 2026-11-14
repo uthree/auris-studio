@@ -228,6 +228,10 @@ impl AurisApp {
             Rule::SingerOverlap => Key::LintSingerOverlap,
             Rule::MissingLyric if diagnostic.pitches.is_empty() => Key::LintMissingLyricClip,
             Rule::MissingLyric => Key::LintMissingLyric,
+            Rule::LongLyricLine if diagnostic.severity == Severity::Info => {
+                Key::LintLongLyricLinePortrait
+            }
+            Rule::LongLyricLine => Key::LintLongLyricLine,
             Rule::PitchMismatch => Key::LintPitchMismatch,
             Rule::Unpitched if diagnostic.pitches.is_empty() => Key::LintUnpitchedTrack,
             Rule::Unpitched => Key::LintUnpitched,
@@ -264,7 +268,7 @@ impl AurisApp {
         let value = match diagnostic.rule {
             Rule::InaudibleVelocity => format!("{:.2}", diagnostic.value.unwrap_or_default()),
             Rule::PitchMismatch => format!("{:+.0}", diagnostic.value.unwrap_or_default()),
-            Rule::Unpitched | Rule::PhaseCancellation => {
+            Rule::Unpitched | Rule::PhaseCancellation | Rule::LongLyricLine => {
                 format!("{:.0}", diagnostic.value.unwrap_or_default())
             }
             _ => number(diagnostic.value.unwrap_or_default()),
@@ -318,7 +322,13 @@ impl AurisApp {
         let place = diagnostic
             .track
             .and_then(|track| project.track(track))
-            .map_or_else(|| self.t(Key::ProblemsMix).to_string(), |t| t.name.clone());
+            .map_or_else(
+                || match diagnostic.rule {
+                    Rule::LongLyricLine => self.t(Key::ProblemsLyrics).to_string(),
+                    _ => self.t(Key::ProblemsMix).to_string(),
+                },
+                |t| t.name.clone(),
+            );
         let bar = project.signatures.bar_of(diagnostic.start);
         format!(
             "{place} · {}",
@@ -487,6 +497,7 @@ impl AurisApp {
             Rule::MissingChord => Key::LintNameMissingChord,
             Rule::SingerOverlap => Key::LintNameSingerOverlap,
             Rule::MissingLyric => Key::LintNameMissingLyric,
+            Rule::LongLyricLine => Key::LintNameLongLyricLine,
             Rule::PitchMismatch => Key::LintNamePitchMismatch,
             Rule::Unpitched => Key::LintNameUnpitched,
             Rule::PhaseCancellation => Key::LintNamePhaseCancellation,

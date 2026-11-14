@@ -22,6 +22,9 @@ rayon.workspace = true
 # gpui's SVG renderer; nothing is bundled.
 fontdb = "0.23"
 ttf-parser = "0.25"
+# How many columns a character takes, for measuring a subtitle line without a font. Already in
+# the lock file.
+unicode-width = "0.2"
 serde.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
