@@ -393,12 +393,19 @@ impl AudioSampler {
         voice.envelope.trigger();
     }
 
+    /// Lets go of one note on `key`: the one struck first.
+    ///
+    /// One release answers one strike. A key struck twice before either release is two notes,
+    /// and letting both go at the first release would cut the second short of what was written.
     fn note_off(&mut self, key: u8) {
-        for voice in &mut self.voices {
-            if voice.held && voice.key == Some(key) {
-                voice.held = false;
-                voice.envelope.release();
-            }
+        let held = self
+            .voices
+            .iter_mut()
+            .filter(|voice| voice.held && voice.key == Some(key))
+            .min_by_key(|voice| voice.started);
+        if let Some(voice) = held {
+            voice.held = false;
+            voice.envelope.release();
         }
     }
 
@@ -939,6 +946,26 @@ mod tests {
         assert_eq!(sampler.active_voices(), 0);
         sampler.process(&[], &mut out, &ctx);
         assert_eq!(peak(out.channel(0)), 0.0);
+    }
+
+    #[test]
+    fn a_release_lets_go_of_one_of_two_notes_on_the_same_key() {
+        let mut sampler = sampler_with(sine(440.0, 0.1));
+        sampler.set_param_by_key(LOOP_KEY, 1.0);
+        let off = NoteEvent::NoteOff {
+            frame: 0,
+            pitch: 60,
+        };
+        // Struck twice, released once: the second note is still held a second later.
+        render(&mut sampler, &[note(60, 1.0)], 4);
+        render(&mut sampler, &[note(60, 1.0)], 4);
+        assert_eq!(sampler.active_voices(), 2);
+        let out = render(&mut sampler, &[off], 100);
+        assert_eq!(sampler.active_voices(), 1);
+        assert!(peak(&out[48_000..51_200]) > 0.3);
+        // Its own release ends it.
+        render(&mut sampler, &[off], 20);
+        assert_eq!(sampler.active_voices(), 0);
     }
 
     #[test]
