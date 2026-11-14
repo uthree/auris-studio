@@ -92,6 +92,17 @@ fn clip_pickup(
     Ok(pickup)
 }
 
+/// What `normalize_mix` adds to its answer when the target it was given is one the song's
+/// style does not hold: `verify_render` and the linter judge the mix by the style's range, so a
+/// mix normalized to a level outside it reaches the level asked for and still fails.
+fn off_style_target(named: Option<f32>, style: Option<(f32, f32)>) -> Option<String> {
+    let (named, (low, high)) = (named?, style?);
+    crate::lint::off_target(named, (low, high))?;
+    Some(format!(
+        " The target named, {named:.1} LUFS, is outside this style's {low:.0} to {high:.0} LUFS, which verify_render and lint_project hold the mix to; omit target_lufs to aim at the middle of it."
+    ))
+}
+
 fn with_loop_end(
     mut summary: serde_json::Value,
     start: Ticks,
@@ -298,7 +309,7 @@ pub enum Command {
         /// Required for writes; copied from the latest read.
         expected_revision: Option<String>,
     },
-    /// Inspect, partially edit or explicitly regenerate 1..16 generated clips. Writes preserve other clips and mix state; hand-edited generated notes require explicit replacement permission. Recipe controls change stored notes; performance controls are separate. Subdivision is a grid, not note duration: eighth, sixteenth, eighth-triplet or sixteenth-triplet. Rhythm must use repeating grid steps: x hit, X accent, o ghost, dot/tilde/hyphen rest (example x...x...); empty clears it. Adjust note count and held duration with density and gate, not subdivision. For a piano-style chord comp, low_root adds the root under the voicing and strum staggers onsets upward by a note value (32 or 64).
+    /// Inspect, partially edit or explicitly regenerate 1..16 generated clips. Writes preserve other clips and mix state; hand-edited generated notes require explicit replacement permission. Recipe controls change stored notes; performance controls are separate. Subdivision is a grid, not note duration: eighth, sixteenth, eighth-triplet or sixteenth-triplet. Rhythm must use repeating grid steps: x hit, X accent, o ghost, dot/tilde/hyphen rest (example x...x...); empty clears it. Adjust note count and held duration with density and gate, not subdivision. For a piano-style chord comp, low_root adds the root under the voicing and strum staggers onsets upward by a note value (32 or 64). For chords and pad, centre sets the MIDI note the voicings average to (finer than octave) and voices sets notes per chord (2..6, 0 = the chord's own).
     EditRecipe {
         /// Unique stable generated clip IDs.
         #[schemars(length(min = 1, max = 16))]
@@ -1388,10 +1399,9 @@ impl Session {
                 target_lufs,
                 ceiling_db,
             } => {
-                let target_lufs = target_lufs.unwrap_or_else(|| {
-                    crate::session::style_checks::style_checks(self.project().style)
-                        .loudness_target()
-                });
+                let style = crate::session::style_checks::style_checks(self.project().style);
+                let off_style = off_style_target(target_lufs, style.loudness).unwrap_or_default();
+                let target_lufs = target_lufs.unwrap_or_else(|| style.loudness_target());
                 let ceiling_db = ceiling_db.unwrap_or(crate::session::NEW_DOCUMENT_CEILING_DB);
                 let report = self.normalize_mix(target_lufs, ceiling_db).map_err(error)?;
                 let reached = report.after.lufs.unwrap_or(f32::NEG_INFINITY);
@@ -1403,7 +1413,7 @@ impl Session {
                     (false, false) => "",
                 };
                 Ok(format!(
-                    "Moved source faders {:+.2} dB. Mix {:.1} -> {:.1} LUFS; true peak {:.1} -> {:.1} dBTP. Target {:.1} LUFS, ceiling {:.1} dBTP.{stage} Inspect_audio again before judging the sound.",
+                    "Moved source faders {:+.2} dB. Mix {:.1} -> {:.1} LUFS; true peak {:.1} -> {:.1} dBTP. Target {:.1} LUFS, ceiling {:.1} dBTP.{stage}{off_style} Inspect_audio again before judging the sound.",
                     report.offset_db,
                     report.before.lufs.unwrap_or(f32::NEG_INFINITY),
                     reached,
@@ -1538,6 +1548,46 @@ mod tests {
 
     fn session() -> Session {
         Session::new(crate::SessionOptions::headless()).unwrap()
+    }
+
+    #[test]
+    fn a_target_outside_the_styles_range_is_said_to_be() {
+        let lofi = Some((-16.0, -14.0));
+        // The agent that named -17 for a lo-fi track was told nothing, and failed verify_render.
+        let note = off_style_target(Some(-17.0), lofi).unwrap();
+        assert!(
+            note.contains("-17.0 LUFS") && note.contains("-16 to -14"),
+            "{note}"
+        );
+        // Inside the range, within the half unit the checks allow, with no target, or with no
+        // style to compare with, there is nothing to say.
+        assert_eq!(off_style_target(Some(-15.0), lofi), None);
+        assert_eq!(off_style_target(Some(-16.4), lofi), None);
+        assert_eq!(off_style_target(None, lofi), None);
+        assert_eq!(off_style_target(Some(-17.0), None), None);
+
+        let mut session = session();
+        let track = session.add_default_instrument_track("Keys").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::QUARTER * 4)
+            .unwrap();
+        session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER * 2))
+            .unwrap();
+        session.set_style(auris_core::style::Style {
+            genre: Some(auris_core::style::Genre::HipHopLofi),
+            usage: None,
+        });
+        let normalize = |session: &mut Session, target_lufs| {
+            session
+                .agent_command(Command::NormalizeMix {
+                    target_lufs,
+                    ceiling_db: None,
+                })
+                .unwrap()
+        };
+        assert!(normalize(&mut session, Some(-20.0)).contains("outside this style"));
+        assert!(!normalize(&mut session, None).contains("outside this style"));
     }
 
     #[test]

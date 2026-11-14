@@ -228,6 +228,12 @@ pub fn write_phrase(
             part.gate = recipe.gate;
             part.low_root = recipe.low_root;
             part.strum = recipe.strum;
+            part.voices = recipe.voices;
+            // The recipe decides a chord part's centre, and the octave dial still moves it when
+            // nobody has set one.
+            if matches!(role, Role::Chords | Role::Pad) {
+                part.centre = Some(i32::from(recipe.chord_centre()));
+            }
             Some(part)
         })
         .collect();

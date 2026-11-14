@@ -49,7 +49,8 @@ struct Placed {
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 struct TrackPrint {
     notes: Vec<Placed>,
-    /// Instrument, sample file, followed source and voice; empty unless the mix is locked.
+    /// Instrument, plugin file, followed source, the patch or samples a built-in plays, and
+    /// voice; empty unless the mix is locked.
     sound: String,
 }
 
@@ -118,7 +119,12 @@ fn placed(clip: &MidiClip, performance: &str, out: &mut Vec<Placed>) {
 fn sound(kind: &TrackKind) -> String {
     let value = match kind {
         TrackKind::Instrument(track) | TrackKind::Drum(track) => {
-            serde_json::json!([track.instrument_id, track.file, track.follows])
+            // Which SoundFont patch a sampler plays, and which samples on which keys, cannot be
+            // parameters, so they are kept in the free-form part of the state: one instrument id
+            // covers a piano and a trumpet alike. A hosted plugin keeps its whole state there,
+            // every knob included, and a knob is the mix's to turn.
+            let chosen = (!track.is_hosted()).then_some(&track.instrument_state.extra);
+            serde_json::json!([track.instrument_id, track.file, track.follows, chosen])
         }
         TrackKind::Singer(track) => {
             serde_json::json!([track.instrument_id, track.voice.as_ref().map(|v| &v.path)])
@@ -560,6 +566,36 @@ mod tests {
             changes(&before, &print(&project, &lock), &project),
             vec![Change::Sound { track: pad }]
         );
+    }
+
+    #[test]
+    fn the_mix_locks_the_patch_a_sampler_plays_but_not_a_knob() {
+        let (mut project, _, pad) = song();
+        let lock = Lock::Mix;
+        fn state(project: &mut Project) -> &mut auris_core::PluginState {
+            &mut project.tracks[1]
+                .kind
+                .as_instrument_mut()
+                .unwrap()
+                .instrument_state
+        }
+        state(&mut project).extra = serde_json::json!({"preset":{"font":1,"bank":0,"patch":0}});
+        let before = print(&project, &lock);
+        // A parameter is the mix's to change; another patch of the same font is another sound.
+        state(&mut project).params.insert("cutoff".into(), 800.0);
+        assert!(changes(&before, &print(&project, &lock), &project).is_empty());
+        state(&mut project).extra = serde_json::json!({"preset":{"font":1,"bank":0,"patch":56}});
+        assert_eq!(
+            changes(&before, &print(&project, &lock), &project),
+            vec![Change::Sound { track: pad }]
+        );
+
+        // A hosted plugin keeps every knob in the same place, so its state is left to the mix.
+        let hosted = project.tracks[1].kind.as_instrument_mut().unwrap();
+        hosted.file = Some(auris_core::asset::AssetPath::external("Synth.clap"));
+        let before = print(&project, &lock);
+        state(&mut project).extra = serde_json::json!({"hosted":"another chunk"});
+        assert!(changes(&before, &print(&project, &lock), &project).is_empty());
     }
 
     #[test]

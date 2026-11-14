@@ -44,13 +44,21 @@ pub fn lyric_fit_ems(size: VideoSize) -> f64 {
 /// character East Asian text counts as wide is one em, a space a third, a half-width kana half,
 /// and anything else 0.6. It is what the linter measures a line with: the same answer on every
 /// machine, whichever faces happen to be installed, and within a few percent of the drawn width.
+///
+/// The signs a lyric is full of (`…`, `―`, `♪`, `★`, `→`, `①`) are the ones Unicode calls
+/// ambiguous: narrow in a Latin face and a full em in a Japanese one, which is the face that
+/// draws them here, so they count as wide. Accented Latin letters and curly quotation marks
+/// are ambiguous too and are the exception, since a gothic draws them as narrow as the letters
+/// around them.
 pub fn lyric_line_ems(text: &str) -> f64 {
     use unicode_width::UnicodeWidthChar;
     text.chars()
         .map(|character| match character {
             ' ' => 0.33,
             '\u{ff61}'..='\u{ff9f}' => 0.5,
-            _ => match character.width() {
+            // Latin with its accents, and the curly quotes: proportional in every face.
+            '\u{0080}'..='\u{024f}' | '\u{2018}'..='\u{201f}' => 0.6,
+            _ => match character.width_cjk() {
                 Some(0) | None => 0.0,
                 Some(2) => 1.0,
                 Some(_) => 0.6,
@@ -428,6 +436,12 @@ mod tests {
         assert_eq!(lyric_line_ems("ＡＢ。"), 3.0);
         assert!((lyric_line_ems("Hello 春") - 4.33).abs() < 1e-9);
         assert_eq!(lyric_line_ems("ｻｸﾗ"), 1.5);
+        // The signs a Japanese face draws a full em wide, whatever a Latin one would do.
+        assert_eq!(lyric_line_ems("……♪"), 3.0);
+        assert_eq!(lyric_line_ems("★→①―"), 4.0);
+        // Accented letters and curly quotes stay as narrow as the letters beside them.
+        assert!((lyric_line_ems("café") - 2.4).abs() < 1e-9);
+        assert!((lyric_line_ems("“夢”") - 2.2).abs() < 1e-9);
     }
 
     #[test]
@@ -439,7 +453,12 @@ mod tests {
             .iter()
             .filter_map(|font| ttf_parser::Face::parse(&font.bytes, font.index).ok())
             .collect();
-        for text in ["君の名前を呼んだ夜に星が降る", "さくら さくら"] {
+        for text in [
+            "君の名前を呼んだ夜に星が降る",
+            "さくら さくら",
+            "君を待ってる……ずっと♪",
+            "★☆→←①②",
+        ] {
             let drawn = outline(&faces, text).advance;
             let estimate = lyric_line_ems(text);
             assert!(

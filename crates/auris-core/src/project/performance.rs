@@ -335,14 +335,19 @@ fn sustain(notes: &mut [Note], ticks: i64) {
     let mut order: Vec<_> = (0..notes.len()).collect();
     order.sort_by_key(|&i| (notes[i].pitch, notes[i].start));
     let mut ends = Vec::with_capacity(notes.len());
-    for (k, &i) in order.iter().enumerate() {
+    // Read from the last note back, so each finds the next strike of its key in one step.
+    // Notes struck together share the strike that follows them all; looking forward for it
+    // from each one cost the square of how many there were.
+    let mut next: Option<Ticks> = None;
+    for (k, &i) in order.iter().enumerate().rev() {
         let note = &notes[i];
-        let next = order[k + 1..]
-            .iter()
-            .map(|&j| &notes[j])
-            .take_while(|other| other.pitch == note.pitch)
-            .map(|other| other.start)
-            .find(|&start| start > note.start);
+        next = match order.get(k + 1).map(|&j| &notes[j]) {
+            Some(after) if after.pitch == note.pitch && after.start > note.start => {
+                Some(after.start)
+            }
+            Some(after) if after.pitch == note.pitch => next,
+            _ => None,
+        };
         let end = next.map_or(note.end() + ticks, |next| (note.end() + ticks).min(next));
         ends.push((i, end));
     }
@@ -437,6 +442,81 @@ mod tests {
             ]
         );
         assert_eq!(clip.notes, written, "the text is untouched");
+    }
+
+    /// The sustain as it was first written: each note looks forward for the next strike.
+    fn sustain_by_looking_forward(notes: &mut [Note], ticks: i64) {
+        let ticks = Ticks(ticks);
+        let mut order: Vec<_> = (0..notes.len()).collect();
+        order.sort_by_key(|&i| (notes[i].pitch, notes[i].start));
+        let mut ends = Vec::new();
+        for (k, &i) in order.iter().enumerate() {
+            let note = &notes[i];
+            let next = order[k + 1..]
+                .iter()
+                .map(|&j| &notes[j])
+                .take_while(|other| other.pitch == note.pitch)
+                .map(|other| other.start)
+                .find(|&start| start > note.start);
+            ends.push((
+                i,
+                next.map_or(note.end() + ticks, |next| (note.end() + ticks).min(next)),
+            ));
+        }
+        for (i, end) in ends {
+            if end > notes[i].end() {
+                notes[i].length = end - notes[i].start;
+            }
+        }
+    }
+
+    #[test]
+    fn sustain_reads_the_next_strike_the_same_however_many_notes_share_one() {
+        // Few pitches and few starts, so that notes struck together and struck again are
+        // both common, in no particular order.
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut random = |below: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % below
+        };
+        let written: Vec<Note> = (0..2_000)
+            .map(|_| {
+                n(
+                    60 + random(4) as u8,
+                    random(12) as i64 * 240,
+                    60 + random(6) as i64 * 120,
+                )
+            })
+            .collect();
+        for ticks in [120, 480, 960] {
+            let mut expected = written.clone();
+            sustain_by_looking_forward(&mut expected, ticks);
+            let mut held = written.clone();
+            sustain(&mut held, ticks);
+            assert_eq!(held, expected, "sustain {ticks}");
+        }
+    }
+
+    #[test]
+    fn sustain_over_a_great_many_notes_struck_together_does_not_stall() {
+        // A hundred thousand copies of one note took five seconds when each looked forward
+        // past all the others; a clip may hold five times as many.
+        let mut notes: Vec<Note> = (0..100_000).map(|_| n(60, 0, 120)).collect();
+        notes.push(n(60, 480, 120));
+        let started = std::time::Instant::now();
+        sustain(&mut notes, 960);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(
+            notes[..100_000]
+                .iter()
+                .all(|note| note.length == Ticks(480))
+        );
     }
 
     #[test]

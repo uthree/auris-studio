@@ -201,6 +201,14 @@ impl Subdivision {
 /// and every one of these divides a quarter note exactly.
 pub const STRUM_VALUES: [u16; 4] = [16, 32, 64, 128];
 
+/// Where a chord part's voicings centre when nobody has said: middle C, the middle of the range
+/// both the chords and the pad are written in.
+pub const DEFAULT_CHORD_CENTRE: u8 = 60;
+
+/// The note counts a chord part can be asked to sound, thinnest first. `0` — not in the list —
+/// is the chord's own tones. See [`ClipRecipe::voices`].
+pub const CHORD_VOICES: std::ops::RangeInclusive<u8> = 2..=6;
+
 /// The delay a strum note value stands for: a whole note divided by it.
 ///
 /// `0` is no strum. Anything else snaps to the nearest entry of [`STRUM_VALUES`] first.
@@ -334,6 +342,24 @@ pub struct ClipRecipe {
     /// See [`STRUM_VALUES`].
     #[serde(default)]
     pub strum: u16,
+    /// The MIDI note a chord part's voicings average to, or `None` for where its preset sits
+    /// (moved by [`octave`](Self::octave)).
+    ///
+    /// Read by the chords and the pad, which choose an inversion and a spacing for every chord so
+    /// that the mean of the voicing lands on this note while the voices still move as little as
+    /// they can. A semitone is the resolution an octave dial could not give: a chord part that sits
+    /// a little too high for the singer is a fourth, not an octave, away from right. The root a
+    /// [`low_root`](Self::low_root) adds is the left hand under the voicing and is not counted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub centre: Option<u8>,
+    /// How many notes each chord of a chord part sounds, or 0 for the chord's own tones.
+    ///
+    /// Read by the chords and the pad. Fewer than the chord has drops its least telling tones
+    /// first — the perfect fifth, then the root — so two notes of a seventh chord are its third
+    /// and seventh rather than a power chord. More doubles them in octaves, the root first. The
+    /// low root is struck in addition and is not counted. See [`CHORD_VOICES`].
+    #[serde(default)]
+    pub voices: u8,
     /// The digest of the notes as the composer last wrote them —
     /// [`notes_digest`](super::notes_digest) over the clip's text at the moment of writing.
     ///
@@ -427,6 +453,8 @@ impl ClipRecipe {
             fill: default_fill(),
             low_root: false,
             strum: 0,
+            centre: None,
+            voices: 0,
             text_digest: 0,
         }
     }
@@ -438,6 +466,14 @@ impl ClipRecipe {
     /// so a hand-edited file cannot ask for a delay that does not divide the beat.
     pub fn strum_ticks(&self) -> crate::time::Ticks {
         strum_ticks(self.strum)
+    }
+
+    /// The MIDI note a chord part's voicings average to: [`centre`](Self::centre) when it is set,
+    /// otherwise [`DEFAULT_CHORD_CENTRE`] moved by [`octave`](Self::octave).
+    pub fn chord_centre(&self) -> u8 {
+        self.centre.unwrap_or_else(|| {
+            (i32::from(DEFAULT_CHORD_CENTRE) + 12 * self.octave.clamp(-2, 2)).clamp(0, 127) as u8
+        })
     }
 
     /// The same recipe with a different seed, which is what "another take" means.

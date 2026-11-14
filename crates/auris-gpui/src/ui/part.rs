@@ -40,6 +40,7 @@ pub const GATE_MIN: f32 = 0.05;
 fn dial_keyboard_step(dial: Dial) -> f32 {
     match dial {
         Dial::Swing => 1.0 / f32::from(SWING_MAX - SWING_MIN),
+        Dial::Centre => 1.0 / 127.0,
         _ => SLIDER_PERCENT_STEP,
     }
 }
@@ -66,6 +67,9 @@ pub enum Dial {
     Fill,
     /// How late the offbeats are.
     Swing,
+    /// The MIDI note a chord part's voicings average to. In no [`dials_for`] list: it is drawn
+    /// with the chord's other hand controls, where the octave would be.
+    Centre,
 }
 
 impl Dial {
@@ -79,6 +83,7 @@ impl Dial {
             Dial::Dynamics => Key::PartDynamics,
             Dial::Fill => Key::PartFill,
             Dial::Swing => Key::PartSwing,
+            Dial::Centre => Key::PartCentre,
         }
     }
 
@@ -95,6 +100,7 @@ impl Dial {
                 let span = f32::from(SWING_MAX - SWING_MIN);
                 (f32::from(recipe.swing) - f32::from(SWING_MIN)) / span
             }
+            Dial::Centre => f32::from(recipe.chord_centre()) / 127.0,
         };
         value.clamp(0.0, 1.0)
     }
@@ -120,6 +126,12 @@ impl Dial {
             Dial::Swing => {
                 let span = f32::from(SWING_MAX - SWING_MIN);
                 recipe.swing = SWING_MIN + (fraction * span).round() as u8;
+            }
+            Dial::Centre => {
+                recipe.centre = Some((fraction * 127.0).round() as u8);
+                // The centre says where the part sits to the semitone; an octave left set under
+                // it would be a second register control that no longer does anything.
+                recipe.octave = 0;
             }
         }
     }
@@ -249,12 +261,14 @@ pub fn takes_a_subdivision(preset: ClipPreset) -> bool {
     !preset.is_drums()
 }
 
-/// Whether a preset's register is worth offering.
+/// Whether a preset's octave is worth offering.
 ///
 /// Everything but the kit, whose pitches are General MIDI drum numbers rather than notes: moving
-/// a kick up an octave would not raise it, it would turn it into a different drum.
+/// a kick up an octave would not raise it, it would turn it into a different drum. And everything
+/// but the chord parts, which take a centre note instead: a semitone is the step a chord part
+/// needs, and two register controls on one part would be one too many.
 pub fn takes_an_octave(preset: ClipPreset) -> bool {
-    !preset.is_drums()
+    !preset.is_drums() && !takes_a_chord_hand(preset)
 }
 
 /// Whether a drum control reaches at least one writer rather than an authored fixed rhythm.
@@ -278,7 +292,7 @@ fn drum_control_applies(recipe: &ClipRecipe, dial: Dial) -> bool {
                 && matches!(recipe.preset, ClipPreset::Drums | ClipPreset::Snare)
         }
         Dial::Intensity | Dial::Dynamics | Dial::Swing => true,
-        Dial::Gate | Dial::Syncopation => false,
+        Dial::Gate | Dial::Syncopation | Dial::Centre => false,
     }
 }
 
@@ -335,6 +349,7 @@ pub fn dial_text(dial: Dial, recipe: &ClipRecipe, straight: &str) -> String {
         // bar is empty and the note is still a twentieth long, and a readout saying 0% would be
         // describing the control rather than the music.
         Dial::Gate => format!("{}%", (recipe.gate * 100.0).round() as i32),
+        Dial::Centre => centre_text(recipe.chord_centre()),
         _ => format!("{}%", (dial.fraction(recipe) * 100.0).round() as i32),
     }
 }
@@ -349,7 +364,19 @@ fn dial_element_key(dial: Dial) -> usize {
         Dial::Dynamics => 5,
         Dial::Syncopation => 6,
         Dial::Fill => 7,
+        Dial::Centre => 8,
     }
+}
+
+/// How a centre reads: the note's name, for reading, and its number, for anything else that
+/// counts in MIDI.
+pub fn centre_text(centre: u8) -> String {
+    format!("{} ({centre})", crate::ui::timeline::pitch_name(centre))
+}
+
+/// Every note count the chord picker offers, the chord's own first.
+pub fn voice_choices() -> impl Iterator<Item = u8> {
+    std::iter::once(0).chain(CHORD_VOICES)
 }
 
 impl AurisApp {
@@ -365,7 +392,6 @@ impl AurisApp {
             return Vec::new();
         };
         let theme = self.theme.clone();
-        let straight = self.t(Key::PartStraight);
         let drummer = self
             .project()
             .midi_clip(clip)
@@ -424,6 +450,7 @@ impl AurisApp {
         }
 
         if takes_a_chord_hand(recipe.preset) {
+            rows.push(self.part_dial(clip, Dial::Centre, &recipe, cx));
             rows.push(self.part_chord_hand_buttons(clip, &recipe, cx));
         }
 
@@ -434,33 +461,7 @@ impl AurisApp {
             {
                 continue;
             }
-            let fraction = dial.fraction(&recipe);
-            rows.push(
-                value_slider(
-                    ("part-dial", dial_element_key(dial)),
-                    self.t(dial.label()),
-                    dial_text(dial, &recipe, straight),
-                    fraction,
-                    theme.accent,
-                    SliderFill::FromStart,
-                    dial_keyboard_step(dial),
-                    &theme,
-                    cx.listener(move |this, event: &MouseDownEvent, _, _| {
-                        this.begin_drag(Drag::PartDial {
-                            clip,
-                            dial,
-                            start_fraction: fraction,
-                            start_x: event.position.x,
-                        });
-                    }),
-                    cx.listener(move |this, event: &SliderKeyboardEvent, _, cx| {
-                        this.set_dial(clip, dial, event.fraction);
-                        cx.notify();
-                    }),
-                )
-                .debug_selector(move || format!("part-dial-{}", dial_element_key(dial)))
-                .into_any_element(),
-            );
+            rows.push(self.part_dial(clip, dial, &recipe, cx));
         }
 
         if takes_a_groove(recipe.preset) && drum_control_applies(&recipe, Dial::Density) {
@@ -665,6 +666,41 @@ impl AurisApp {
             .into_any_element()
     }
 
+    /// One dial's bar, dragged or stepped from the keyboard.
+    fn part_dial(
+        &self,
+        clip: ClipId,
+        dial: Dial,
+        recipe: &ClipRecipe,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let fraction = dial.fraction(recipe);
+        value_slider(
+            ("part-dial", dial_element_key(dial)),
+            self.t(dial.label()),
+            dial_text(dial, recipe, self.t(Key::PartStraight)),
+            fraction,
+            self.theme.accent,
+            SliderFill::FromStart,
+            dial_keyboard_step(dial),
+            &self.theme,
+            cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                this.begin_drag(Drag::PartDial {
+                    clip,
+                    dial,
+                    start_fraction: fraction,
+                    start_x: event.position.x,
+                });
+            }),
+            cx.listener(move |this, event: &SliderKeyboardEvent, _, cx| {
+                this.set_dial(clip, dial, event.fraction);
+                cx.notify();
+            }),
+        )
+        .debug_selector(move || format!("part-dial-{}", dial_element_key(dial)))
+        .into_any_element()
+    }
+
     /// The chord's left hand and its strum, each a row of buttons like the register's.
     fn part_chord_hand_buttons(
         &self,
@@ -680,12 +716,35 @@ impl AurisApp {
         };
         let low_root = recipe.low_root;
         let current_strum = recipe.strum;
+        let current_voices = recipe.voices;
         let off = self.t(Key::ValueOff).to_string();
         div()
             .flex()
             .flex_col()
             .gap_1()
             .py_1()
+            .child(heading(Key::PartVoices))
+            .child(div().flex().gap_1().children(voice_choices().map(|voices| {
+                button(
+                    ("part-voices", usize::from(voices)),
+                    if voices == 0 {
+                        self.t(Key::PartVoicesAuto).to_string()
+                    } else {
+                        voices.to_string()
+                    },
+                    ButtonStyle::Normal,
+                    current_voices == voices,
+                    self.theme.accent,
+                    &self.theme,
+                    cx.listener(move |this, _, _, cx| {
+                        this.set_clip_voices(clip, voices);
+                        cx.notify();
+                    }),
+                )
+                .flex_1()
+                .min_w_0()
+                .debug_selector(move || format!("part-voices-{voices}"))
+            })))
             .child(heading(Key::PartLowRoot))
             .child(div().flex().gap_1().children([false, true].map(|on| {
                 button(
@@ -1310,15 +1369,35 @@ mod tests {
             midi.clone()
         });
         paint(&app, cx);
-        click("part-register-1", cx);
+        // A chord part is placed by its centre note; an octave row beside it would be a second
+        // register control.
+        assert!(cx.debug_bounds("part-register-1").is_none());
+        assert!(cx.debug_bounds("part-dial-8").is_some());
+        app.update(cx, |this, _| {
+            // What the centre slider's keyboard handler does: an octave above middle C.
+            this.set_dial(clip, Dial::Centre, 72.0 / 127.0);
+            let midi = this.session.midi_clip(clip).unwrap();
+            assert_eq!(midi.recipe.as_ref().unwrap().centre, Some(72));
+            let mean = |pitches: &mut dyn Iterator<Item = u8>| {
+                let pitches: Vec<f64> = pitches.map(f64::from).collect();
+                pitches.iter().sum::<f64>() / pitches.len() as f64
+            };
+            let rise = mean(&mut midi.notes.iter().map(|note| note.pitch))
+                - mean(&mut original.notes.iter().map(|note| note.pitch));
+            assert!((rise - 12.0).abs() <= 1.5, "the chords rose {rise:.1}");
+            assert!(this.session.undo().is_some());
+            assert_eq!(this.session.midi_clip(clip), Some(&original));
+        });
+        paint(&app, cx);
+        click("part-voices-5", cx);
         app.update(cx, |this, _| {
             let midi = this.session.midi_clip(clip).unwrap();
-            assert_eq!(midi.recipe.as_ref().unwrap().octave, 1);
-            assert_eq!(midi.notes.len(), original.notes.len());
-            for (raised, before) in midi.notes.iter().zip(&original.notes) {
-                assert_eq!(raised.pitch, before.pitch + 12);
-                assert_eq!((raised.start, raised.length), (before.start, before.length));
+            assert_eq!(midi.recipe.as_ref().unwrap().voices, 5);
+            let mut struck = std::collections::BTreeMap::<i64, usize>::new();
+            for note in &midi.notes {
+                *struck.entry(note.start.raw()).or_default() += 1;
             }
+            assert!(struck.values().all(|count| *count == 5), "{struck:?}");
             assert!(this.session.undo().is_some());
             assert_eq!(this.session.midi_clip(clip), Some(&original));
         });
@@ -1628,9 +1707,10 @@ mod tests {
             );
             // A kit's pitches are General MIDI drum numbers rather than notes: moving a kick up
             // an octave would not raise it, it would make it a different drum.
+            // A chord part is placed by a centre note instead.
             assert_eq!(
                 takes_an_octave(preset),
-                !takes_a_groove(preset),
+                !takes_a_groove(preset) && !takes_a_chord_hand(preset),
                 "{} offers the wrong octave row",
                 preset.name()
             );

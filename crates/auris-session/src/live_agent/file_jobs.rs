@@ -80,6 +80,9 @@ enum Work {
         audition_root: Option<PathBuf>,
         ceiling_db: f32,
         manifest: Option<Box<analysis::Manifest>>,
+        /// Whether the one file written is the song's whole mix, rather than stems, a range of
+        /// bars or an analysis signal.
+        whole_mix: bool,
     },
     Midi {
         job: crate::MidiExportJob,
@@ -95,6 +98,9 @@ enum Work {
         target_lufs: Option<f32>,
         /// The style's loudness range, which holds the file when no target was named.
         style_loudness: Option<(f32, f32)>,
+        /// Whether the file is a stem or an excerpt this session rendered, which has no style
+        /// level to be held to.
+        partial: bool,
         ceiling_db: f32,
         tolerance_lu: f32,
         ending_rms_max_db: Option<f32>,
@@ -126,7 +132,8 @@ enum Outcome {
         looped: Option<bool>,
     },
     ImportedMidi(Box<crate::MidiImportResult>, Ticks),
-    Audio(Vec<StagedAudio>, Option<Box<analysis::Manifest>>),
+    /// The staged files, the analysis manifest, and whether the file is the whole mix.
+    Audio(Vec<StagedAudio>, Option<Box<analysis::Manifest>>, bool),
     Midi(crate::MidiExportResult),
     Verified(String),
     Linted(Box<crate::lint::AudioLintResult>, super::lint::LintRequest),
@@ -216,7 +223,10 @@ fn local_path(value: &str) -> Result<PathBuf, String> {
 
 /// What a file that failed on loudness is told to do. A model that verifies after the last edit
 /// otherwise reads the failure as something to report rather than to fix.
-const LOUDNESS_FIX: &str = "The file is not delivered yet: call normalize_mix (without target_lufs, it aims at the style's level), render to the same path again and verify again. Changing the faders this way keeps every note and sound.";
+const LOUDNESS_FIX: &str = "The file is not delivered yet: call normalize_mix (without target_lufs, it aims at the style's level), render to the same path again and verify again. Changing the faders this way keeps every note and sound. The style's level is that of the whole mix: for a stem, an excerpt or a reference file, name target_lufs instead.";
+
+/// What a stem or an excerpt is told in place of a loudness verdict.
+const PARTIAL_NOTE: &str = "This file is a stem, a range of bars or an analysis signal rendered in this session, so the style's loudness, which is the whole mix's, was not asked of it. Name target_lufs to hold it to a level.";
 
 /// Whether an encoded file's loudness passes: within `tolerance` of a named target, inside the
 /// style's range when none was named, and unchecked when neither says a level. A silent file
@@ -338,6 +348,7 @@ impl FileJob {
                 audition_root,
                 ceiling_db,
                 mut manifest,
+                whole_mix,
             } => {
                 if let Some(folder) = &folder {
                     guard
@@ -390,7 +401,7 @@ impl FileJob {
                         &mut job, targets, &options, settings, ceiling_db, cancelled,
                     )?
                 };
-                Outcome::Audio(staged, manifest)
+                Outcome::Audio(staged, manifest, whole_mix)
             }
             Work::Midi { job, guard, path } => {
                 guard.check_file(&path).map_err(|e| e.to_string())?;
@@ -404,6 +415,7 @@ impl FileJob {
                 path,
                 target_lufs,
                 style_loudness,
+                partial,
                 ceiling_db,
                 tolerance_lu,
                 ending_rms_max_db,
@@ -424,7 +436,8 @@ impl FileJob {
                     }
                     (None, None) => serde_json::Value::Null,
                 };
-                Outcome::Verified(serde_json::json!({"path":path,"verdict":if loudness_ok&&peak_ok&&ending_ok {"PASS"}else{"FAIL"},"loudness_ok":loudness_ok,"loudness_held_to":held_to,"next":(!loudness_ok).then_some(LOUDNESS_FIX),"peak_ok":peak_ok,"ending_ok":ending_ok,"encoded":encoded}).to_string())
+                let note = (partial && target_lufs.is_none()).then_some(PARTIAL_NOTE);
+                Outcome::Verified(serde_json::json!({"path":path,"verdict":if loudness_ok&&peak_ok&&ending_ok {"PASS"}else{"FAIL"},"loudness_ok":loudness_ok,"loudness_held_to":held_to,"loudness_note":note,"next":(!loudness_ok).then_some(LOUDNESS_FIX),"peak_ok":peak_ok,"ending_ok":ending_ok,"encoded":encoded}).to_string())
             }
         };
         check()?;
@@ -530,6 +543,7 @@ impl Session {
             } => {
                 let explicit_ceiling = ceiling_db.is_some();
                 let ceiling_db = ceiling_db.unwrap_or(-1.0);
+                let whole_song = range.is_none() && analysis.is_none();
                 if !ceiling_db.is_finite() || !(-12.0..=-0.1).contains(&ceiling_db) {
                     return Err("ceiling_db must be finite within -12..-0.1 dBTP".into());
                 }
@@ -621,6 +635,7 @@ impl Session {
                     job,
                     guard: self.export_guard(),
                     targets,
+                    whole_mix: whole_song && folder.is_none(),
                     folder,
                     options,
                     settings,
@@ -670,6 +685,7 @@ impl Session {
                     audition_root: self.project_folder().map(std::path::Path::to_owned),
                     ceiling_db: -1.0,
                     manifest: None,
+                    whole_mix: false,
                 }
             }
             Command::ExportMidi { output } => {
@@ -696,13 +712,17 @@ impl Session {
                 {
                     return Err("Invalid delivery target, tolerance or ending limit".into());
                 }
+                let path = self.agent_path(&path)?;
+                let partial = self.partial_renders.contains(&path);
                 Work::Verify {
-                    path: self.agent_path(&path)?,
                     target_lufs,
                     style_loudness: crate::session::style_checks::style_checks(
                         self.project().style,
                     )
-                    .loudness,
+                    .loudness
+                    .filter(|_| !partial),
+                    partial,
+                    path,
                     ceiling_db,
                     tolerance_lu,
                     ending_rms_max_db,
@@ -814,7 +834,7 @@ impl Session {
                 })
                 .to_string())
             }
-            Outcome::Audio(staged, manifest) => {
+            Outcome::Audio(staged, manifest, whole_mix) => {
                 let staged_manifest = if let Some(manifest) = &manifest {
                     use sha2::{Digest, Sha256};
                     use std::io::Write;
@@ -867,6 +887,13 @@ impl Session {
                         format!("Publication failed: {e}; already published: {files:?}")
                     })?;
                     files.push(serde_json::json!({"path":path,"workspace_path":self.workspace_path_of(&path),"encoded":inspection,"attenuation_db":attenuation_db,"source_true_peak_db":source_true_peak_db,"ceiling_db":if manifest.is_some(){None}else{Some(ceiling_db)},"source":source_inspection}));
+                    // A path is whatever was last written to it: the whole mix rendered over an
+                    // excerpt is the whole mix.
+                    if whole_mix {
+                        self.partial_renders.remove(&path);
+                    } else {
+                        self.partial_renders.insert(path);
+                    }
                 }
                 if let (Some(file), Some(manifest)) = (staged_manifest, &manifest) {
                     file.persist_noclobber(&manifest.path).map_err(|e| {
@@ -1283,6 +1310,71 @@ mod tests {
                 .unwrap()
                 .starts_with(live.project_folder().unwrap().join(auris_io::AUDIO_DIR))
         );
+    }
+
+    #[test]
+    fn a_stem_is_not_held_to_the_loudness_of_the_whole_mix() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut session = fixture();
+        // One soft phrase is nowhere near a dance mix, so the mix fails and says why.
+        session.set_style(auris_core::style::Style {
+            genre: Some(auris_core::style::Genre::DanceElectronic),
+            usage: None,
+        });
+        let cancelled = AtomicBool::new(false);
+        let mut run = |command: Command| -> serde_json::Value {
+            let result = session
+                .begin_agent_file_job(command)
+                .unwrap()
+                .run(&cancelled)
+                .unwrap();
+            serde_json::from_str(&session.continue_agent_file_job(result, &cancelled).unwrap())
+                .unwrap()
+        };
+        let verify = |path: String| Command::VerifyRender {
+            path,
+            target_lufs: None,
+            ceiling_db: None,
+            tolerance_lu: None,
+            ending_rms_max_db: None,
+        };
+        let mix = directory.path().join("mix.wav");
+        run(render(&mix));
+        let stems = run(Command::Render {
+            destination: AudioDestination::Stems {
+                folder: directory.path().join("stems").to_string_lossy().into(),
+            },
+            range: None,
+            bit_depth: Some(24),
+            include_tail: false,
+            ceiling_db: None,
+            analysis: None,
+        });
+        let stem = stems["files"][0]["path"].as_str().unwrap().to_owned();
+
+        let whole = run(verify(mix.to_string_lossy().into()));
+        assert_eq!(whole["loudness_ok"], false);
+        assert_eq!(
+            whole["loudness_held_to"]["style_range_lufs"],
+            serde_json::json!([-11.0, -9.0])
+        );
+        assert!(whole["loudness_note"].is_null());
+
+        let part = run(verify(stem.clone()));
+        assert_eq!(part["loudness_ok"], true, "{part}");
+        assert!(part["loudness_held_to"].is_null());
+        assert!(part["loudness_note"].as_str().unwrap().contains("stem"));
+        assert!(part["next"].is_null());
+        // A level asked of it by name is still asked.
+        let named = run(Command::VerifyRender {
+            path: stem,
+            target_lufs: Some(-10.0),
+            ceiling_db: None,
+            tolerance_lu: None,
+            ending_rms_max_db: None,
+        });
+        assert_eq!(named["loudness_ok"], false);
+        assert!(named["loudness_note"].is_null());
     }
 
     #[test]

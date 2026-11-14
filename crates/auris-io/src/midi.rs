@@ -363,6 +363,10 @@ fn read_smf_with_limits(smf: &Smf, limits: ImportLimits) -> Result<MidiImport> {
     let mut parts: HashMap<(usize, u8), Part> = HashMap::new();
     let mut order: Vec<(usize, u8)> = Vec::new();
     let mut budget = ImportBudget::default();
+    // Every program selection in the file: when, on which channel, in which track, and what.
+    // A channel's program belongs to the channel, so a part whose own track never selects one
+    // may still have been given one from another track.
+    let mut selections: Vec<(u64, u8, usize, u8)> = Vec::new();
 
     for (index, track) in smf.tracks.iter().enumerate() {
         let mut at: u64 = 0;
@@ -470,6 +474,7 @@ fn read_smf_with_limits(smf: &Smf, limits: ImportLimits) -> Result<MidiImport> {
                                 .push((at, vel.as_int()));
                             if let Some(part) = parts.get_mut(&key) {
                                 part.started = true;
+                                part.first_note.get_or_insert(at);
                             }
                         }
                         MidiMessage::NoteOn { key: pitch, vel: _ }
@@ -488,6 +493,8 @@ fn read_smf_with_limits(smf: &Smf, limits: ImportLimits) -> Result<MidiImport> {
                         // change written for a later phrase is dropped rather than applied to a
                         // clip that has only one instrument to give it.
                         MidiMessage::ProgramChange { program } => {
+                            budget.automation_point(limits)?;
+                            selections.push((at, channel, index, program.as_int()));
                             if let Some(part) = parts.get_mut(&key)
                                 && !part.started
                             {
@@ -562,6 +569,24 @@ fn read_smf_with_limits(smf: &Smf, limits: ImportLimits) -> Result<MidiImport> {
                     part.name.get_or_insert_with(|| name.clone());
                 }
             }
+        }
+    }
+
+    // The tracks of a format 1 file play together into one set of channels, and some writers
+    // keep every program change in a set-up track of its own. A part that selected nothing is
+    // given what its channel had been told by the time its first note sounded: the last
+    // selection at or before it, the later track winning a tie as it does on the wire. The
+    // tracks of a format 2 file are separate songs and share nothing.
+    if smf.header.format != Format::Sequential {
+        for ((track, channel), part) in &mut parts {
+            let (None, Some(first)) = (part.program, part.first_note) else {
+                continue;
+            };
+            part.program = selections
+                .iter()
+                .filter(|(at, on, from, _)| *on == *channel && *from != *track && *at <= first)
+                .max_by_key(|(at, _, from, _)| (*at, *from))
+                .map(|(_, _, _, program)| *program);
         }
     }
 
@@ -1448,6 +1473,8 @@ struct Part {
     /// one moment a program change must *not* be accepted.
     program: Option<u8>,
     started: bool,
+    /// Where the first note was struck, in the file's ticks.
+    first_note: Option<u64>,
     notes: Vec<Note>,
     /// The bend, at absolute ticks. Rebased onto the clip once the clip's start is known.
     bend: Vec<CurvePoint>,
@@ -1724,6 +1751,36 @@ mod tests {
         ]]);
         assert_eq!(imported.tracks[0].program, Some(40));
         assert_eq!(imported.tracks[0].notes.len(), 2);
+    }
+
+    #[test]
+    fn a_program_selected_in_another_track_reaches_the_channels_notes() {
+        // A set-up track selects the voice; the notes are in the track after it. The channel
+        // is one channel, so the notes are played on what it was told.
+        let imported = metrical(vec![
+            vec![program_change(0, 40), program_change(960, 73)],
+            vec![note_on(480, 60, 100), note_off(480, 60)],
+        ]);
+        let played: Vec<_> = imported
+            .tracks
+            .iter()
+            .filter(|track| !track.notes.is_empty())
+            .collect();
+        assert_eq!(played.len(), 1);
+        // The change at tick 960 comes after the first note at 480 and settles nothing.
+        assert_eq!(played[0].program, Some(40));
+
+        // A track that selects its own program keeps it, whatever another track says.
+        let imported = metrical(vec![
+            vec![program_change(0, 40)],
+            vec![program_change(0, 0), note_on(0, 60, 100), note_off(480, 60)],
+        ]);
+        let played = imported
+            .tracks
+            .iter()
+            .find(|track| !track.notes.is_empty())
+            .unwrap();
+        assert_eq!(played.program, Some(0));
     }
 
     #[test]

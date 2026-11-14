@@ -57,6 +57,14 @@ pub struct PartSpec {
     ///
     /// Read by the chords and the pad; see [`ClipRecipe::strum`](auris_core::ClipRecipe::strum).
     pub strum: u16,
+    /// The MIDI note a chord part's voicings average to, or `None` for the middle of its range.
+    ///
+    /// Read by the chords and the pad; see [`ClipRecipe::centre`](auris_core::ClipRecipe::centre).
+    pub centre: Option<i32>,
+    /// How many notes each chord sounds, or 0 for the chord's own tones.
+    ///
+    /// Read by the chords and the pad; see [`ClipRecipe::voices`](auris_core::ClipRecipe::voices).
+    pub voices: u8,
 }
 
 impl PartSpec {
@@ -73,6 +81,8 @@ impl PartSpec {
             note: None,
             low_root: false,
             strum: 0,
+            centre: None,
+            voices: 0,
         }
     }
 
@@ -91,5 +101,56 @@ impl PartSpec {
         let (low, high) = self.role.range();
         let shift = (self.octave - self.role.default_octave()) * 12;
         ((low + shift).clamp(0, 127), (high + shift).clamp(0, 127))
+    }
+
+    /// The note a chord part's voicings average to: the one asked for, or else the middle of
+    /// [`Self::range`], which is where the octave dial puts it.
+    pub fn chord_centre(&self) -> i32 {
+        self.centre.map_or_else(
+            || {
+                let (low, high) = self.range();
+                (low + high) / 2
+            },
+            |centre| centre.clamp(0, 127),
+        )
+    }
+
+    /// The window a chord part's voicings are chosen inside: [`CHORD_REACH`] either side of
+    /// [`Self::chord_centre`], slid back inside the keyboard when it would fall off an end.
+    ///
+    /// Wider than the role's own range on purpose. The voicing is pulled toward the centre by
+    /// its cost, not held there by walls, and six voices spread open need more than two octaves
+    /// to find an inversion whose middle is the note that was asked for.
+    pub fn chord_range(&self) -> (i32, i32) {
+        let low = (self.chord_centre() - CHORD_REACH).clamp(0, 127 - 2 * CHORD_REACH);
+        (low, low + 2 * CHORD_REACH)
+    }
+}
+
+/// How far either side of its centre a chord part's voicing may reach: an octave and a fifth.
+pub const CHORD_REACH: i32 = 19;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_chord_part_centres_where_its_recipe_does() {
+        // Two defaults that must be one: the recipe's, which the window shows, and the role's,
+        // which the composer writes a whole song in.
+        for (role, preset) in [
+            (Role::Chords, auris_core::ClipPreset::Chords),
+            (Role::Pad, auris_core::ClipPreset::Pad),
+        ] {
+            for octave in -2..=2 {
+                let mut part = PartSpec::of_role("chords", role);
+                part.octave += octave;
+                let recipe = auris_core::ClipRecipe {
+                    octave,
+                    ..auris_core::ClipRecipe::new(preset, 0)
+                };
+                assert_eq!(part.chord_centre(), i32::from(recipe.chord_centre()));
+            }
+        }
     }
 }

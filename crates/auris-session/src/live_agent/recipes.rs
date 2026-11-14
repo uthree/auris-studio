@@ -45,6 +45,14 @@ pub struct RecipePatch {
     /// 0 strikes them together. Written into the notes; releases are unchanged.
     #[schemars(extend("enum" = [0, 16, 32, 64, 128, null]))]
     pub strum: Option<u16>,
+    /// Chords and pad only: the MIDI note (0..127, 60 = middle C) the voicings average to. The
+    /// writer picks inversions and spacing around it. Setting octave on a chord part clears it.
+    #[schemars(range(min = 0, max = 127))]
+    pub centre: Option<u8>,
+    /// Chords and pad only: notes per chord, 2..6, or 0 for the chord's own tones. Fewer drops
+    /// the fifth first, then the root; more doubles root, fifth, third. A low_root is extra.
+    #[schemars(extend("enum" = [0, 2, 3, 4, 5, 6, null]))]
+    pub voices: Option<u8>,
     /// Space-separated relative scale steps; empty clears the authored motif.
     pub motif: Option<String>,
     /// x hit, X accent, o ghost and ./~/- rest; empty clears authored rhythm.
@@ -192,6 +200,21 @@ impl RecipePatch {
                 return Err("octave must be -2..2".into());
             }
             recipe.octave = value;
+            // An octave asked of a chord part is a register asked for, and a centre left behind
+            // would quietly overrule it.
+            recipe.centre = None;
+        }
+        if let Some(value) = self.centre {
+            if value > 127 {
+                return Err("centre must be a MIDI note 0..127".into());
+            }
+            recipe.centre = Some(value);
+        }
+        if let Some(value) = self.voices {
+            if value != 0 && !auris_core::CHORD_VOICES.contains(&value) {
+                return Err("voices must be 0 (the chord's own tones) or 2..6".into());
+            }
+            recipe.voices = value;
         }
         if let Some(value) = self.swing {
             if !(50..=75).contains(&value) {
@@ -249,7 +272,7 @@ impl RecipePatch {
 }
 
 pub(crate) fn summary(recipe: &ClipRecipe) -> serde_json::Value {
-    serde_json::json!({"part":recipe.preset.name(),"seed":recipe.seed,"density":recipe.density,"intensity":recipe.intensity,"gate":recipe.gate,"dynamics":recipe.dynamics,"syncopation":recipe.syncopation,"fill":recipe.fill,"octave":recipe.octave,"low_root":recipe.low_root,"strum":recipe.strum,"swing":recipe.swing,"groove":recipe.groove,"subdivision":recipe.subdivision,"motif":recipe.motif,"rhythm":recipe.rhythm,"drum_voices":recipe.drum_voices.iter().map(|voice|serde_json::json!({"name":voice.name,"has_recipe":voice.recipe.is_some()})).collect::<Vec<_>>()})
+    serde_json::json!({"part":recipe.preset.name(),"seed":recipe.seed,"density":recipe.density,"intensity":recipe.intensity,"gate":recipe.gate,"dynamics":recipe.dynamics,"syncopation":recipe.syncopation,"fill":recipe.fill,"octave":recipe.octave,"low_root":recipe.low_root,"strum":recipe.strum,"centre":recipe.chord_centre(),"voices":recipe.voices,"swing":recipe.swing,"groove":recipe.groove,"subdivision":recipe.subdivision,"motif":recipe.motif,"rhythm":recipe.rhythm,"drum_voices":recipe.drum_voices.iter().map(|voice|serde_json::json!({"name":voice.name,"has_recipe":voice.recipe.is_some()})).collect::<Vec<_>>()})
 }
 
 impl Session {
