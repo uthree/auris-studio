@@ -429,6 +429,13 @@ transport says so (`MIDI +1`); clicking that puts it back. A key held down while
 still releases the note it struck. The shift is remembered across launches. A keyboard's own octave
 buttons, where it has them, work as well and add to this.
 
+**Latency** is measured once in **Settings → MIDI → Latency**: press Measure, listen to a bar of
+clicks, then play any key on every click for two more. The median distance from the click is kept
+and taken off every note a take writes from the keyboard, so notes land where you played them
+rather than where they reached the computer — the keyboard's scan, its USB link and driver, and
+your own habit of playing a shade early or late, all together. The first-run guide has a MIDI
+keyboard step that says which keyboards it can see and points here.
+
 **Record on an instrument track writes down what is played.** Select the track, press **Record**
 (or `R`), play, press it again: the notes become one clip at the position you were *hearing* when
 you struck them, as one undo step. A take keeps the keyboard on its own track even if the
