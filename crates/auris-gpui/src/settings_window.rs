@@ -254,6 +254,9 @@ impl SettingsWindow {
                         this.text_changed();
                     }
                     atelier::TextInputEvent::Submit => {}
+                    // Completion keys reach an input only while `set_completing` says candidates are
+                    // open, which none of these does.
+                    _ => {}
                 }
                 cx.notify();
             });

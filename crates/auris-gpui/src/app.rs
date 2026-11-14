@@ -2279,6 +2279,9 @@ impl AurisApp {
                         // away too.
                         atelier::TextInputEvent::Submit => this.library_search_focused = false,
                         atelier::TextInputEvent::Cancel => this.leave_library_search(),
+                        // Completion keys reach an input only while `set_completing` says candidates are
+                        // open, which none of these does.
+                        _ => {}
                     }
                     cx.notify();
                 },

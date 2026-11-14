@@ -147,6 +147,9 @@ impl AgentSettings {
                         }
                         atelier::TextInputEvent::Submit => this.apply_agent(cx),
                         atelier::TextInputEvent::Cancel => {}
+                        // Completion keys reach an input only while `set_completing` says candidates are
+                        // open, which none of these does.
+                        _ => {}
                     }
                     cx.notify();
                 },
