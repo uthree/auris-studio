@@ -287,4 +287,27 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn every_instrument_survives_a_sample_rate_too_low_to_be_one() {
+        // A host may hand over any positive rate, and a project file may name one. Nothing
+        // musical comes out at eight hertz, but nothing may panic or go non-finite either.
+        for rate in [1.0, 8.0, 32.0, 1_000.0] {
+            for (id, mut instrument) in every_instrument() {
+                instrument.prepare(&PrepareContext::new(rate, 64, 2));
+                let mut out = AudioBuffer::new(2, 64, rate);
+                let ctx = ProcessContext::realtime(rate, 64, 0, 120.0, true);
+                let events = [note_on(0, 36), note_on(1, 60), note_on(2, 96)];
+                instrument.process(&events, &mut out, &ctx);
+                for _ in 0..4 {
+                    instrument.process(&[], &mut out, &ctx);
+                }
+                for channel in 0..2 {
+                    assert!(
+                        out.channel(channel).iter().all(|sample| sample.is_finite()),
+                        "{id} at {rate} Hz"
+                    );
+                }
+            }
+        }
+    }
 }
