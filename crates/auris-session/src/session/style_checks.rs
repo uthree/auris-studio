@@ -26,6 +26,19 @@ pub struct StyleChecks {
     /// Whether a held note outside the key and its chord is only noted rather than warned
     /// about, because chromatic tensions are the genre's ordinary harmony.
     pub chromatic_harmony: bool,
+    /// The integrated loudness, lowest and highest in LUFS, the style's page asks the mix to
+    /// land in, or `None` where the page names no level. A loop under a game leaves room for
+    /// its sounds and a dance track is loud on purpose; one target for both fits neither.
+    pub loudness: Option<(f32, f32)>,
+}
+
+impl StyleChecks {
+    /// The level a mix of this style is normalized toward: the middle of its range, or the
+    /// standard target where the style names none.
+    pub fn loudness_target(&self) -> f32 {
+        self.loudness
+            .map_or(crate::TARGET_LUFS, |(low, high)| (low + high) / 2.0)
+    }
 }
 
 /// The checks `style` keeps.
@@ -50,6 +63,24 @@ pub fn style_checks(style: Style) -> StyleChecks {
         // Built on one loop by design: a chorus over the verse's progression is the idiom.
         chorus_own_progression: !is(&[Genre::HipHopLofi, Genre::DanceElectronic, Genre::Ambient]),
         chromatic_harmony: is(&[Genre::Jazz, Genre::RnbNeoSoul, Genre::CityPop, Genre::Latin]),
+        loudness: loudness(style),
+    }
+}
+
+/// The range each page under `docs/genres` and `docs/usages` names (the toolbox's tests hold
+/// the two to each other), the usage first: a loop's
+/// headroom for the game's sounds is what decides its level, whatever its genre.
+fn loudness(style: Style) -> Option<(f32, f32)> {
+    if style.usage == Some(Usage::LoopBgm) {
+        return Some((-18.0, -16.0));
+    }
+    match style.genre? {
+        Genre::DanceElectronic => Some((-11.0, -9.0)),
+        Genre::HipHopLofi => Some((-16.0, -14.0)),
+        Genre::AnimeVocaloid => Some((-14.0, -12.0)),
+        // A page naming one level is held to it within a unit either way.
+        Genre::JPop | Genre::CityPop | Genre::RnbNeoSoul => Some((-15.0, -13.0)),
+        _ => None,
     }
 }
 
@@ -67,7 +98,28 @@ mod tests {
         assert!(checks.chorus_lift && checks.chorus_fuller && checks.chorus_own_progression);
         assert_eq!(checks.frame_bars, Some(8.0));
         assert!(!checks.chromatic_harmony);
-        assert_eq!(of(Some(Genre::JPop), Some(Usage::Song)), checks);
+        assert_eq!(checks.loudness, None);
+        assert_eq!(checks.loudness_target(), crate::TARGET_LUFS);
+        let jpop = of(Some(Genre::JPop), Some(Usage::Song));
+        assert_eq!(
+            StyleChecks {
+                loudness: None,
+                ..jpop
+            },
+            checks
+        );
+    }
+
+    #[test]
+    fn a_loop_mixes_quieter_than_its_genre_and_dance_louder() {
+        let dance = of(Some(Genre::DanceElectronic), None);
+        assert_eq!(dance.loudness, Some((-11.0, -9.0)));
+        assert_eq!(dance.loudness_target(), -10.0);
+        let looped = of(Some(Genre::DanceElectronic), Some(Usage::LoopBgm));
+        assert_eq!(looped.loudness, Some((-18.0, -16.0)));
+        assert_eq!(of(None, Some(Usage::LoopBgm)).loudness_target(), -17.0);
+        // A page that names no level adds no check.
+        assert_eq!(of(Some(Genre::Jazz), None).loudness, None);
     }
 
     #[test]

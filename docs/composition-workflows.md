@@ -46,7 +46,10 @@ loop or a cue is not asked for an intro and an outro, a genre without a
 register-lifted chorus (jazz, orchestral, ambient, hip-hop and lo-fi, dance) is
 not asked for one, loop-built genres may keep the verse's progression in the
 chorus, and in jazz, R&B, city pop and Latin a held note outside the key is
-reported as information rather than a warning. Going back to an earlier phase keeps the later
+reported as information rather than a warning. Where the style's page names a
+loudness, `lint_project`'s audio pass reports a mix outside it as
+`off_target_loudness` (a single level is held within a unit either way), and
+`normalize_mix` without a target aims at the middle of that range. Going back to an earlier phase keeps the later
 phases' work and lists them under `phase.revisit`. `phase.checks` reports the
 unmet structural conditions of the current and earlier phases, read from
 `inspect_project`'s `phase_facts`: sections covering the song, chords in every

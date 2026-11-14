@@ -112,6 +112,8 @@ pub enum Rule {
     TooLoud,
     /// The rendered mix is far quieter than any delivery target.
     TooQuiet,
+    /// The rendered mix misses the loudness range its genre or usage asks for.
+    OffTargetLoudness,
     /// A track plays notes but its rendered signal is silent.
     SilentTrack,
     /// A note alone on its track sounds off its written pitch, octaves aside.
@@ -124,7 +126,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, score rules first.
-    pub const ALL: [Rule; 25] = [
+    pub const ALL: [Rule; 26] = [
         Rule::CrowdedOnset,
         Rule::DenseNotes,
         Rule::HarshInterval,
@@ -146,6 +148,7 @@ impl Rule {
         Rule::Clipping,
         Rule::TooLoud,
         Rule::TooQuiet,
+        Rule::OffTargetLoudness,
         Rule::SilentTrack,
         Rule::PitchMismatch,
         Rule::Unpitched,
@@ -176,6 +179,7 @@ impl Rule {
             Rule::Clipping => "clipping",
             Rule::TooLoud => "too_loud",
             Rule::TooQuiet => "too_quiet",
+            Rule::OffTargetLoudness => "off_target_loudness",
             Rule::SilentTrack => "silent_track",
             Rule::PitchMismatch => "pitch_mismatch",
             Rule::Unpitched => "unpitched",
@@ -190,6 +194,7 @@ impl Rule {
             Rule::Clipping
                 | Rule::TooLoud
                 | Rule::TooQuiet
+                | Rule::OffTargetLoudness
                 | Rule::SilentTrack
                 | Rule::PitchMismatch
                 | Rule::Unpitched
@@ -269,7 +274,8 @@ pub enum Fix {
         /// The clip that begins inside it.
         second: ClipId,
     },
-    /// Run [`Session::normalize_mix`](crate::Session::normalize_mix) toward the standard target.
+    /// Run [`Session::normalize_mix`](crate::Session::normalize_mix) toward the style's target,
+    /// or the standard one when the style names none.
     NormalizeMix,
 }
 
@@ -457,6 +463,12 @@ impl Diagnostic {
             Rule::TooQuiet => {
                 format!("the mix measures {value:.1} LUFS integrated, quieter than {limit:.0} LUFS")
             }
+            Rule::OffTargetLoudness if value < limit => format!(
+                "the mix measures {value:.1} LUFS integrated, quieter than this style's {limit:.0} LUFS"
+            ),
+            Rule::OffTargetLoudness => format!(
+                "the mix measures {value:.1} LUFS integrated, louder than this style's {limit:.0} LUFS"
+            ),
             Rule::SilentTrack => {
                 format!(
                     "the track plays notes here but its rendered signal stays below {limit:.0} dBFS"
@@ -476,7 +488,9 @@ impl Diagnostic {
             Fix::SetChords { .. } => "write the chords the notes spell, one per bar",
             Fix::TrimClip { .. } => "end the earlier clip where the later one begins",
             Fix::Crossfade { .. } => "crossfade the two audio clips across their overlap",
-            Fix::NormalizeMix => "normalize the mix toward -14 LUFS",
+            Fix::NormalizeMix => {
+                "normalize the mix toward the middle of the style's loudness range, or -14 LUFS without one"
+            }
         })
     }
 }

@@ -173,8 +173,9 @@ Transcription estimates are drafts. Inspect and explicitly accept them; never in
 Audio preview/export is not evidence of listening. inspect_audio/analyze measure levels and score data locally.
 Deliver verified audio for human feedback; missing subjective feedback does not block delivery.
 Compare the same range after a supported edit. After changing an instrument, remeasure its loudness.
-Unless the user names other limits, deliver at -14 LUFS integrated under a -1 dBTP ceiling: after the last
-sound, note or fader change, call normalize_mix (its defaults are those) and read what it measured; it can stop
+Unless the user names other limits, deliver at the song's style level (-14 LUFS integrated when it names none)
+under a -1 dBTP ceiling: after the last sound, note or fader change, call normalize_mix (its defaults are those)
+and read what it measured; it can stop
 short at fader/peak limits. New projects end the master in auris.fx.limiter; keep it last. render exports encoded
 WAV or stems (into the workspace unless the user names a place); verify_render checks the actual file against requested loudness, peak and optional ending limits.
 Treat FAIL as unfinished. Use read_report to page an immutable large report instead of repeating an edit.

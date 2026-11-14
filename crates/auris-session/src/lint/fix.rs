@@ -187,7 +187,9 @@ impl Session {
                 Ok(())
             }
             Fix::NormalizeMix => {
-                self.normalize_mix(crate::TARGET_LUFS, -1.0)?;
+                let target = crate::session::style_checks::style_checks(self.project().style)
+                    .loudness_target();
+                self.normalize_mix(target, -1.0)?;
                 Ok(())
             }
         }

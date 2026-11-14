@@ -142,6 +142,53 @@ mod tests {
         assert!(usage_only.starts_with("Usage: Cue."), "{usage_only}");
     }
 
+    /// The level a page's Mix section names: "Target -14 LUFS" or "target -16 to -18 LUFS".
+    fn named_loudness(text: &str) -> Option<(f32, f32)> {
+        let mix = text.split("## Mix").nth(1)?;
+        let at = mix.to_lowercase().find("target ")? + "target ".len();
+        let words: Vec<&str> = mix[at..].split_whitespace().collect();
+        let first: f32 = words.first()?.parse().ok()?;
+        Some(match words.get(1) {
+            Some(&"to") => {
+                let second: f32 = words.get(2)?.parse().ok()?;
+                (first.min(second), first.max(second))
+            }
+            _ => (first - 1.0, first + 1.0),
+        })
+    }
+
+    #[test]
+    fn the_lint_holds_a_mix_to_the_level_its_page_names() {
+        use auris_session::session::style_checks::style_checks;
+        use auris_session::style::Style;
+        for genre in Genre::ALL {
+            let (_, _, text) = GENRES.iter().find(|(id, _, _)| *id == genre.id()).unwrap();
+            let style = Style {
+                genre: Some(genre),
+                usage: None,
+            };
+            assert_eq!(
+                style_checks(style).loudness,
+                named_loudness(text),
+                "{}",
+                genre.id()
+            );
+        }
+        for usage in Usage::ALL {
+            let (_, _, text) = USAGES.iter().find(|(id, _, _)| *id == usage.id()).unwrap();
+            let style = Style {
+                genre: None,
+                usage: Some(usage),
+            };
+            assert_eq!(
+                style_checks(style).loudness,
+                named_loudness(text),
+                "{}",
+                usage.id()
+            );
+        }
+    }
+
     #[test]
     fn a_chosen_style_brings_every_phase_of_both_pages() {
         let text = whole(&json!({"genre":"city_pop","usage":"loop_bgm"})).unwrap();
