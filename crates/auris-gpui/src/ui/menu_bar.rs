@@ -187,6 +187,7 @@ impl AurisApp {
                 monitoring: self.session.monitoring(),
                 metronome: self.session.metronome(),
                 musical_typing: self.session.typing_keyboard().enabled(),
+                step_input: self.session.step_input().is_some(),
             },
         )
     }

@@ -432,6 +432,14 @@ count lands in front of the downbeat.
 * **A sustain pedal** holds notes past their keys, and a take writes each note as long as it was
   heard — held notes become long notes rather than a pedal lane.
 
+**Step input** (**Transport → Step Input**, `⌘⇧K`; Ctrl+Shift+K on Windows) writes a part with
+the transport standing still. Play a note or a chord, and when every key is up again it is written
+at the playhead, one grid division long, and the playhead moves on a division. A chord is every key
+that was down together, so it can be rolled on rather than struck at once. **→** leaves a rest and
+**←** takes the last step away to be played again; each chord is one undo step. With a clip open in
+the editor the notes go into it; otherwise the first chord makes a clip on the selected track. The
+grid sets the step length, and Musical Typing feeds step input as well as a MIDI keyboard does.
+
 Only the window that is heard listens: with two projects open, the keyboard plays the one holding
 the audio output.
 

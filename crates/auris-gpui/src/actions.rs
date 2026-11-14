@@ -85,6 +85,8 @@ actions!(
         ToggleMonitoring,
         /// Play the computer keyboard as an instrument, or stop doing so.
         ToggleMusicalTyping,
+        /// Write what is played one grid step at a time, with the transport standing still.
+        ToggleStepInput,
         /// Trim takes to the punch region, or stop doing so.
         TogglePunch,
         /// Add an instrument track.
@@ -480,6 +482,9 @@ bindable! {
         // It has to carry a modifier whatever it was: the keyboard this switches on plays nearly
         // every bare letter, so a bare one would be a switch that could not be switched off.
         "transport.musical_typing", GroupTransport, CmdMusicalTyping,  "secondary-k" => ToggleMusicalTyping;
+        // Beside Musical Typing because it is the other way of playing a part in, and with a
+        // modifier for the same reason: while it is on, the letters may be playing notes.
+        "transport.step_input", GroupTransport, CmdStepInput,          "secondary-shift-k" => ToggleStepInput;
         // Logic's own key for the click, and free here. A bare letter at the window's context is
         // the same bargain the panel toggles above already take: nothing types into the window,
         // and a sheet or a prompt is a context of its own where nothing at all is bound.
