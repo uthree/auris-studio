@@ -116,6 +116,7 @@ mod singer;
 mod singer_names;
 pub mod source_material;
 mod spectrogram;
+mod step_input;
 mod timbre;
 mod tracks;
 mod transport;
@@ -181,6 +182,7 @@ pub use spectrogram::{RenderedSpectrogramJob, SpectrogramJob};
 pub use record::{
     Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport, input_level_of,
 };
+pub use step_input::StepInputState;
 pub use timbre::{
     TimbreCluster, TimbreMap, TimbreMapControl, TimbreMapJob, TimbrePreviewJob, TimbreSound,
 };
@@ -641,6 +643,8 @@ pub struct Session {
     typing: MusicalTyping,
     /// The MIDI keyboards, when they are being listened to. See [`midi_input`].
     midi: midi_input::MidiInput,
+    /// Notes written a step at a time, while that is on. See [`step_input`].
+    step_input: Option<step_input::StepInput>,
 
     /// Third-party CLAP plugins the document names.
     ///
@@ -836,6 +840,7 @@ impl Session {
             monitored: Vec::new(),
             typing: MusicalTyping::default(),
             midi: midi_input::MidiInput::default(),
+            step_input: None,
             take: None,
             japanese: None,
             shipped_dictionary: options.shipped_dictionary,

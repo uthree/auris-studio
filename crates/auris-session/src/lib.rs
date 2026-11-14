@@ -160,10 +160,10 @@ pub use session::{
     RecoveryQuarantineCleanupJob, RecoveryResult, RecoverySnapshot, Release, SaveJob, SaveReport,
     SaveResult, SectionLoudness, Session, SessionOptions, SingPlan, SingerFramesExportJob,
     SingerFramesExportResult, SingerLandingJob, SingerLandingResult, SingerTakeState,
-    SingerVoiceInfo, SingerVoiceLoadJob, SingerVoiceLoadResult, Struck, SungFrames, TARGET_LUFS,
-    TYPING_BEND, TakeReport, TrackLevel, TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS,
-    decode_audio, fader_for, faders_lift_db, input_level_of, master_gain_db, quantized,
-    read_soundfont, recovery_dir, shadows_musical_typing, take_fingerprint,
+    SingerVoiceInfo, SingerVoiceLoadJob, SingerVoiceLoadResult, StepInputState, Struck, SungFrames,
+    TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel, TrackLoudness, TypingRole, VELOCITY_STEP,
+    WHEEL_STEPS, decode_audio, fader_for, faders_lift_db, input_level_of, master_gain_db,
+    quantized, read_soundfont, recovery_dir, shadows_musical_typing, take_fingerprint,
 };
 pub use session::{
     AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,

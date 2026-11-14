@@ -219,9 +219,11 @@ impl Session {
             match event.performed {
                 Performed::NoteOn { pitch, velocity } => {
                     self.note_take_struck_at(event.track, pitch, velocity, at);
+                    self.step_struck(event.track, pitch, velocity);
                 }
                 Performed::NoteOff { pitch } => {
                     self.note_take_released_at(event.track, pitch, at);
+                    self.step_released(event.track, pitch);
                 }
                 Performed::PitchBend(semitones) => {
                     self.note_take_bent_at(event.track, semitones, at);
