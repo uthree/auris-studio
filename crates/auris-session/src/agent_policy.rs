@@ -282,6 +282,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.set_instrument",
     "edit_project.inspect_instrument",
     "edit_project.set_instrument_params",
+    "edit_project.plugin_state",
     "edit_project.normalize_mix",
     "edit_project.add_clip",
     "edit_project.generate_phrase",

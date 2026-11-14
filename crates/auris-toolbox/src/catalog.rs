@@ -390,6 +390,10 @@ pub mod tool_help {
                 {"operation":{"kind":"read"}},
                 {"operation":{"kind":"undo","group":1,"expected_revision":12}}
             ]),
+            "plugin_state" => serde_json::json!([
+                {"project":project,"track":1,"operation":{"kind":"read"}},
+                {"project":project,"track":1,"operation":{"kind":"write","expected_revision":"copy-from-read","encoding":"utf8","state":"complete state in the plugin's format"}}
+            ]),
             "read_notes" => serde_json::json!([
                 {"project":project,"clips":[{"clip":1},{"clip":2,"offset":128}]}
             ]),
