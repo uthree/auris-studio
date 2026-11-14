@@ -1267,9 +1267,9 @@ impl Project {
             if let Some(recipe) = &mut right.recipe {
                 recipe.trim_drum_accents(offset);
             }
-            right.bend = split_curve_right(&clip.bend, offset);
-            for points in right.controllers.values_mut() {
-                *points = split_curve_right(points, offset);
+            right.bend = split_curve_right(&clip.bend, offset, ClipCurve::Bend);
+            for (number, points) in &mut right.controllers {
+                *points = split_curve_right(points, offset, ClipCurve::Controller(*number));
             }
             right.forget_empty_curves();
             right.loop_end = Ticks::ZERO;
@@ -1287,9 +1287,9 @@ impl Project {
                     voice.fixed_notes = split_notes_left(&voice.fixed_notes, offset);
                 }
             }
-            left.bend = split_curve_left(&clip.bend, offset);
-            for points in left.controllers.values_mut() {
-                *points = split_curve_left(points, offset);
+            left.bend = split_curve_left(&clip.bend, offset, ClipCurve::Bend);
+            for (number, points) in &mut left.controllers {
+                *points = split_curve_left(points, offset, ClipCurve::Controller(*number));
             }
             left.forget_empty_curves();
             left.length = offset;
@@ -1837,18 +1837,44 @@ fn split_notes_left(notes: &[Note], offset: Ticks) -> Vec<Note> {
         .collect()
 }
 
-/// The points before a split, still relative to the left clip's unchanged start.
-fn split_curve_left(points: &[CurvePoint], offset: Ticks) -> Vec<CurvePoint> {
-    points
+/// The curve before a split, still relative to the left clip's unchanged start.
+///
+/// The points before the cut, and the curve's value *at* the cut when it was still going
+/// somewhere: a slope that crosses the cut is kept up to it, where the points alone would
+/// leave the left piece flat from the last one it kept. A curve that only begins after the cut
+/// was held backwards over the left piece at its first value, and still is.
+fn split_curve_left(points: &[CurvePoint], offset: Ticks, which: ClipCurve) -> Vec<CurvePoint> {
+    let mut left: Vec<CurvePoint> = points
         .iter()
         .copied()
         .filter(|point| point.at < offset)
-        .collect()
+        .collect();
+    let goes_on = points.iter().any(|point| point.at >= offset);
+    if left.is_empty() {
+        let held = curve_at(points, Ticks::ZERO);
+        if goes_on && held != released_value(which) {
+            left.push(CurvePoint {
+                at: Ticks::ZERO,
+                value: held,
+            });
+        }
+    } else if goes_on {
+        left.push(CurvePoint {
+            at: offset,
+            value: curve_at(points, offset),
+        });
+    }
+    left
 }
 
-/// The points at and after a split, rebased onto the right clip's new start.
-fn split_curve_right(points: &[CurvePoint], offset: Ticks) -> Vec<CurvePoint> {
-    points
+/// The curve at and after a split, rebased onto the right clip's new start.
+///
+/// The points from the cut on, opened with the value the curve had reached there when anything
+/// was drawn before it: the right piece begins where the whole clip was, on a slope or on a
+/// value set once and held, where the points alone would start it flat at its first point or
+/// with nothing at all.
+fn split_curve_right(points: &[CurvePoint], offset: Ticks, which: ClipCurve) -> Vec<CurvePoint> {
+    let mut right: Vec<CurvePoint> = points
         .iter()
         .copied()
         .filter(|point| point.at >= offset)
@@ -1856,7 +1882,22 @@ fn split_curve_right(points: &[CurvePoint], offset: Ticks) -> Vec<CurvePoint> {
             at: point.at - offset,
             ..point
         })
-        .collect()
+        .collect();
+    let drawn_before = points.iter().any(|point| point.at < offset);
+    let opens_at_the_cut = right.first().is_some_and(|point| point.at == Ticks::ZERO);
+    if drawn_before && !opens_at_the_cut {
+        let reached = curve_at(points, offset);
+        if !right.is_empty() || reached != released_value(which) {
+            right.insert(
+                0,
+                CurvePoint {
+                    at: Ticks::ZERO,
+                    value: reached,
+                },
+            );
+        }
+    }
+    right
 }
 
 /// The notes of a clip whose front has been trimmed by `by`, rebased onto the new start.
@@ -2706,29 +2747,48 @@ mod tests {
 
         let right = project.split_clip(clip, Ticks(800)).unwrap();
         let (_, left) = project.midi_clip(clip).unwrap();
+        // The slope the cut goes through is kept up to the cut, at the value it had reached.
         assert_eq!(
             left.bend,
-            [CurvePoint {
-                at: Ticks(200),
-                value: -2.0
-            }]
+            [
+                CurvePoint {
+                    at: Ticks(200),
+                    value: -2.0
+                },
+                CurvePoint {
+                    at: Ticks(800),
+                    value: 1.0
+                }
+            ]
         );
         assert_eq!(
             left.controllers[&11],
-            [CurvePoint {
-                at: Ticks(400),
-                value: 0.25
-            }]
+            [
+                CurvePoint {
+                    at: Ticks(400),
+                    value: 0.25
+                },
+                CurvePoint {
+                    at: Ticks(800),
+                    value: 0.75
+                }
+            ]
         );
 
         let (_, right) = project.midi_clip(right).unwrap();
         assert_eq!(
             right.bend,
-            [CurvePoint {
-                at: Ticks(400),
-                value: 3.0
-            }],
-            "right-hand points are relative to the new clip start"
+            [
+                CurvePoint {
+                    at: Ticks::ZERO,
+                    value: 1.0
+                },
+                CurvePoint {
+                    at: Ticks(400),
+                    value: 3.0
+                }
+            ],
+            "right-hand points are relative to the new clip start, and open where the slope was"
         );
         assert_eq!(
             right.controllers[&11],
@@ -2947,6 +3007,62 @@ mod tests {
             clip.notes.iter().all(|note| note.pitch != 65),
             "a note nobody could hear stays unheard"
         );
+    }
+
+    #[test]
+    fn a_split_leaves_every_curve_reading_what_it_read() {
+        let mut project = Project::new("Demo", 48_000.0);
+        let track = project.add_instrument_track("Lead", "x");
+        let bar = Ticks::from_beats(4.0);
+        let clip = project.add_midi_clip(track, "A", bar, bar).unwrap();
+        let point = |beats: f64, value: f32| CurvePoint {
+            at: Ticks::from_beats(beats),
+            value,
+        };
+        let curves = [
+            // A slope the cut goes through.
+            (
+                ClipCurve::Bend,
+                vec![point(0.0, 0.0), point(3.0, 1.5), point(4.0, 0.0)],
+            ),
+            // Set once and held to the end.
+            (ClipCurve::Controller(11), vec![point(0.0, 0.8)]),
+            // Drawn only after the cut, and so held backwards over the left piece.
+            (
+                ClipCurve::Controller(1),
+                vec![point(3.0, 0.5), point(3.5, 1.0)],
+            ),
+            // A point exactly on the cut.
+            (
+                ClipCurve::Controller(74),
+                vec![point(1.0, 0.2), point(2.0, 0.9), point(3.0, 0.1)],
+            ),
+            // At rest throughout: nothing to carry over.
+            (ClipCurve::Controller(64), vec![point(1.0, 0.0)]),
+        ];
+        for (which, points) in &curves {
+            *project.midi_clip_mut(clip).unwrap().curve_mut(*which) = points.clone();
+        }
+        let cut = Ticks::from_beats(2.0);
+
+        let right = project.split_clip(clip, bar + cut).unwrap();
+
+        let left = project.midi_clip(clip).unwrap().1;
+        let right = project.midi_clip(right).unwrap().1;
+        for (which, points) in &curves {
+            for tick in 0..bar.raw() {
+                let at = Ticks(tick);
+                let read = match at < cut {
+                    true => left.curve_at(*which, at),
+                    false => right.curve_at(*which, at - cut),
+                };
+                assert!(
+                    (read - curve_at(points, at)).abs() < 1.0e-4,
+                    "{which:?} at {tick}: {read}"
+                );
+            }
+        }
+        assert!(right.curve(ClipCurve::Controller(64)).is_empty());
     }
 
     #[test]
