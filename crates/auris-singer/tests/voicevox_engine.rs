@@ -208,8 +208,9 @@ fn a_running_voicevox_engine_sings_simultaneous_duration_duplicates_once() {
         voice: None,
         take: None,
     };
-    let expected_score = render_score(&reference, &tempo);
-    let expected_frames = render_expression_frames(&reference, &tempo);
+    let expected_score = render_score(&reference, &tempo, &auris_core::Tuning::standard());
+    let expected_frames =
+        render_expression_frames(&reference, &tempo, &auris_core::Tuning::standard());
     assert_eq!(expected_frames.len(), 72);
 
     for short_first in [true, false] {
@@ -225,8 +226,8 @@ fn a_running_voicevox_engine_sings_simultaneous_duration_duplicates_once() {
 
         // Handing off the short note to its simultaneous longer copy used to create a
         // one-frame syllable before another consonant, which the Engine cannot query.
-        let score = render_score(&singer, &tempo);
-        let frames = render_expression_frames(&singer, &tempo);
+        let score = render_score(&singer, &tempo, &auris_core::Tuning::standard());
+        let frames = render_expression_frames(&singer, &tempo, &auris_core::Tuning::standard());
         assert_eq!(score, expected_score, "short_first={short_first}");
         assert_eq!(frames, expected_frames, "short_first={short_first}");
         assert_eq!(

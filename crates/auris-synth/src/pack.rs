@@ -272,6 +272,59 @@ mod tests {
     }
 
     #[test]
+    fn every_pitched_instrument_sounds_where_its_note_asks_and_releases_by_key() {
+        // A tuning has key 40 sound where key 64 does. Everything that is not a kit must then
+        // play exactly what key 64 plays — the pitch decides the sound — and let it go when key
+        // 40 is released, since the key is what names the note.
+        let mut registry = PluginRegistry::new();
+        registry.install::<SynthPack>();
+        let kits: Vec<String> = registry
+            .instruments()
+            .filter(|d| d.category == PluginCategory::Drum)
+            .map(|d| d.id.to_string())
+            .collect();
+        let retuned = [
+            NoteEvent::NoteOn {
+                frame: 0,
+                key: 40,
+                pitch: 64.0,
+                velocity: 0.8,
+            },
+            NoteEvent::NoteOff {
+                frame: 9_600,
+                key: 40,
+            },
+        ];
+        let plain = [
+            NoteEvent::note_on(0, 64, 0.8),
+            NoteEvent::NoteOff {
+                frame: 9_600,
+                key: 64,
+            },
+        ];
+        let mut checked = 0;
+        for ((id, mut tuned), (_, mut reference)) in
+            every_instrument().into_iter().zip(every_instrument())
+        {
+            if kits.contains(&id) {
+                continue;
+            }
+            tuned.prepare(&PrepareContext::new(48_000.0, 512, 2));
+            reference.prepare(&PrepareContext::new(48_000.0, 512, 2));
+            let a = render(tuned.as_mut(), 24_000, 512, 2, &retuned);
+            let b = render(reference.as_mut(), 24_000, 512, 2, &plain);
+            assert!(peak(&b) > 0.0, "{id} was silent");
+            let first = a.iter().zip(&b).position(|(x, y)| x != y);
+            assert_eq!(
+                first, None,
+                "{id} sounded by key, or did not release by it: they part at that frame"
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, registry.len() - kits.len());
+    }
+
+    #[test]
     fn every_instrument_survives_process_before_prepare() {
         // The engine always prepares first, but a plugin that indexes an empty voice pool
         // would take the whole audio thread down if that order were ever broken.

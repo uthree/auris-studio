@@ -155,7 +155,9 @@ pub struct BoomBass {
     tone_coef: f32,
     tone_hz: f32,
     tone_state: f32,
-    held: [u8; HELD_KEYS],
+    /// The keys down, oldest first, each with the pitch it asked for: releasing the top one
+    /// returns to where the one below it *sounds*, which a tuning may put anywhere.
+    held: [(u8, f32); HELD_KEYS],
     held_count: usize,
 
     punch: f32,
@@ -193,7 +195,7 @@ impl BoomBass {
             tone_coef: 1.0,
             tone_hz: 1_000.0,
             tone_state: 0.0,
-            held: [0; HELD_KEYS],
+            held: [(0, 0.0); HELD_KEYS],
             held_count: 0,
             punch: 0.0,
             click_gain: 0.0,
@@ -245,14 +247,15 @@ impl BoomBass {
         self.output_gain = db_to_gain(p(P_LEVEL));
     }
 
-    fn strike(&mut self, key: u8, velocity: f32) {
+    fn strike(&mut self, pitch: f32, velocity: f32) {
         self.velocity = velocity;
-        self.pitch = f32::from(key);
+        self.pitch = pitch;
         self.target = self.pitch;
         // A harder note punches further, as a harder kick does.
         self.sweep = self.punch * PUNCH_OCTAVES * (0.8 + 0.2 * velocity);
         self.click = 1.0;
-        self.rng = 0x2545_F491 ^ u32::from(key);
+        // Seeded by where the note sounds, so it clicks alike whichever key a tuning plays it on.
+        self.rng = 0x2545_F491 ^ u32::from(crate::physical::nearest_key(pitch));
         // The phase carries on: restarting a sounding sine at zero is a step, and a retriggered
         // bass would click on every note. A silent voice starts at zero so every hit is alike.
         if !self.envelope.is_active() {
@@ -263,28 +266,29 @@ impl BoomBass {
         self.envelope.trigger();
     }
 
-    fn note_on(&mut self, key: u8, velocity: f32) {
+    fn note_on(&mut self, key: u8, pitch: f32, velocity: f32) {
         if !self.prepared {
             return;
         }
         let velocity = finite_or(velocity, 1.0).clamp(0.0, 1.0);
+        let pitch = crate::params::sounding_pitch(key, pitch);
         let legato = self.held_count > 0 && self.glide > 0.0 && self.envelope.is_active();
         self.remove_held(key);
         if self.held_count == HELD_KEYS {
             self.held.copy_within(1.., 0);
             self.held_count -= 1;
         }
-        self.held[self.held_count] = key;
+        self.held[self.held_count] = (key, pitch);
         self.held_count += 1;
         if legato {
-            self.target = f32::from(key);
+            self.target = pitch;
         } else {
-            self.strike(key, velocity);
+            self.strike(pitch, velocity);
         }
     }
 
     fn note_off(&mut self, key: u8) {
-        let was_top = self.held_count > 0 && self.held[self.held_count - 1] == key;
+        let was_top = self.held_count > 0 && self.held[self.held_count - 1].0 == key;
         self.remove_held(key);
         if !was_top {
             return;
@@ -294,7 +298,7 @@ impl BoomBass {
             n => {
                 // Back to the key still down. With a glide it slides there; without one it
                 // jumps, as a mono synth's last-note priority does, without a new strike.
-                self.target = f32::from(self.held[n - 1]);
+                self.target = self.held[n - 1].1;
                 if self.glide <= 0.0 {
                     self.pitch = self.target;
                 }
@@ -303,7 +307,10 @@ impl BoomBass {
     }
 
     fn remove_held(&mut self, key: u8) {
-        if let Some(index) = self.held[..self.held_count].iter().position(|k| *k == key) {
+        if let Some(index) = self.held[..self.held_count]
+            .iter()
+            .position(|(held, _)| *held == key)
+        {
             self.held.copy_within(index + 1..self.held_count, index);
             self.held_count -= 1;
         }
@@ -420,11 +427,12 @@ impl SegmentRenderer for BoomBass {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                key: pitch,
+                key,
+                pitch,
                 velocity,
                 ..
-            } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { key: pitch, .. } => self.note_off(pitch),
+            } => self.note_on(key, pitch, velocity),
+            NoteEvent::NoteOff { key, .. } => self.note_off(key),
             NoteEvent::AllNotesOff { .. } => {
                 self.held_count = 0;
                 self.envelope.release();

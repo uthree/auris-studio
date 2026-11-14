@@ -350,15 +350,15 @@ impl Choir {
         }
     }
 
-    fn note_on(&mut self, pitch: u8, velocity: f32) {
+    fn note_on(&mut self, key: u8, pitch: f32, velocity: f32) {
         let velocity = finite_or(velocity, 1.0).clamp(0.0, 1.0);
-        let Some(assignment) = self.allocator.note_on(pitch, velocity) else {
+        let Some(assignment) = self.allocator.note_on(key, velocity) else {
             return;
         };
         let Some(voice) = self.voices.get_mut(assignment.index) else {
             return;
         };
-        voice.pitch = f32::from(pitch);
+        voice.pitch = crate::params::sounding_pitch(key, pitch);
         voice.velocity = velocity;
         voice.lung = lung_pressure(voice.pitch) * self.sound.lung;
         let hertz = pitch_to_hz(voice.pitch);
@@ -456,12 +456,13 @@ impl SegmentRenderer for Choir {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                key: pitch,
+                key,
+                pitch,
                 velocity,
                 ..
-            } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { key: pitch, .. } => {
-                for index in self.allocator.note_off(pitch) {
+            } => self.note_on(key, pitch, velocity),
+            NoteEvent::NoteOff { key, .. } => {
+                for index in self.allocator.note_off(key) {
                     if let Some(voice) = self.voices.get_mut(index) {
                         voice.envelope.release();
                     }

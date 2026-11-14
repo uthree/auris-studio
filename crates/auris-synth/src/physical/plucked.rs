@@ -566,7 +566,7 @@ impl Engine for Plucked {
 
     fn start(&mut self, index: usize, note: &Note, quality: Quality) {
         let (rate, settings) = (self.rate, self.settings);
-        let pitch = f32::from(note.pitch);
+        let pitch = note.pitch;
         let fundamental = hertz(pitch);
         let (string, fret) = fretted(pitch, self.build.strings);
         let stiffness =

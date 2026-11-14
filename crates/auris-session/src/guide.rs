@@ -1565,6 +1565,13 @@ pub mod plugins {
     //! recordings chooses by the pitch rounded — the key of a retuned note may be a long way from
     //! the recording that suits it.
     //!
+    //! Everything about a sound follows the pitch, its random seeds included, so a note sounds
+    //! the same whichever key a tuning has playing it; `auris_synth`'s pack tests hold every
+    //! pitched built-in to that sample for sample. What stays with the key is what names a note
+    //! or a sound: the voice a release finds, a kit's pad, an unpitched sampler's map, and the
+    //! damper a piano key lifts — which is the damper of the string nearest the pitch, so the
+    //! key's release lets that same one fall.
+    //!
     //! The retuning happens in one place: the render graph adds the tuning's offset for the key to
     //! every note-on just before the block reaches the instrument
     //! ([`NoteEvent::retuned`](auris_core::plugin::NoteEvent::retuned)). The song, the chase after

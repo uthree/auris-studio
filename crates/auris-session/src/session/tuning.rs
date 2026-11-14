@@ -109,6 +109,72 @@ mod tests {
         assert_eq!(session.undo(), None);
     }
 
+    /// Power at one frequency, as one DFT bin.
+    fn power_at(samples: &[f32], rate: f64, hz: f64) -> f64 {
+        let step = std::f64::consts::TAU * hz / rate;
+        let (re, im) = samples
+            .iter()
+            .enumerate()
+            .fold((0.0, 0.0), |(re, im), (n, sample)| {
+                let phase = step * n as f64;
+                (
+                    re + f64::from(*sample) * phase.cos(),
+                    im - f64::from(*sample) * phase.sin(),
+                )
+            });
+        re * re + im * im
+    }
+
+    #[test]
+    fn a_retuned_song_is_heard_where_the_tuning_puts_it() {
+        // One key a step above middle C, played by the chiptune voice and exported. In 31-tone
+        // equal temperament that is 267.5 Hz — not the 277.2 of C sharp, and not middle C.
+        let mut session = session();
+        let track = session
+            .project
+            .add_instrument_track("Lead", auris_synth::Chiptune::ID);
+        let clip = session
+            .add_midi_clip(
+                track,
+                "Step",
+                auris_core::Ticks::ZERO,
+                auris_core::Ticks::from_beats(4.0),
+            )
+            .unwrap();
+        session
+            .add_note(
+                clip,
+                auris_core::Note::new(
+                    61,
+                    auris_core::Ticks::ZERO,
+                    auris_core::Ticks::from_beats(4.0),
+                ),
+            )
+            .unwrap();
+        session.set_tuning_preset(TuningPreset::Edo(31)).unwrap();
+        let tuned = session.tuning().hz(61);
+        assert!((tuned - 267.54).abs() < 0.01, "{tuned}");
+
+        let mix = session
+            .render_job()
+            .render(
+                &auris_engine::OfflineOptions::whole_project(),
+                &mut auris_engine::RenderProgress::default(),
+            )
+            .unwrap();
+        let rate = mix.sample_rate();
+        // The second quarter of a second onwards, past the attack.
+        let steady = &mix.channel(0)[(rate * 0.25) as usize..(rate * 1.25) as usize];
+        let at_tuned = power_at(steady, rate, tuned);
+        for elsewhere in [auris_core::tuning::MIDDLE_C_HZ, 277.18] {
+            let there = power_at(steady, rate, elsewhere);
+            assert!(
+                at_tuned > 20.0 * there,
+                "{tuned:.1} Hz: {at_tuned:.3e}, {elsewhere:.1} Hz: {there:.3e}"
+            );
+        }
+    }
+
     #[test]
     fn concert_pitch_keeps_the_scale_and_moves_the_reference() {
         let mut session = session();

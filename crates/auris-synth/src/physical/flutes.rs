@@ -396,7 +396,7 @@ impl Engine for Flutes {
         if !note.stolen {
             voice.clear();
         }
-        voice.key = f32::from(note.pitch);
+        voice.key = note.pitch;
         voice.velocity = note.velocity;
         voice.oversampling = oversampling;
         voice.sounding = true;
@@ -428,7 +428,7 @@ impl Engine for Flutes {
         if !voice.sounding {
             return false;
         }
-        voice.key = f32::from(note.pitch);
+        voice.key = note.pitch;
         voice.velocity = note.velocity;
         voice.held = true;
         true

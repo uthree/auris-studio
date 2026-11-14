@@ -322,8 +322,13 @@ impl Model {
 /// One note as an engine is asked to start it.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Note {
-    /// MIDI key.
-    pub pitch: u8,
+    /// Which key: what its release and its damper answer to.
+    pub key: u8,
+    /// Where it sounds, in semitones on the MIDI scale. The key's own number in the standard
+    /// tuning; anything a tuning says otherwise. Every continuous quantity of an instrument —
+    /// its stringing, its voicing, where its hammer strikes — follows this rather than the key,
+    /// because a string tuned to a pitch is the string of that pitch whatever key plays it.
+    pub pitch: f32,
     /// How hard, above zero and at most one.
     pub velocity: f32,
     /// Where it sits at unit width, from -1 on the left to 1 on the right.
@@ -335,6 +340,12 @@ pub(crate) struct Note {
     /// A number that differs from note to note and is the same in every render: what a player
     /// does not repeat exactly, repeated exactly.
     pub seed: u32,
+}
+
+/// The key nearest a sounding pitch, for a table measured key by key — a piano's stretch is
+/// one number per string, and a retuned note takes the number of the string it sounds nearest.
+pub(crate) fn nearest_key(pitch: f32) -> u8 {
+    pitch.round().clamp(0.0, 127.0) as u8
 }
 
 /// What the player is doing besides pressing keys.
@@ -576,6 +587,8 @@ pub struct Physical {
     /// Where a frontend touched the body, waiting for the note it excites.
     touch: Option<f32>,
     legato: Legato,
+    /// Where each voice's note sounds, for the picture: the allocator keeps only its key.
+    sounding: [f32; crate::voice::MAX_VOICES],
     motion: MotionCapture,
     motion_frames: usize,
     /// Stands in for the right channel when the output buffer is mono.
@@ -663,6 +676,7 @@ impl Physical {
             notes: 0,
             touch: None,
             legato: Legato::default(),
+            sounding: [0.0; crate::voice::MAX_VOICES],
             motion: MotionCapture::default(),
             motion_frames: 0,
             scratch: Vec::new(),
@@ -695,52 +709,63 @@ impl Physical {
             .is_some_and(|param| self.params.at(param) >= 0.5)
     }
 
-    fn note(&mut self, pitch: u8, velocity: f32, stolen: bool) -> Note {
+    fn note(&mut self, key: u8, pitch: f32, velocity: f32, stolen: bool) -> Note {
         self.notes = self.notes.wrapping_add(1);
         Note {
+            key,
             pitch,
             velocity,
-            pan: self.model.stereo_image().position(f32::from(pitch)),
+            pan: self.model.stereo_image().position(pitch),
             touch: self.touch.take(),
             stolen,
+            // From the pitch rather than the key, so a note sounds the same whichever key a
+            // tuning has playing it.
             seed: self
                 .notes
                 .wrapping_mul(0x9E37_79B9)
-                .wrapping_add(u32::from(pitch) << 20),
+                .wrapping_add(u32::from(nearest_key(pitch)) << 20),
         }
     }
 
-    /// Moves the legato voice to `pitch`, keeping its string or its air column sounding.
-    fn glide(&mut self, index: usize, pitch: u8, velocity: f32) -> bool {
+    /// Moves the legato voice to `key`, sounding at `pitch`, keeping its string or its air
+    /// column sounding.
+    fn glide(&mut self, index: usize, key: u8, pitch: f32, velocity: f32) -> bool {
         if self.engine.level(index) <= 0.0 || !self.engine.is_held(index) {
             return false;
         }
-        if !self.allocator.retarget(index, pitch, velocity) {
+        if !self.allocator.retarget(index, key, velocity) {
             return false;
         }
-        let note = self.note(pitch, velocity, false);
+        if let Some(sounding) = self.sounding.get_mut(index) {
+            *sounding = pitch;
+        }
+        let note = self.note(key, pitch, velocity, false);
         self.engine.glide(index, &note)
     }
 
-    fn note_on(&mut self, pitch: u8, velocity: f32) {
-        let pitch = pitch.min(127);
+    fn note_on(&mut self, key: u8, pitch: f32, velocity: f32) {
+        let key = key.min(127);
+        let pitch = crate::params::sounding_pitch(key, pitch);
         let velocity = finite_or(velocity, 0.0).clamp(0.0, 1.0);
         if velocity == 0.0 {
-            self.note_off(pitch);
+            self.note_off(key);
             return;
         }
         if self.is_legato() {
-            self.legato.note_on(pitch, velocity);
+            self.legato.note_on(key, pitch, velocity);
             if let Some(index) = self.legato.voice
-                && self.glide(index, pitch, velocity)
+                && self.glide(index, key, pitch, velocity)
             {
                 return;
             }
         }
-        let Some(assignment) = self.allocator.note_on(pitch, velocity) else {
+        let Some(assignment) = self.allocator.note_on(key, velocity) else {
             return;
         };
-        let note = self.note(pitch, velocity, assignment.stolen);
+        if let Some(sounding) = self.sounding.get_mut(assignment.index) {
+            *sounding = pitch;
+        }
+        let note = self.note(key, pitch, velocity, assignment.stolen);
         let quality = self.quality();
         self.engine.start(assignment.index, &note, quality);
         if self.is_legato() {
@@ -748,22 +773,22 @@ impl Physical {
         }
     }
 
-    fn note_off(&mut self, pitch: u8) {
-        let pitch = pitch.min(127);
+    fn note_off(&mut self, key: u8) {
+        let key = key.min(127);
         if self.is_legato() {
-            if !self.legato.note_off(pitch) {
+            if !self.legato.note_off(key) {
                 return;
             }
             if let Some(index) = self.legato.voice
-                && let Some((target, velocity)) = self.legato.last()
+                && let Some(down) = self.legato.last()
             {
                 // The key underneath is still down: the line falls back to it.
-                self.glide(index, target, velocity);
+                self.glide(index, down.key, down.pitch, down.velocity);
                 return;
             }
             self.legato.voice = None;
         }
-        for index in self.allocator.note_off(pitch) {
+        for index in self.allocator.note_off(key) {
             self.engine.stop(index);
         }
     }
@@ -823,10 +848,10 @@ impl Physical {
             let Some(index) = index else {
                 break;
             };
-            let Some(slot) = self.allocator.slot(index) else {
+            let Some(sounding) = self.sounding.get(index) else {
                 break;
             };
-            picture.pitch = f32::from(slot.pitch) + self.performance.bend;
+            picture.pitch = sounding + self.performance.bend;
             picture.held = self.engine.is_held(index);
             self.engine.observe(index, picture);
         }
@@ -868,13 +893,14 @@ impl SegmentRenderer for Physical {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                key: pitch,
+                key,
+                pitch,
                 velocity,
                 ..
-            } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { key: pitch, .. } => {
-                self.note_off(pitch);
-                self.engine.lift(pitch.min(127));
+            } => self.note_on(key, pitch, velocity),
+            NoteEvent::NoteOff { key, .. } => {
+                self.note_off(key);
+                self.engine.lift(key.min(127));
             }
             NoteEvent::AllNotesOff { .. } => self.release_everything(false),
             NoteEvent::AllSoundOff { .. } => self.release_everything(true),

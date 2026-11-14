@@ -730,12 +730,13 @@ impl Analog {
             .clamp(MIN_CUTOFF_HZ, MAX_CUTOFF_FRACTION * self.sample_rate)
     }
 
-    fn note_on(&mut self, pitch: u8, velocity: f32) {
+    fn note_on(&mut self, key: u8, pitch: f32, velocity: f32) {
         let velocity = finite_or(velocity, 1.0).clamp(0.0, 1.0);
-        let Some(assignment) = self.allocator.note_on(pitch, velocity) else {
+        let pitch = crate::params::sounding_pitch(key, pitch);
+        let Some(assignment) = self.allocator.note_on(key, velocity) else {
             return;
         };
-        let target = pitch_to_hz(f32::from(pitch) + self.bend);
+        let target = pitch_to_hz(pitch + self.bend);
         let start = if self.glide_coeff >= 1.0 {
             target
         } else {
@@ -749,7 +750,7 @@ impl Analog {
         if !assignment.stolen {
             voice.restart();
         }
-        voice.pitch = f32::from(pitch);
+        voice.pitch = pitch;
         voice.velocity = velocity;
         voice.target = target;
         voice.frequency = start;
@@ -1043,11 +1044,12 @@ impl SegmentRenderer for Analog {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                key: pitch,
+                key,
+                pitch,
                 velocity,
                 ..
-            } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { key: pitch, .. } => self.note_off(pitch),
+            } => self.note_on(key, pitch, velocity),
+            NoteEvent::NoteOff { key, .. } => self.note_off(key),
             NoteEvent::AllNotesOff { .. } => {
                 for index in self.allocator.release_all() {
                     if let Some(voice) = self.voices.get_mut(index) {

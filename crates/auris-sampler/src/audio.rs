@@ -338,24 +338,41 @@ impl AudioSampler {
         }
     }
 
-    /// Source frames per output frame for a key on one zone, before bending.
-    fn step_for(&self, zone: usize, key: u8) -> f64 {
+    /// Source frames per output frame for a note sounding at `pitch` on one zone, before bending.
+    fn step_for(&self, zone: usize, pitch: f32) -> f64 {
         let (Some(playable), Some(mapped)) = (self.playable.get(zone), self.map.get(zone)) else {
             return 1.0;
         };
         let rate = if self.rate > 0.0 { self.rate } else { 48_000.0 };
         let base = playable.buffer.sample_rate() / rate;
         let tune = f64::from(self.values[TUNE]) + f64::from(mapped.tune);
-        let semitones = if self.values[KEY_TRACKING] >= 0.5 {
-            f64::from(key) - f64::from(mapped.root) + tune
+        let semitones = if self.key_tracking() {
+            f64::from(pitch) - f64::from(mapped.root) + tune
         } else {
             tune
         };
         base * (semitones / 12.0).exp2()
     }
 
-    fn note_on(&mut self, key: u8, velocity: f32) {
-        let Some(zone) = pick_zone(&self.map, key, velocity, self.turn) else {
+    fn key_tracking(&self) -> bool {
+        self.values[KEY_TRACKING] >= 0.5
+    }
+
+    fn note_on(&mut self, key: u8, pitch: f32, velocity: f32) {
+        let pitch = if pitch.is_finite() {
+            pitch
+        } else {
+            f32::from(key)
+        };
+        // Which recording plays: with key tracking on, the one recorded nearest where the note
+        // *sounds*, since a tuning can put a key a long way from the recording that suits it.
+        // With it off, every key plays its sound unpitched, so the map names sounds by key — a
+        // kit laid across the keyboard — and the key chooses.
+        let chooser = match self.key_tracking() {
+            true => pitch.round().clamp(0.0, 127.0) as u8,
+            false => key,
+        };
+        let Some(zone) = pick_zone(&self.map, chooser, velocity, self.turn) else {
             return;
         };
         self.turn = self.turn.wrapping_add(1);
@@ -375,7 +392,7 @@ impl AudioSampler {
             })
             .map_or(0, |(index, _)| index);
         self.clock += 1;
-        let step = self.step_for(zone, key);
+        let step = self.step_for(zone, pitch);
         let gain = self.playable[zone].gain;
         let voice = &mut self.voices[index];
         // A fresh copy starts from silence; a stolen one starts from where it was, which is what
@@ -405,11 +422,12 @@ impl AudioSampler {
     fn dispatch(&mut self, event: NoteEvent) {
         match event {
             NoteEvent::NoteOn {
-                key: pitch,
+                key,
+                pitch,
                 velocity,
                 ..
-            } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { key: pitch, .. } => self.note_off(pitch),
+            } => self.note_on(key, pitch, velocity),
+            NoteEvent::NoteOff { key, .. } => self.note_off(key),
             NoteEvent::AllNotesOff { .. } => {
                 for voice in &mut self.voices {
                     voice.held = false;
@@ -813,6 +831,52 @@ mod tests {
             (tone(261.63, 0.5), SampleZone::new(SourceId(2), 60)),
             (tone(523.25, 0.8), SampleZone::new(SourceId(3), 72)),
         ])
+    }
+
+    fn retuned(key: u8, pitch: f32) -> NoteEvent {
+        NoteEvent::NoteOn {
+            frame: 0,
+            key,
+            pitch,
+            velocity: 1.0,
+        }
+    }
+
+    #[test]
+    fn a_retuned_note_chooses_and_pitches_its_recording_by_where_it_sounds() {
+        // Key 100 asked to sound a quarter-tone above C4: the C4 recording, not the C5 one the
+        // key is near, pitched up half a semitone.
+        let mut sampler = three_octaves();
+        let out = render(&mut sampler, &[retuned(100, 60.5)], 40);
+        let expected = 261.63 * (0.5f64 / 12.0).exp2();
+        let measured = frequency(&out[4_800..19_200]);
+        assert!(
+            (measured - expected).abs() < 0.5,
+            "{measured} vs {expected}"
+        );
+        assert!((peak(&out[1_000..]) - 0.5).abs() < 0.02);
+        // And its key is what lets it go, not the key of the recording it plays.
+        let held = |sampler: &AudioSampler| sampler.voices.iter().filter(|v| v.held).count();
+        render(&mut sampler, &[NoteEvent::NoteOff { frame: 0, key: 60 }], 1);
+        assert_eq!(held(&sampler), 1);
+        render(
+            &mut sampler,
+            &[NoteEvent::NoteOff { frame: 0, key: 100 }],
+            1,
+        );
+        assert_eq!(held(&sampler), 0);
+    }
+
+    #[test]
+    fn with_key_tracking_off_the_key_still_chooses_the_sound() {
+        // Unpitched, the map names sounds by key — a kit across the keyboard — so a tuning
+        // that moves where key 72 sounds must not move which recording it plays.
+        let mut sampler = three_octaves();
+        sampler.set_param_by_key("key_tracking", 0.0);
+        let out = render(&mut sampler, &[retuned(72, 61.0)], 40);
+        assert!((peak(&out[1_000..]) - 0.8).abs() < 0.02);
+        let measured = frequency(&out[4_800..19_200]);
+        assert!((measured - 523.25).abs() < 1.0, "{measured} Hz");
     }
 
     #[test]
