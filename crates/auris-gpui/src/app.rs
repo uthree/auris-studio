@@ -2069,7 +2069,7 @@ impl AurisApp {
                         // input peak is destroyed by being read, so it has to be read exactly
                         // once, on a tick of a known length, by the one thing that shows it.
                         this.sample_input_level();
-                        this.poll_midi_input();
+                        this.poll_midi_input(cx);
                         this.poll_visualizer();
                         this.poll_physical_view();
                         this.poll_track_grid();
@@ -2846,17 +2846,22 @@ impl AurisApp {
 
     /// Keeps the MIDI keyboards playing the track this window would play.
     ///
-    /// Only the window that holds the audio output listens: a keyboard played into a window that
-    /// is not being heard would be silent, and on Windows an input one program has open cannot be
-    /// opened by another, so two windows asking would leave the second refused. The track is
-    /// the selection, the same one the typing keyboard plays; the session lets a running take
-    /// keep the keyboard on the track it is writing.
-    pub(crate) fn poll_midi_input(&mut self) {
-        let listening =
-            !cfg!(test) && self.settings.midi.enabled && !self.session.audio_suspended();
+    /// One project listens at a time — on Windows an input one program has open cannot be opened
+    /// by another, so two asking would leave the second refused — and it is the one
+    /// [`crate::project_windows::midi_listener`] picks: the project holding the audio output, or
+    /// with none holding it, the one in front. Projects open with their output asleep, so a key
+    /// played into one is what wakes it, the way a key typed on Musical Typing does; the first
+    /// note is lost to the waking, and every one after it is heard. The track is the selection,
+    /// the same one the typing keyboard plays; the session lets a running take keep the keyboard
+    /// on the track it is writing.
+    pub(crate) fn poll_midi_input(&mut self, cx: &mut Context<Self>) {
+        let listening = !cfg!(test) && self.settings.midi.enabled && self.listens_to_midi(cx);
         self.session.set_midi_input(listening);
         if !listening {
             return;
+        }
+        if self.session.take_midi_activity() && self.session.audio_suspended() {
+            self.acquire_audio(cx);
         }
         self.session.set_midi_target(self.selected_track);
         if let Some(name) = self.session.take_opened_midi_inputs().pop() {

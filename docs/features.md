@@ -459,8 +459,9 @@ that was down together, so it can be rolled on rather than struck at once. **→
 the editor the notes go into it; otherwise the first chord makes a clip on the selected track. The
 grid sets the step length, and Musical Typing feeds step input as well as a MIDI keyboard does.
 
-Only the window that is heard listens: with two projects open, the keyboard plays the one holding
-the audio output.
+One project listens at a time: the one holding the audio output, or — since a project opens with
+its output asleep — the one in front, whose output the first key played wakes. That first note is
+spent waking it; everything after it is heard.
 
 ## MIDI files
 
