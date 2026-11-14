@@ -35,7 +35,10 @@ phase's own guidance, tool essentials and technique index come back as
 beside the record rather than inside its `read_report` pages; other record
 updates and project inspections leave them out. The technique index names
 headings of [composition techniques](composition-techniques.md), which
-`search_documentation` returns. Going back to an earlier phase keeps the later
+`search_documentation` returns. When the song's genre and usage are chosen
+(`edit_timeline` `set_style`, stored in the document), the instructions end
+with that genre's and that usage's page under `docs/genres/` and
+`docs/usages/`: its summary and its section for the phase in force. Going back to an earlier phase keeps the later
 phases' work and lists them under `phase.revisit`. `phase.checks` reports the
 unmet structural conditions of the current and earlier phases, read from
 `inspect_project`'s `phase_facts`: sections covering the song, chords in every

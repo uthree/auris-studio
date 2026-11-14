@@ -42,6 +42,8 @@ pub enum Edit {
     ChangeTempo(Ticks),
     /// A tempo change was written somewhere on the timeline.
     SetTempoPoint,
+    /// The song's genre or usage was chosen.
+    SetStyle,
     /// A tempo change was removed, letting the tempo before it run through.
     RemoveTempoPoint,
     /// The time signature of one stretch of the timeline was changed.

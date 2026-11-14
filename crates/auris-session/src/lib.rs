@@ -115,6 +115,8 @@ pub use auris_core::motion::{
     MOTION_BODY, MOTION_MODES, MOTION_PARTIALS, MOTION_POINTS, MOTION_SCOPE, MOTION_VOICES,
     MotionFrame, MotionGeometry, MotionVoice,
 };
+/// A song's genre and usage, re-exported for the presentation crates that word their guidance.
+pub use auris_core::style;
 /// PCM-derived drum measurements, exposed without a frontend DSP dependency.
 pub use auris_dsp::drum_analysis::{AcousticCharacter, DrumAcoustics, DrumSpectrum};
 /// Upper bound on populated groups in a refined library timbre map.

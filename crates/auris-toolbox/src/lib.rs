@@ -36,6 +36,7 @@ pub mod phase_commands;
 pub mod runtime;
 pub mod score_input;
 mod session_tools;
+pub mod styles;
 mod tool_exposure;
 pub mod workshop;
 pub use tool_exposure::{
@@ -318,7 +319,15 @@ pub mod search_documentation {
         }
 
         let mut matches = Vec::new();
-        for (path, document) in DOCUMENTS {
+        let profiles = crate::styles::GENRES
+            .iter()
+            .chain(crate::styles::USAGES)
+            .map(|(_, path, text)| (path, text));
+        for (path, document) in DOCUMENTS
+            .iter()
+            .map(|(path, text)| (path, text))
+            .chain(profiles)
+        {
             let mut heading = "Overview";
             let mut paragraph = String::new();
             for line in document.lines().chain(std::iter::once("")) {

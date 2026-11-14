@@ -2,74 +2,11 @@
 
 ## Musical decisions
 
-Develop a concrete scene and a change in perspective across verses. Give the chorus a concise central thought and a recognizable verbal and melodic hook. Establish a short identity-bearing phrase early, then develop the requested form before repeatedly polishing one passage. For a full song, include a second verse and later chorus/ending; respect requests for a one-chorus demo, excerpt, lyric-only work, duration limit, or local edit. A bridge is optional. Give later verses new words that advance the story, with deliberate phrasing or backing changes. Repeating the first verse's clip does not create a second verse with different lyrics.
+The musical side of a sung line is in the composition techniques that `search_documentation` returns: Lyrics that develop, Japanese lyrics in feet, Vowels on held high notes, Singable range, Motif repetition and development. This page covers what is particular to synthesized singing in Auris.
 
-Compose words and melody together. Place important syllables or Japanese mora on meaningful beats and sustained notes, preserve word boundaries, and leave breaths and singable phrase lengths. Do not fill spare notes with filler syllables or force all words onto an identical grid. Check the selected singer's useful range, leaps, dense consonants, long vowels, readings, and actual note assignments. Passing a fit diagnostic does not establish natural pronunciation or expression.
+Preserve existing words and melody during a local repair, and treat a user-edited project as the new baseline. When repairing intelligibility, keep word groups, mora assignments and rhythmic identity together: uniformly widening every gap or slowing every syllable can remove the intended groove. Compare a local reading, consonant, note-length or phrase-boundary edit with the current take before changing the whole line. A sustained particle can be an explicit preference for one lyric, not a rule for Japanese singing. Passing a fit diagnostic does not establish natural pronunciation or expression. Stop after at most two local revision attempts per issue unless more exploration is requested, and report unresolved issues.
 
-Keep the singer intelligible through accompaniment register, voicing, timing, and space. Prepare section transitions and a real ending unless a loop is requested. Preserve existing words and melody during a local repair. Make targeted corrections supported by evidence; stop after at most two local revision attempts per issue unless more exploration is requested, and report unresolved issues.
-
-When repairing intelligibility, keep word groups, mora assignments and rhythmic identity together. Uniformly widening every gap or slowing every syllable can remove the intended groove. Compare a local reading, consonant, note-length or phrase-boundary edit with the current take before changing the whole line. Preserve the user's chosen grid and held endings; a sustained particle can be an explicit preference for one lyric, not a rule for Japanese singing. Treat a user-edited project as the new baseline and protect its melody during backing-only changes.
-
-## Japanese rhythm: feet, heavy syllables and line endings
-
-You cannot hear the line, so plan its timing on paper and read it back as text. Japanese verse
-and song are timed in two-mora feet (拍; 中道 1980's タクト), which is why 7-5 runs in four beats
-with a rest. `analyze_lyrics` returns each phrase's `feet` (ふる / いけ / や).
-
-- Count feet, not moras. Two moras a beat in eighths at a pop tempo makes each foot one beat,
-  so the foot count is the line's length in beats. A section may change pace on purpose:
-  sixteenths for a rapid verse, long notes for a held chorus line.
-- A one-mora foot is where the line breathes: a pickup into the next beat, a held mora, or a
-  rest beside it. Lone particles suit pickups.
-- Shape the inside of a foot before changing the pace: long-short (dotted eighth and
-  sixteenth) weights a word's first mora, short-long delays it, and a quarter holds it.
-- Keep heavy syllables whole. ん, っ, ー and the い of あい/おい belong to the mora before them;
-  when songs give two moras one note, the pair is almost always such a syllable (窪薗 1999).
-  Group the pair on one note, or give ん its own note. Inside a line, songs hold that note
-  longer than its head about half as often as other moras. Where it falls in the beat is
-  free.
-- Put rests between words, not inside one: マフ・ラー cuts the word apart. Human songs do it
-  about a quarter as often inside words as between them. When the melody wants a breath
-  there, move the line break, re-line the words or lengthen the note before the gap.
-- Close a line by lengthening its last mora or resting after it. Koizumi (1977) describes
-  Japanese songs lengthening a line's first and last moras.
-- Japanese spends a note on every mora, so it needs more notes than English for the same
-  words (金田一 1967). Write
-  fewer words per line instead of filling every subdivision.
-
-Where the host offers `lyric_rhythm`, read it for the lead after the lyrics are written. It
-draws every line on its beat grid (`さ く | ら が | さ い | た -`), and reports moras per
-second, held endings, ん held long inside a line, rests inside a word, and moras under 90 ms that may lose their
-vowel in synthesis. Otherwise, draw the same grid yourself from `read_notes` onsets and
-lengths before synthesis. These are tendencies from studies of Japanese text setting, not
-proof that a line sounds natural. A liked rhythm the user chose overrides them.
-
-## Vowel, register and sustained words
-
-When authoring a new lyric and melody with an exposed high or powerful arrival,
-try a meaningful word sustained on あ /a/ or お /o/ as preferred candidates.
-Identify the vowel actually held in the word, its pitch and duration, and the
-consonant entering it; a kana label alone is not a complete vocal gesture.
-Do not sacrifice the lyric's meaning or natural word boundary for a vowel match.
-
-For ん, prefer a less exposed lower/middle placement or a brief phrase ending
-when that preserves the melodic contour and reading. Keep its mora slot and
-test the following consonant and preceding vowel. Do not assume every ん is
-quiet, forbid a nasal sustain, move every ん downward, or erase it to lengthen
-the preceding vowel. Fixed lyrics and a protected melody take precedence;
-try local timing, articulation or an allowed transposition before proposing a
-lyric change, and identify any remaining conflict.
-
-These are listener-informed authoring preferences, not a universal ranking of
-vowels. Voice, register, intensity and style affect vowel modification:
-[Titze's preliminary classical/belt study](https://vocology.utah.edu/_resources/documents/formant_frequency_shifts_titze.pdf)
-describes style-dependent changes, not a rule for Japanese lyric placement.
-[TUFS's mora-nasal lesson](https://www.coelang.tufs.ac.jp/ja/en/pmod/practical/02-03-01.php)
-explains that ん has its own mora and varies with the following sound; it does
-not prescribe a low pitch. Human singing findings are not validation of a
-synthesis model. Render the actual selected voice, compare the exposed word
-alone and in its phrase/mix, and keep pronunciation, effort and musical
-preference distinct from note-range diagnostics.
+You cannot hear a line, so read its timing as text. Where the host offers `lyric_rhythm`, read it for the lead after the lyrics are written: it draws every line on its beat grid (`さ く | ら が | さ い | た -`) and reports moras per second, held endings, ん held long inside a line, rests inside a word, and moras under 90 ms that may lose their vowel in synthesis. Read `lyric_accent` beside it, and read both again after any edit to the lead's notes. Otherwise draw the same grid yourself from `read_notes` onsets and lengths before synthesis. A liked rhythm the user chose overrides these tendencies.
 
 ## Voice prerequisites
 

@@ -219,6 +219,16 @@ pub enum TimelineOperation {
         /// Absolute nonnegative timeline tick.
         at_tick: i64,
     },
+    /// Choose the song's genre and usage, which the phase guidance and the checks follow.
+    /// Both are replaced: omit one to leave it undecided.
+    SetStyle {
+        /// How the music speaks; omit when none of the genres fits.
+        #[serde(default)]
+        genre: Option<auris_core::style::Genre>,
+        /// What the music has to do: a song, a loop under a game, or a cue under a scene.
+        #[serde(default)]
+        usage: Option<auris_core::style::Usage>,
+    },
 }
 
 impl TimelineOperation {
@@ -270,8 +280,11 @@ impl Session {
             TimelineOperation::RemoveMeter { at_tick } => {
                 self.remove_signature_point(valid_tick(at_tick)?)
             }
+            TimelineOperation::SetStyle { genre, usage } => {
+                self.set_style(auris_core::style::Style { genre, usage })
+            }
         }
-        Ok(serde_json::json!({"tempo_map":self.project().tempo_map,"signatures":self.project().signatures,"min_bpm":TempoMap::MIN_BPM,"max_bpm":TempoMap::MAX_BPM,"revision":self.agent_document_revision()?}).to_string())
+        Ok(serde_json::json!({"style":self.project().style,"tempo_map":self.project().tempo_map,"signatures":self.project().signatures,"min_bpm":TempoMap::MIN_BPM,"max_bpm":TempoMap::MAX_BPM,"revision":self.agent_document_revision()?}).to_string())
     }
     /// Apply an arrangement operation as one atomic Undo step.
     pub fn agent_edit_clip(
@@ -898,6 +911,35 @@ mod tests {
         assert_eq!(session.project(), &after);
         session.undo();
         assert_eq!(session.project(), &before);
+    }
+
+    #[test]
+    fn set_style_replaces_both_axes_and_reports_them() {
+        let (mut session, _, _) = fixture();
+        let set = |genre: serde_json::Value| {
+            serde_json::from_value::<TimelineOperation>(
+                serde_json::json!({"kind":"set_style","genre":genre,"usage":"loop_bgm"}),
+            )
+            .unwrap()
+        };
+        let report: serde_json::Value =
+            serde_json::from_str(&session.agent_edit_timeline(set("chiptune".into())).unwrap())
+                .unwrap();
+        assert_eq!(
+            report["style"],
+            serde_json::json!({"genre":"chiptune","usage":"loop_bgm"})
+        );
+        let only_usage: TimelineOperation =
+            serde_json::from_value(serde_json::json!({"kind":"set_style","usage":"cue"})).unwrap();
+        session.agent_edit_timeline(only_usage).unwrap();
+        assert_eq!(session.project().style.genre, None);
+        assert!(
+            serde_json::from_value::<TimelineOperation>(
+                serde_json::json!({"kind":"set_style","genre":"polka"})
+            )
+            .is_err(),
+            "a genre outside the list is refused"
+        );
     }
 
     #[test]

@@ -53,9 +53,8 @@ changing it. No minimum rest percentage, required number of transformations,
 maximum leap rate or corpus-average range is a pass condition.
 
 Gap and interval metrics from reference MIDI are descriptive
-observations, not preference labels. Research-informed guidance is in the skill's
-[melody reference](../skills/auris-composition/references/melody-design.md) and
-[arrangement reference](../skills/auris-composition/references/arrangement-design.md).
+observations, not preference labels. The composing guidance is in the
+[composition techniques](composition-techniques.md).
 
 This manifest and rubric are evaluation infrastructure. No before/after human
 preference result is implied by adding them or passing their software tests.

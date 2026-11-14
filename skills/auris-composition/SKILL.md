@@ -19,33 +19,34 @@ Use the existing Codex or Claude Code environment and installed Auris tools for 
 
 1. Translate the brief into a short musical contract: purpose, emotional arc, reference-free style words, tempo, key or mode, duration in bars/seconds, instrumentation, loop points, and deliverables. Ask only for missing decisions that materially change the result; otherwise choose conservative defaults and record them.
 2. If an existing project is in scope, inspect it first and use its stable project/track/clip IDs plus any revision fields required by the chosen operation. Add a new cue track or clip when the request is additive; do not replace the project behind the user's back. Check for existing names, occupied ranges, and routing collisions before writing. For an empty score with no clips, `create_project` is sufficient to start; it creates a default instrument track. Use `setup_tracks` when several named tracks should be created atomically.
-3. Convert requested seconds to an integer bar count at the chosen tempo and meter. If (for example) a 45-second loop cannot land exactly on a bar boundary, choose the nearest musical length or adjust tempo and report the tradeoff. Make loop start/end explicit.
+3. Choose the song's genre and usage with `edit_timeline` `set_style`, leaving out one that none of the listed values fits, and read their pages with `search_documentation` (for example "Genre: Jazz" or "Usage: Loop background music"). The phase guidance follows them.
+4. Convert requested seconds to an integer bar count at the chosen tempo and meter. If (for example) a 45-second loop cannot land exactly on a bar boundary, choose the nearest musical length or adjust tempo and report the tradeoff. Make loop start/end explicit.
 
-Then work in three phases. Each phase fixes what the earlier ones decided: change it only by going back to the phase that owns it, because the user asked or a concrete error requires it. A local fix is done in the phase that owns what is being fixed, inside the requested scope. Read [workflow.md](references/workflow.md) when choosing a command. Each phase ends with a short technique index; `search_documentation` (in the MCP and live tool catalogs) with a technique's name returns how to make that move with the Auris tools.
+Then work in three phases. Each phase fixes what the earlier ones decided: change it only by going back to the phase that owns it, because the user asked or a concrete error requires it. A local fix is done in the phase that owns what is being fixed, inside the requested scope. Read [workflow.md](references/workflow.md) when choosing a command. Each phase ends with a short technique index; `search_documentation` (in the MCP and live tool catalogs) with a technique's name returns how to make that move with the Auris tools. The musical guidance lives there, in the installed build's documentation, and not in this skill's references, which cover operating Auris.
 
 ## Phase 1: score
 
 Decide what the song is: form, tempo and meter, key and chords per section, lyrics, the foreground melody, and its voice.
 
 - For a new vocal song, establish lyrics and word groups, then each section's chords and form, before placing clips. An instrumental starts with form and harmony; honor an explicitly motif-first or groove-first brief. Write tempo/meter and named section ranges with their harmony into the document, not only into audible notes.
-- Read [melody-design.md](references/melody-design.md) before writing the foreground. Establish a short identity-bearing phrase and its intended landing before expanding the form; a scale or chord-tone list alone is not a melodic plan. Make the chorus arrive: higher on average than the section before it, the song's highest notes, a hook that leaps.
+- Before writing the foreground, look up Pitch skeleton, Phrase contour and climax, and Motif repetition and development with `search_documentation`. Establish a short identity-bearing phrase and its intended landing before expanding the form; a scale or chord-tone list alone is not a melodic plan. Make the chorus arrive: higher on average than the section before it, the song's highest notes, a hook that leaps.
 - Use `read_notes` before `edit_notes`. Choose pitch, onset, duration and velocity yourself for the melody. Do not use rule-based melody generators, procedural note-writing scripts or frozen recipes as a substitute. Code may serialize explicitly authored notes or copy an authored motif.
 - For songs with lyrics or synthesized singing, read [vocals.md](references/vocals.md) before writing. It covers lyric/melody fit, complete song form, voice prerequisites, synthesis and checking every sung section. Sing the melody in this phase, so the demo can be judged with its words.
 - Add one plain guide part (piano or pad chords) so the score can be heard.
 - Done when sections cover the song, every section has harmony, the foreground is written, and every sung section has a current take. For a new song, offer the demo to the user before arranging unless they asked for everything at once.
 
-Techniques: Section roles; Chorus lift; Motif repetition and development; The chorus hook in the intro; Drop chorus (落ちサビ); Last-chorus key change (ラスサビ転調); Singable range.
+Techniques: Section roles; Pitch skeleton; Phrase contour and climax; Chorus lift; Motif repetition and development; Lyrics that develop; The chorus hook in the intro; Drop chorus (落ちサビ); Last-chorus key change (ラスサビ転調); Singable range.
 
 ## Phase 2: arrangement
 
 Dress the fixed score: sounds, backing parts, drums, performance and transitions. The foreground's notes, lyrics and timing, the harmony, the sections and the tempo map stay as the score left them.
 
-- Follow [arrangement.md](references/arrangement.md) and [arrangement-design.md](references/arrangement-design.md). Perform a deliberate arrangement pass even when generators have already written backing; a generated accompaniment is a starting point, not proof the pass is complete.
+- Follow [arrangement.md](references/arrangement.md). Perform a deliberate arrangement pass even when generators have already written backing; a generated accompaniment is a starting point, not proof the pass is complete.
 - Choose each track's sound for its role. Decide which parts support or answer the foreground, give each part its own register, introduce purposeful entrances, exits and handoffs, add SFX only when they serve the scene or transition, and shape section contrasts and transitions.
 - `generate_phrase` writes a take of any part (a lead on a singer track too), started from `settings` such as `density`, a pitch `range`, a grid `rhythm` and `swing`; read what it wrote and edit it note by note where the song needs something else. Use performance controls for feel without rewriting notes. Typed notes play exactly on the grid until a performance stage moves them: give every part you wrote, the foreground included, a starting feel from `performance_presets` (list it with the clip for a `suggested_preset`) and tune it from there. Swing is the song's feel, not seasoning: a straight song stays straight, and a swung song swings every part alike, vocal included.
 - Apply justified changes, read them back, and compare affected passages with the earlier version. Replace or remove the guide part. If the arrangement already serves the brief, record the concrete reasons instead of forcing changes. A rough fader balance is fine here; processing belongs to the mix.
 
-Techniques: Part roles and registers; Voicings out of the voice; Kick and bass together; Fills and crashes at transitions; Build-up and break; More in verse 2; Copy, then vary; Performance controls; Generated takes are drafts.
+Techniques: Part roles and registers; Role palettes; Subtract before adding; Voicings out of the voice; Bass and inner voices; Kick and bass together; Fills and crashes at transitions; Build-up and break; More in verse 2; Copy, then vary; Performance controls; Generated takes are drafts.
 
 ## Phase 3: mix and delivery
 

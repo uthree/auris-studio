@@ -289,6 +289,12 @@ pub struct Project {
     /// Music-linter findings this song has chosen to ignore.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lint_suppressions: Vec<LintSuppression>,
+    /// The song's genre and usage, which the guidance and the checks follow.
+    ///
+    /// Beside the brief because it is the same kind of fact: what the song is meant to be. A new
+    /// field, so a file from before it opens undecided, and is read exactly as it was.
+    #[serde(default, skip_serializing_if = "crate::style::Style::is_unset")]
+    pub style: crate::style::Style,
     next_id: u64,
 }
 
@@ -356,6 +362,7 @@ impl Project {
             creation_brief: None,
             transcription_provenance: BTreeMap::new(),
             lint_suppressions: Vec::new(),
+            style: crate::style::Style::default(),
             next_id: 1,
         }
     }
