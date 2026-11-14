@@ -175,6 +175,7 @@ pub use session::{
     DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneView, detect_pitch, parse_root_note,
 };
 pub use session::{ENVELOPE_PITCHES, SoundEnvelope};
+pub use session::{RecordQuantize, record_quantized};
 pub use session::{prepare_looping_output_preview, prepare_output_preview};
 pub mod workshop;
 pub use session::{

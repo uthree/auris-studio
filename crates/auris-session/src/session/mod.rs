@@ -179,7 +179,7 @@ pub use singer::{
 pub use song_sources::PartSource;
 pub use spectrogram::{RenderedSpectrogramJob, SpectrogramJob};
 
-pub use note_take::NoteRecordMode;
+pub use note_take::{NoteRecordMode, RecordQuantize, record_quantized};
 pub use record::{
     Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport, input_level_of,
 };
@@ -648,6 +648,8 @@ pub struct Session {
     step_input: Option<step_input::StepInput>,
     /// What a note take does with what was already there. See [`note_take`].
     note_record_mode: NoteRecordMode,
+    /// How a note take's notes are pulled to the grid, if they are. See [`note_take`].
+    record_quantize: Option<RecordQuantize>,
 
     /// Third-party CLAP plugins the document names.
     ///
@@ -845,6 +847,7 @@ impl Session {
             midi: midi_input::MidiInput::default(),
             step_input: None,
             note_record_mode: NoteRecordMode::default(),
+            record_quantize: None,
             take: None,
             japanese: None,
             shipped_dictionary: options.shipped_dictionary,

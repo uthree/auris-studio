@@ -67,6 +67,29 @@ pub enum NoteRecordMode {
     Replace,
 }
 
+/// How a take's notes are pulled towards a grid as they are written down.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecordQuantize {
+    /// The grid, in ticks.
+    pub grid: Ticks,
+    /// How far each note moves towards its nearest line: 0 leaves it where it was played, 1
+    /// puts it on the line.
+    pub strength: f32,
+}
+
+/// Where a note struck at `tick` is written, under `quantize`.
+///
+/// The nearest line of the grid, either way, approached by `strength` of the distance. Measured
+/// on the timeline rather than from the clip's start, because a take's clip begins wherever the
+/// first note was played and the grid does not.
+pub fn record_quantized(tick: Ticks, quantize: RecordQuantize) -> Ticks {
+    let grid = Ticks(quantize.grid.raw().max(1));
+    let line = tick.max_zero().snap_nearest(grid);
+    let strength = f64::from(quantize.strength.clamp(0.0, 1.0));
+    let moved = (line.raw() - tick.raw()) as f64 * strength;
+    Ticks(tick.raw() + moved.round() as i64)
+}
+
 /// A note struck and not yet released: pitch, velocity, where struck, which pass.
 type Held = (u8, f32, f64, usize);
 
@@ -258,6 +281,19 @@ impl Session {
         self.note_record_mode
     }
 
+    /// How a note take's notes are pulled to the grid, if they are.
+    pub fn record_quantize(&self) -> Option<RecordQuantize> {
+        self.record_quantize
+    }
+
+    /// Chooses how the next note take's notes are pulled to the grid, or that they are not.
+    ///
+    /// Applied when the take is written, never to the notes afterwards: a take that comes out
+    /// too stiff is undone and played again, or quantised by hand to a gentler strength.
+    pub fn set_record_quantize(&mut self, quantize: Option<RecordQuantize>) {
+        self.record_quantize = quantize;
+    }
+
     /// Chooses what the next note take does with what was there before it.
     ///
     /// A preference of the person recording, kept in their settings rather than the song:
@@ -441,6 +477,7 @@ impl Session {
             dropped_frames: 0,
         };
         let mode = self.note_record_mode;
+        let quantize = self.record_quantize;
         let parts = take_parts(&take, end, end_pass, mode);
         if parts.is_empty() || self.project.track(take.track).is_none() {
             return Ok(nothing(take.track));
@@ -456,7 +493,7 @@ impl Session {
         let mut takes = Vec::new();
         for part in &parts {
             let Some((clip_start, clip_end, notes)) =
-                written_notes(&part.notes, part.start, part.end, to_ticks)
+                written_notes(&part.notes, part.start, part.end, quantize, to_ticks)
             else {
                 continue;
             };
@@ -781,10 +818,14 @@ pub(crate) fn written_curve(
 /// played during the count, and never before the song; it ends where the part ended or the last
 /// note did, whichever is later. A note shorter than a tick is a tick, so a key tapped as fast as
 /// a keyboard can report still writes something that can be seen and heard.
+///
+/// With `quantize`, each note's start is pulled towards the grid and its end moves with it, so it
+/// keeps the length it was held for.
 pub(crate) fn written_notes(
     played: &[(u8, f32, f64, f64)],
     start: f64,
     end: f64,
+    quantize: Option<RecordQuantize>,
     to_ticks: impl Fn(f64) -> Ticks,
 ) -> Option<(Ticks, Ticks, Vec<Note>)> {
     if played.is_empty() {
@@ -799,19 +840,26 @@ pub(crate) fn written_notes(
         .iter()
         .map(|note| note.3)
         .fold(end.max(start), f64::max);
-    let clip_start = to_ticks(earliest);
-    let mut notes: Vec<Note> = played
+    // Where each note lands on the timeline: struck, held for, pitch and velocity.
+    let placed: Vec<(Ticks, i64, u8, f32)> = played
         .iter()
         // A note that ended before the song began was played to nothing that is written down.
         .filter(|note| note.3 > 0.0 || note.2 >= 0.0)
         .map(|&(pitch, velocity, struck, released)| {
             let on = to_ticks(struck.max(0.0));
-            let off = to_ticks(released.max(0.0));
-            let mut note = Note::new(
-                pitch,
-                Ticks(on.raw() - clip_start.raw()),
-                Ticks((off.raw() - on.raw()).max(1)),
-            );
+            let held = (to_ticks(released.max(0.0)).raw() - on.raw()).max(1);
+            let on = quantize.map_or(on, |quantize| record_quantized(on, quantize));
+            (on, held, pitch, velocity)
+        })
+        .collect();
+    let clip_start = placed
+        .iter()
+        .map(|note| note.0)
+        .fold(to_ticks(earliest), Ticks::min);
+    let mut notes: Vec<Note> = placed
+        .iter()
+        .map(|&(on, held, pitch, velocity)| {
+            let mut note = Note::new(pitch, Ticks(on.raw() - clip_start.raw()), Ticks(held));
             note.velocity = velocity.clamp(0.0, 1.0);
             note
         })
@@ -820,7 +868,12 @@ pub(crate) fn written_notes(
         return None;
     }
     notes.sort_by_key(|note| (note.start, note.pitch));
-    let clip_end = to_ticks(latest).max(Ticks(clip_start.raw() + 1));
+    let last_end = placed
+        .iter()
+        .map(|note| note.0.raw() + note.1)
+        .max()
+        .unwrap_or(0);
+    let clip_end = Ticks(to_ticks(latest).raw().max(last_end)).max(Ticks(clip_start.raw() + 1));
     Some((clip_start, clip_end, notes))
 }
 
@@ -842,7 +895,7 @@ mod tests {
     ) -> Option<(Ticks, Ticks, Vec<Note>)> {
         let parts = take_parts(take, end, 0, NoteRecordMode::Takes);
         let part = parts.first()?;
-        written_notes(&part.notes, part.start, part.end, to_ticks)
+        written_notes(&part.notes, part.start, part.end, None, to_ticks)
     }
 
     fn take(start: f64, played: &[(u8, f64, f64)]) -> NoteTake {
@@ -1080,6 +1133,56 @@ mod tests {
     fn a_wheel_left_at_rest_writes_no_curve() {
         let moves = [(100.0, 0.0), (200.0, 0.0)];
         assert!(written_curve(&moves, Ticks(0), Ticks(1_000), one_to_one).is_empty());
+    }
+
+    #[test]
+    fn quantising_pulls_a_note_towards_its_nearest_line_by_the_strength() {
+        let full = RecordQuantize {
+            grid: Ticks(240),
+            strength: 1.0,
+        };
+        assert_eq!(record_quantized(Ticks(250), full), Ticks(240));
+        assert_eq!(record_quantized(Ticks(470), full), Ticks(480));
+        let half = RecordQuantize {
+            strength: 0.5,
+            ..full
+        };
+        assert_eq!(record_quantized(Ticks(260), half), Ticks(250));
+        let none = RecordQuantize {
+            strength: 0.0,
+            ..full
+        };
+        assert_eq!(record_quantized(Ticks(260), none), Ticks(260));
+    }
+
+    #[test]
+    fn a_quantised_take_keeps_how_long_each_note_was_held() {
+        let quantize = Some(RecordQuantize {
+            grid: Ticks(100),
+            strength: 1.0,
+        });
+        let played = [(60, 0.7, 1_030.0, 1_110.0), (62, 0.7, 1_190.0, 1_260.0)];
+        let (start, _, notes) =
+            written_notes(&played, 1_000.0, 1_300.0, quantize, one_to_one).unwrap();
+        assert_eq!(start, Ticks(1_000));
+        let got: Vec<(i64, i64)> = notes
+            .iter()
+            .map(|note| (note.start.raw(), note.length.raw()))
+            .collect();
+        assert_eq!(got, vec![(0, 80), (200, 70)]);
+    }
+
+    #[test]
+    fn a_note_pulled_before_the_take_began_moves_the_clip_with_it() {
+        let quantize = Some(RecordQuantize {
+            grid: Ticks(100),
+            strength: 1.0,
+        });
+        let played = [(60, 0.7, 1_020.0, 1_100.0)];
+        let (start, _, notes) =
+            written_notes(&played, 1_020.0, 1_200.0, quantize, one_to_one).unwrap();
+        assert_eq!(start, Ticks(1_000));
+        assert_eq!(notes[0].start, Ticks(0));
     }
 
     #[test]
