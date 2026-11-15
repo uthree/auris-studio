@@ -620,25 +620,30 @@ mod tests {
             // with a figure in it. The ceiling is here to catch a pad that never changes at all,
             // which is what it used to do, and not to demand one that changes a lot.
             ClipPreset::Pad => 0.92,
-            // A kit follows its groove, and the groove is the part somebody chose. These
-            // ceilings used to be 0.75 and 0.85, and they were only that low because the kit was
-            // being *sampled* rather than played: a third of the hits the groove asked for were
-            // dropped at the neutral dial, and it was that dropping — not any musical decision —
-            // that made one take differ from the next. The pattern as spelled now always plays,
-            // so what still makes two takes different is the ghosts and the fills. Measured now:
-            // kit 85 %, snare 89, hat 79.
-            ClipPreset::Drums => 0.90,
-            // One drum voice on its own has less room still. A lone snare is a backbeat, and a
-            // backbeat played differently is a different groove rather than another take of this
-            // one. The ceiling is here to catch a voice that never changes at all, not to demand
-            // one that changes as much as a melody.
-            ClipPreset::Snare | ClipPreset::Hat => 0.92,
-            // And the kick has no room left. Its lines in the shipped grooves spell hits and
-            // never ghosts, and the pattern as spelled always plays — so another take of a lone
-            // kick *is* the same line, honestly. What used to differ between takes was which of
-            // its hits were dropped, and that was sampling error wearing variety's clothes.
-            // There is nothing here for a ceiling to catch.
-            ClipPreset::Kick => f32::INFINITY,
+            // A kit follows its groove, and the groove is the part somebody chose. This ceiling
+            // has been 0.75 and then 0.90, and each time it was only that low because the kit
+            // was being *sampled* rather than played: first a third of the hits the groove asked
+            // for were dropped at the neutral dial, then four in ten of the hat's offbeats,
+            // spelled as ghosts, were dropped in a verse. It was that dropping — not any musical
+            // decision — that made one take differ from the next. The pattern as spelled now
+            // plays whole, and what tells two takes apart is what a drummer would vary: the one
+            // stroke the second bar of the cell answers the first with, and how the last bar
+            // fills. Measured: kit 93 %, snare 66, kick 97. The ceilings are here to catch a
+            // voice that never changes at all, not to demand one that changes as much as a
+            // melody — a backbeat played differently is a different groove rather than another
+            // take of this one.
+            ClipPreset::Drums => 0.97,
+            ClipPreset::Snare => 0.92,
+            // A lone kick answers with a kick on the one offbeat eighth basic-rock leaves free,
+            // or with nothing, so two takes of it are the same line half the time.
+            ClipPreset::Kick => 0.995,
+            // And the hat has no room at all. It is the pulse: its line spells strokes and
+            // never ghosts, the pattern as spelled always plays, and it has no answer because
+            // it is what an answer is heard against — so another take of a lone hat *is* the
+            // same line, honestly. What used to differ between takes was which of its strokes
+            // were dropped, and that was sampling error wearing variety's clothes. There is
+            // nothing here for a ceiling to catch.
+            ClipPreset::Hat => f32::INFINITY,
             _ => 0.55,
         };
         // Every offender, not the first: with ten presets a stop at the first hides the rest, and

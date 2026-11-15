@@ -72,11 +72,14 @@ the top of the dial a pitched note sounds within six milliseconds of where it is
 whatever tempo the piece is playing, and the kit keeps only its constant lean, because a drummer
 holding the time is what everybody else is loose against.
 
-A kit reads the density around the middle, and the middle **plays the groove**: a beat is never
-thinned there, a weak sixteenth sometimes is, and a quiet section thins further. Below the middle
-the groove thins from its weakest hits upward and never loses a downbeat; above it the steps the
-groove left empty start taking ghost notes — which is how a drummer gets busier without playing
-something else. *Which* rhythm it plays is
+A kit reads the density around the middle, and the middle **plays the groove** as it is spelled:
+every stroke of it in every bar, with only a snare's ghost notes coming and going with how hard
+the section is played. Below the middle the groove thins from its finest strokes upward —
+sixteenths, then offbeat eighths, then the beats — and never loses a downbeat or a backbeat;
+above it the steps the groove left empty start filling in, with ghosts on the snare, the strokes
+between its strokes on the hat and an offbeat kick. Whatever the dial takes or adds, it does
+over two bars and then again, so a sparser or a busier groove is still a groove — which is how a
+drummer gets busier without playing something else. *Which* rhythm it plays is
 still the groove picker, and that is a choice from a drummer's own vocabulary rather than a
 number: `basic-rock`, `eight-beat`, `sixteen-beat`, `four-on-the-floor`, `shuffle`, `breakbeat`,
 `bossa-nova`, `half-time` and `sparse`.

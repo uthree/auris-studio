@@ -269,8 +269,9 @@ pub struct ClipRecipe {
     pub seed: u64,
     /// How busy it is, from 0 for sparse to 1 for a wall of notes.
     ///
-    /// A kit reads it too, around the middle: below, the groove thins from its weakest hits
-    /// upward, and above, the steps it left empty start filling in with ghost notes. *Which*
+    /// A kit reads it too, around the middle: below, the groove thins from its finest strokes
+    /// upward and never loses its backbeat, and above, the steps it left empty start filling
+    /// in — ghosts on a snare, the strokes between its strokes on a hat. *Which*
     /// rhythm a kit plays is still its [`groove`](Self::groove) — that is a choice from a
     /// drummer's own vocabulary and not a number — and this is how hard the drummer is leaning
     /// on it.

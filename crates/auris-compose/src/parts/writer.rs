@@ -396,8 +396,15 @@ mod tests {
         // their own level, and every lead by a quarter. A stroke varying is a player phrasing; a
         // level varying by half is a player missing.
         //
-        // A sixth, which is a little over the ten per cent this was aimed at: the parts that reach
-        // it are the ghosted grooves, where the quiet strokes are quiet on purpose.
+        // A sixth, which is a little over the ten per cent this was aimed at.
+        //
+        // A ghost is left out of the count, because it is the one stroke that is quiet on
+        // purpose: a different stroke, at about half a full one, and not a full one that came
+        // out soft. What the complaint was about is strokes of one kind coming out at different
+        // levels, and no hat is spelled with a ghost for exactly that reason. So a kit voice is
+        // measured over the strokes its groove spells in full, which leaves out the ghosts the
+        // groove spells, the one a snare answers its own bar with, and the fill — a rise is not
+        // an unevenness either.
         for groove in ["basic-rock", "eight-beat", "sixteen-beat", "bossa-nova"] {
             for seed in 0..4u64 {
                 let mut song = Song {
@@ -406,7 +413,18 @@ mod tests {
                     ..Song::default()
                 };
                 song.settings.groove = groove.to_string();
-                for draft in song.draft().1 {
+                let (frame, parts) = song.draft();
+                for (mut draft, declared) in parts.into_iter().zip(&song.parts) {
+                    if let Some(voice) = declared.role.drum_voice() {
+                        let pattern = crate::frame::groove_pattern(groove, voice);
+                        draft.notes.retain(|note| {
+                            let step = frame.grid.step_of(note.start) % frame.grid.steps_per_bar();
+                            matches!(
+                                pattern.at(step),
+                                Some(crate::rhythm::Accent::Normal | crate::rhythm::Accent::Strong)
+                            )
+                        });
+                    }
                     let spread = stroke_spread(&draft);
                     assert!(
                         spread < 0.16,

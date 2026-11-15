@@ -1707,11 +1707,14 @@ mod tests {
         // "another take" is always 1 to 2. If that one pair happened to write the same notes the
         // button would look broken however well every other seed behaved.
         //
-        // The kick is the honest exception. Its text at the default dials is the groove spelled
-        // out, with nothing left to the seed — the difference two takes of it used to show was
-        // the baked wobble, which was noise wearing a take's name and lives on the performance
-        // stack now. What its take still changes is the wander's seed, asserted below for the
-        // presets that carry one.
+        // The hat is the honest exception. Its text at the default dials is the groove spelled
+        // out, with nothing left to the seed: it is the pulse, and the one thing a take of a kit
+        // chooses — what the second bar of the cell answers the first with — is heard against
+        // it. The difference two takes of it used to show was which of its strokes were dropped,
+        // which was noise wearing a take's name. A lone kick has one answer and may or may not
+        // take it, so two takes of it are the same line half the time and nothing is asserted
+        // of it either way. What every take still changes is the wander's seed, asserted below
+        // for the presets that carry one.
         for preset in ClipPreset::ALL {
             let (mut session, track) = if preset.is_drums() {
                 let (mut session, _) = with_a_progression();
@@ -1728,8 +1731,11 @@ mod tests {
 
             session.reroll_clip(clip).unwrap();
             let after = session.project().midi_clip(clip).unwrap().1.clone();
+            if preset == ClipPreset::Hat {
+                assert_eq!(first, after.notes, "the hat's pulse is not the seed's");
+                continue;
+            }
             if preset == ClipPreset::Kick {
-                assert_eq!(first, after.notes, "the kick's groove is not the seed's");
                 continue;
             }
             assert_ne!(
