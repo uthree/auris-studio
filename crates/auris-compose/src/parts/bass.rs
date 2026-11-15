@@ -120,8 +120,8 @@ fn pick_figure(rng: &mut Rng, busy: f32, style: Option<PerformanceStyle>) -> Bas
         // rock score corpus play, where every one but the root-and-fifth pair used to be as
         // likely as its dial made it. The walk is an idiom of its own: quarter notes through
         // the third over a kit playing a backbeat is a jazz player sitting in, and a take
-        // nobody asked for. The held root was one take in seven, and two of the corpus's
-        // intervals in a hundred are a bar long. The octave figure was one take in four and
+        // nobody asked for. The held root was one take in six, and two of the corpus's
+        // intervals in a hundred are a bar long. The octave figure was one take in five and
         // put an octave leap into 15 intervals in a hundred, where the corpus leaps one in
         // five. And the pulse is the line those scores play most: 46 of their intervals in a
         // hundred are an eighth apart and 42 are the same note again, where these takes had
