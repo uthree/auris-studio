@@ -172,6 +172,25 @@ pub(super) fn bar_stream(
     Rng::stream(frame.seed, &path)
 }
 
+/// Where a note lets go when the note after it is syncopated, as a step of the bar: the last
+/// beat before that note, or `None` to hold into it.
+///
+/// Measured on the bass, where there was something to measure against: a line that held every
+/// note into the next was sounding all of the time, where the bass lines of a pop and rock
+/// score corpus sound for 87 hundredths of it, and where they rest is here — a note a dotted
+/// quarter from the next is followed by a rest half the time, one an eighth from it one time in
+/// seven. Letting go on the beat is what makes the hit after it a push rather than a slur, and
+/// over a backbeat it is also the part leaving the snare its beat. The comp lets go by the same
+/// rule, because the push it makes room for is the same push.
+pub(super) fn lift_before(grid: Grid, here: usize, next: usize) -> Option<usize> {
+    if grid.weight(next) > 1 {
+        return None;
+    }
+    let beat = grid.steps_per_beat().max(1);
+    let boundary = next / beat * beat;
+    (boundary > here).then_some(boundary)
+}
+
 /// Picks the onsets of one bar, either from a written rhythm or by rolling one.
 ///
 /// The roll leans on the metric hierarchy: a strong step is far likelier to carry a note than a

@@ -18,7 +18,7 @@
 //!
 //! One file per role — `melody`, `comp`, `arp`, `bass` and `drums` — because not one of them
 //! calls another. They are spokes, and somebody reading how a bass line is built should not have
-//! to read the drummer to do it. What they do all read is `writer`, the seven helpers they share
+//! to read the drummer to do it. What they do all read is `writer`, the eight helpers they share
 //! and nothing else, and `crate::fixture`, which is the same arrangement for what their tests are
 //! written against. The parts that sound a chord — the comp, the pad and the arpeggio — read
 //! `voicing` as well, for which notes that is.

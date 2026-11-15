@@ -10,14 +10,14 @@ use auris_core::time::Ticks;
 
 use crate::PerformanceStyle;
 use crate::frame::{Frame, SectionPlan};
-use crate::rhythm::{DrumVoice, Grid};
+use crate::rhythm::DrumVoice;
 use crate::rng::Rng;
 use crate::spec::PartSpec;
 use crate::theory::chord::Chord;
 use crate::theory::chord_scale::ChordScale;
 use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 
-use super::writer::{bar_stream, density, part_grid, phrase_shape, velocity};
+use super::writer::{bar_stream, density, lift_before, part_grid, phrase_shape, velocity};
 use super::{Draft, ScoreSettings};
 
 /// The octave a bass leaps to from `root`, staying inside `low..=high`.
@@ -249,23 +249,6 @@ const PICKUP_EVERY: usize = 2;
 
 /// How many takes pick up. The rest play the figure plain, which is a line too.
 const PICKUP: f32 = 0.6;
-
-/// Where a note lets go when the note after it is syncopated, as a step of the bar: the last
-/// beat before that note, or `None` to hold into it.
-///
-/// A bass that held every note into the next was sounding all of the time, where the corpus
-/// lines sound for 87 hundredths of it, and where they rest is here: a note a dotted quarter
-/// from the next is followed by a rest half the time, one an eighth from it one time in seven.
-/// Letting go on the beat is what makes the hit after it a push rather than a slur — and over
-/// a backbeat it is also the bass leaving the snare its beat.
-fn lift_before(grid: Grid, here: usize, next: usize) -> Option<usize> {
-    if grid.weight(next) > 1 {
-        return None;
-    }
-    let beat = grid.steps_per_beat().max(1);
-    let boundary = next / beat * beat;
-    (boundary > here).then_some(boundary)
-}
 
 /// The bass line.
 ///
@@ -660,7 +643,7 @@ mod tests {
 
     #[test]
     fn a_note_lets_go_on_the_beat_before_a_syncopated_hit() {
-        let grid = Grid::default();
+        let grid = crate::rhythm::Grid::default();
         assert_eq!(
             lift_before(grid, 0, 6),
             Some(4),
