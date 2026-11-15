@@ -913,6 +913,9 @@ impl SettingsWindow {
                         }
                         atelier::TextInputEvent::Submit => this.save_theme_editor(cx),
                         atelier::TextInputEvent::Cancel => this.appearance_editor = None,
+                        // Completion keys reach an input only while `set_completing` says candidates are
+                        // open, which none of these does.
+                        _ => {}
                     }
                     cx.notify();
                 },
