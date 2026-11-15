@@ -441,13 +441,20 @@ pub const GROOVE_STEPS_PER_BEAT: usize = 4;
 ///
 /// Quoted rather than derived: these are the patterns a kit actually plays, and the whole value of
 /// naming one is that it comes out sounding like itself.
+///
+/// No hat is spelled with a ghost. A ghost is an ornament — the kit plays fewer of them as a
+/// section cools, and strikes the ones it keeps at about half a full stroke — and a timekeeper's
+/// in-between strokes are neither: they are the pulse the rest of the band counts by. Spelled as
+/// ghosts, a verse lost four in ten of basic-rock's offbeat eighths, which is not a quieter hat
+/// but a hat with holes in it. The grid's own hierarchy already strikes them a little softer
+/// than the beats.
 pub const GROOVES: &[Groove] = &[
     Groove {
         name: "basic-rock",
         description: "Four on the snare's two and four, eighths on the hat",
         kick: "x ~ ~ ~ ~ ~ x ~ ~ ~ x ~ ~ ~ ~ ~",
         snare: "~ ~ ~ ~ X ~ ~ ~ ~ ~ ~ ~ X ~ ~ ~",
-        hat: "x ~ o ~ x ~ o ~ x ~ o ~ x ~ o ~",
+        hat: "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~",
         swing: 50,
         steps_per_beat: 4,
     },
@@ -465,7 +472,7 @@ pub const GROOVES: &[Groove] = &[
         description: "Busier hats and a syncopated kick",
         kick: "x ~ ~ x ~ ~ x ~ ~ ~ x ~ x ~ ~ ~",
         snare: "~ ~ ~ ~ X ~ ~ o ~ ~ ~ ~ X ~ o ~",
-        hat: "x o x o x o x o x o x o x o x o",
+        hat: "x x x x x x x x x x x x x x x x",
         swing: 50,
         steps_per_beat: 4,
     },
@@ -483,7 +490,7 @@ pub const GROOVES: &[Groove] = &[
         description: "A swung eight-beat",
         kick: "x ~ ~ ~ ~ ~ x ~ x ~ ~ ~ ~ ~ ~ ~",
         snare: "~ ~ ~ ~ X ~ ~ ~ ~ ~ ~ ~ X ~ ~ ~",
-        hat: "x ~ o ~ x ~ o ~ x ~ o ~ x ~ o ~",
+        hat: "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~",
         swing: 66,
         steps_per_beat: 4,
     },
@@ -532,7 +539,7 @@ pub const GROOVES: &[Groove] = &[
         description: "Two dotted beats, with the hat counting the eighths between them",
         kick: "x ~ ~ ~ ~ ~",
         snare: "~ ~ ~ X ~ ~",
-        hat: "x o o x o o",
+        hat: "x x x x x x",
         swing: 50,
         steps_per_beat: 3,
     },
@@ -541,7 +548,7 @@ pub const GROOVES: &[Groove] = &[
         description: "The 12/8 shuffle: a backbeat under a ride that skips",
         kick: "x ~ ~ ~ ~ ~ x ~ ~ ~ ~ ~",
         snare: "~ ~ ~ X ~ ~ ~ ~ ~ X ~ ~",
-        hat: "x ~ o x ~ o x ~ o x ~ o",
+        hat: "x ~ x x ~ x x ~ x x ~ x",
         swing: 50,
         steps_per_beat: 3,
     },

@@ -473,6 +473,20 @@ impl Job {
                         return Err("Use the generation part's seed, not settings.seed".into());
                     }
                     part.settings.apply(&mut recipe)?;
+                    // A bass follows the kick of the groove its recipe names, so one that names
+                    // none takes the kit's: the kit this request writes, or else the one
+                    // already under its range.
+                    if preset == ClipPreset::Bass && part.settings.groove.is_none() {
+                        let requested = parts
+                            .iter()
+                            .filter(|other| other.part.preset().is_drums())
+                            .find_map(|other| other.settings.groove.clone());
+                        if let Some(groove) = requested.or_else(|| {
+                            crate::session::generated::drum_groove_under(&self.project, start, end)
+                        }) {
+                            recipe.groove = groove;
+                        }
+                    }
                     if let Some(map) =
                         auris_core::project::DrumMap::load(&instrument.instrument_state)
                     {

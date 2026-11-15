@@ -445,11 +445,12 @@ mod tests {
     fn two_parts_written_together_are_two_different_takes() {
         // Seeded from one number and stepped, so a bass and a comp are not the same figure twice
         // — and so that pressing it again with the same seed gives the same band back.
-        let (mut session, _, clip) = with_a_melody();
-        let report = session
-            .accompany(clip, &[ClipPreset::Bass, ClipPreset::Bass], 7)
-            .unwrap();
-        let notes_of = |session: &Session, track: TrackId| {
+        //
+        // Over several seeds, because a bass draws one figure from six for the whole of a clip
+        // and two draws will sometimes agree: that is honest variance, and over a tune this
+        // short there is nothing else for two takes to differ by. What must not happen is two
+        // parts sharing a seed, which would agree every time.
+        let recipe_and_notes = |session: &Session, track: TrackId| {
             let id = session
                 .project()
                 .track(track)
@@ -459,11 +460,28 @@ mod tests {
                 .unwrap()
                 .clips[0]
                 .id;
-            session.midi_clip(id).unwrap().notes.clone()
+            let clip = session.midi_clip(id).unwrap();
+            (clip.recipe.as_ref().unwrap().seed, clip.notes.clone())
         };
-        assert_ne!(
-            notes_of(&session, report.parts[0]),
-            notes_of(&session, report.parts[1])
+        let mut different = 0;
+        for seed in 1..=8u64 {
+            let (mut session, _, clip) = with_a_melody();
+            let report = session
+                .accompany(clip, &[ClipPreset::Bass, ClipPreset::Bass], seed)
+                .unwrap();
+            let (first_seed, first) = recipe_and_notes(&session, report.parts[0]);
+            let (second_seed, second) = recipe_and_notes(&session, report.parts[1]);
+            assert_ne!(
+                first_seed, second_seed,
+                "two parts were written from one seed"
+            );
+            if first != second {
+                different += 1;
+            }
+        }
+        assert!(
+            different >= 5,
+            "only {different} of eight pairs of bass lines differ"
         );
     }
 

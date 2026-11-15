@@ -186,6 +186,17 @@ impl Session {
         }
         let length = Ticks(length.raw().max(1));
         let mut recipe = recipe;
+        // A bass locks to the kick of the groove its own recipe names: no part reads another's
+        // notes. A recipe fresh from the preset names the default groove, so over a kit playing
+        // any other the bass followed a kick nobody was striking. Taken once, when the clip is
+        // made, and kept in its recipe where it can be read and changed: writing the clip
+        // again never goes looking for a different kit.
+        if recipe.preset == auris_core::ClipPreset::Bass
+            && recipe.groove == ClipRecipe::new(recipe.preset, 0).groove
+            && let Some(groove) = drum_groove_under(&self.project, start, start + length)
+        {
+            recipe.groove = groove;
+        }
         if let Some(map) = self.project.tracks[index]
             .kind
             .as_instrument()
@@ -742,6 +753,36 @@ fn update_kit_dials(previous: &ClipRecipe, next: &mut ClipRecipe) {
                 .wrapping_add(next.seed.wrapping_sub(previous.seed));
         }
     }
+}
+
+/// The groove of the generated kit most of `start..end` is played over, for a bass to follow.
+///
+/// A kit somebody typed by hand has no recipe and names no groove; the bass keeps its own then.
+pub(crate) fn drum_groove_under(
+    project: &auris_core::Project,
+    start: Ticks,
+    end: Ticks,
+) -> Option<String> {
+    let mut best: Option<(i64, &str)> = None;
+    for clip in project
+        .tracks
+        .iter()
+        .filter_map(|track| track.kind.note_clips())
+        .flatten()
+    {
+        let Some(recipe) = clip
+            .recipe
+            .as_ref()
+            .filter(|recipe| recipe.preset.is_drums())
+        else {
+            continue;
+        };
+        let overlap = clip.end().min(end).raw() - clip.start.max(start).raw();
+        if overlap > 0 && best.is_none_or(|(most, _)| overlap > most) {
+            best = Some((overlap, &recipe.groove));
+        }
+    }
+    best.map(|(_, groove)| groove.to_string())
 }
 
 #[cfg(test)]
@@ -1707,11 +1748,14 @@ mod tests {
         // "another take" is always 1 to 2. If that one pair happened to write the same notes the
         // button would look broken however well every other seed behaved.
         //
-        // The kick is the honest exception. Its text at the default dials is the groove spelled
-        // out, with nothing left to the seed — the difference two takes of it used to show was
-        // the baked wobble, which was noise wearing a take's name and lives on the performance
-        // stack now. What its take still changes is the wander's seed, asserted below for the
-        // presets that carry one.
+        // The hat is the honest exception. Its text at the default dials is the groove spelled
+        // out, with nothing left to the seed: it is the pulse, and the one thing a take of a kit
+        // chooses — what the second bar of the cell answers the first with — is heard against
+        // it. The difference two takes of it used to show was which of its strokes were dropped,
+        // which was noise wearing a take's name. A lone kick has one answer and may or may not
+        // take it, so two takes of it are the same line half the time and nothing is asserted
+        // of it either way. What every take still changes is the wander's seed, asserted below
+        // for the presets that carry one.
         for preset in ClipPreset::ALL {
             let (mut session, track) = if preset.is_drums() {
                 let (mut session, _) = with_a_progression();
@@ -1728,8 +1772,11 @@ mod tests {
 
             session.reroll_clip(clip).unwrap();
             let after = session.project().midi_clip(clip).unwrap().1.clone();
+            if preset == ClipPreset::Hat {
+                assert_eq!(first, after.notes, "the hat's pulse is not the seed's");
+                continue;
+            }
             if preset == ClipPreset::Kick {
-                assert_eq!(first, after.notes, "the kick's groove is not the seed's");
                 continue;
             }
             assert_ne!(
@@ -2146,5 +2193,60 @@ mod tests {
         session.forget_history();
         assert_eq!(session.freeze_track(track).unwrap(), 0);
         assert!(!session.can_undo());
+    }
+
+    #[test]
+    fn a_new_bass_follows_the_groove_of_the_kit_under_it() {
+        // A bass locks to the kick of the groove its own recipe names, and a recipe fresh from
+        // the preset names the default: over a kit playing four on the floor it followed
+        // basic-rock's kick, which nobody was striking.
+        let groove_of = |session: &Session, clip| {
+            let (_, clip) = session.project().midi_clip(clip).unwrap();
+            clip.recipe.as_ref().unwrap().groove.clone()
+        };
+        let (mut session, track) = with_a_progression();
+        session
+            .stamp_named_progression("axis", Ticks::ZERO, 20)
+            .unwrap();
+        let fresh = ClipRecipe::new(ClipPreset::Bass, 1);
+
+        // With no kit there is nothing to follow, and the recipe keeps its own.
+        let alone = session
+            .generate_clip(track, Ticks::ZERO, BAR * 4, fresh.clone())
+            .unwrap();
+        assert_eq!(groove_of(&session, alone), fresh.groove);
+
+        let kit = session.add_default_drum_track("Kit").unwrap();
+        let mut drums = ClipRecipe::new(ClipPreset::Drums, 1);
+        drums.groove = "four-on-the-floor".into();
+        session
+            .generate_clip(kit, BAR * 4, BAR * 4, drums.clone())
+            .unwrap();
+        drums.groove = "half-time".into();
+        session.generate_clip(kit, BAR * 8, BAR * 8, drums).unwrap();
+
+        // Under one kit it takes that kit's groove, and plays its kick: every beat.
+        let under = session
+            .generate_clip(track, BAR * 4, BAR * 4, fresh.clone())
+            .unwrap();
+        assert_eq!(groove_of(&session, under), "four-on-the-floor");
+
+        // Across two it takes the one most of it lies under.
+        let bass = session.add_default_instrument_track("Second bass").unwrap();
+        let across = session
+            .generate_clip(bass, BAR * 6, BAR * 8, fresh.clone())
+            .unwrap();
+        assert_eq!(groove_of(&session, across), "half-time");
+
+        // A groove somebody chose is theirs, and writing the clip again goes looking for
+        // nothing: the recipe is what it was.
+        let mut chosen = fresh.clone();
+        chosen.groove = "eight-beat".into();
+        let theirs = session
+            .generate_clip(bass, BAR * 16, BAR * 4, chosen)
+            .unwrap();
+        assert_eq!(groove_of(&session, theirs), "eight-beat");
+        session.reroll_clip(under).unwrap();
+        assert_eq!(groove_of(&session, under), "four-on-the-floor");
     }
 }

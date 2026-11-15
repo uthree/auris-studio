@@ -269,8 +269,9 @@ pub struct ClipRecipe {
     pub seed: u64,
     /// How busy it is, from 0 for sparse to 1 for a wall of notes.
     ///
-    /// A kit reads it too, around the middle: below, the groove thins from its weakest hits
-    /// upward, and above, the steps it left empty start filling in with ghost notes. *Which*
+    /// A kit reads it too, around the middle: below, the groove thins from its finest strokes
+    /// upward and never loses its backbeat, and above, the steps it left empty start filling
+    /// in — ghosts on a snare, the strokes between its strokes on a hat. *Which*
     /// rhythm a kit plays is still its [`groove`](Self::groove) — that is a choice from a
     /// drummer's own vocabulary and not a number — and this is how hard the drummer is leaning
     /// on it.
@@ -279,7 +280,9 @@ pub struct ClipRecipe {
     ///
     /// Every preset reads this: it sets how the notes are struck, not how many there are.
     pub intensity: f32,
-    /// Which drum groove the kit plays. Ignored by everything except the drums.
+    /// Which drum groove the kit plays, and the one a bass follows the kick of.
+    ///
+    /// Every part reads it for which pairs a swing delays; nothing else reads its patterns.
     #[serde(default = "default_groove")]
     pub groove: String,
     /// How far the offbeats are delayed, as a percentage where 50 is straight.
