@@ -112,8 +112,8 @@ impl Role {
     /// The octave a part of this role sits in by default.
     pub fn default_octave(self) -> i32 {
         match self {
-            Role::Melody | Role::Arp => 5,
-            Role::Chords => 4,
+            Role::Melody => 5,
+            Role::Chords | Role::Arp => 4,
             Role::Pad => 3,
             Role::Bass => 2,
             _ => 3,
@@ -124,7 +124,11 @@ impl Role {
     pub fn range(self) -> (i32, i32) {
         match self {
             Role::Melody => (60, 84),
-            Role::Arp => (60, 88),
+            // E3 to G5, around the chords and under the middle of the tune. It used to be the
+            // tune's own two octaves and four semitones more: a figure written there averaged
+            // C5 and reached A5, which is not an accompaniment under a melody but a second
+            // line through the middle of it.
+            Role::Arp => (52, 79),
             Role::Chords => (48, 72),
             // C3 to C5, which is where a pad is written, and above where the bass lives. It used
             // to start at C2 and share sixteen semitones with the bass: a voicing folded into

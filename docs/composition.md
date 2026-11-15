@@ -90,6 +90,12 @@ It draws one figure for the section and holds it, plays mostly the root, lets go
 before a syncopated note in some takes, and in most takes steps into the next bar at the end of
 every second one.
 
+An arpeggio breaks each chord in closed position, led from the chord before it the way the chords
+part is, so the figure stays under the hand while the harmony moves. It runs in one of six
+shapes drawn for the section — up, down, either of them turning round, every other note, or each
+note against the top one — at a rate the density sets, and it sits around the chords and under
+the middle of the tune.
+
 Only the rows a preset can actually hear are drawn. A kit has no gate, subdivision, octave or
 syncopation — a one-shot ignores its note-off, its pitches are drum numbers rather than notes, and
 where it plays is which groove it plays. Nothing but a kit has a fill, because nothing else has a
