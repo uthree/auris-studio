@@ -48,6 +48,19 @@ pub struct PartSpec {
     /// playing a cowbell, and there was nothing to say otherwise. A pitched part ignores this:
     /// its notes come from the harmony.
     pub note: Option<u8>,
+    /// The crash cymbal a hat part may move to on the downbeat a fill lands on, or `None` for a
+    /// hat that is only a hat.
+    ///
+    /// A kit is written as three parts because a groove is three patterns, and a drummer still
+    /// has more than three things to hit. The two that mark a join — this and [`Self::tom`] —
+    /// belong to the hand that is already there: the one keeping time lifts to the crash, the
+    /// one on the snare runs on to the tom. Neither is a part of its own, so neither has a
+    /// rhythm, a density or a seed. Only a whole kit is given them; a clip that is one drum
+    /// stays one drum.
+    pub crash: Option<u8>,
+    /// The tom a snare part may run the back half of a fill onto, or `None` for a fill that
+    /// stays on the snare. See [`Self::crash`].
+    pub tom: Option<u8>,
     /// Whether a chord part adds the root an octave or more below its voicing.
     ///
     /// Read by the chords and the pad; see [`ClipRecipe::low_root`](auris_core::ClipRecipe::low_root).
@@ -79,6 +92,8 @@ impl PartSpec {
             gate: 1.0,
             rhythm: None,
             note: None,
+            crash: None,
+            tom: None,
             low_root: false,
             strum: 0,
             centre: None,

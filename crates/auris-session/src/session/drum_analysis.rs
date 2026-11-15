@@ -461,9 +461,25 @@ pub(super) fn remap_generated_drums(clips: &mut [MidiClip], map: &DrumMap) -> Re
                 .map(|voice| (voice.name.clone(), voice.role))
                 .collect()
         };
+        // The drums a simple kit reaches for beyond its parts. A map with nothing assigned to
+        // one is not an error the way a missing snare is: the writer would not have reached for
+        // it either, and the stroke goes back to the hand it came from.
+        let reach = if recipe.drum_voices.is_empty() {
+            auris_compose::kit_reach(recipe.preset)
+        } else {
+            &[]
+        };
         for note in &mut clip.notes {
             if let Some(role) = roles.get(&note.drum_voice) {
                 note.pitch = *map.voices.get(role).ok_or(*role)?;
+            } else if let Some(reach) = reach.iter().find(|reach| reach.name == note.drum_voice)
+                && let Some(hand) = reach.hand.drum_role()
+            {
+                note.pitch = *map
+                    .voices
+                    .get(&reach.role)
+                    .or_else(|| map.voices.get(&hand))
+                    .ok_or(hand)?;
             }
         }
         auris_compose::apply_drum_map(recipe, map);

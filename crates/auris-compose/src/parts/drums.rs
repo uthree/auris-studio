@@ -1,10 +1,13 @@
-//! One drum voice, and the fill that runs a section into whatever follows it.
+//! One drum voice, the fill that runs a section into whatever follows it, and the crash the
+//! fill lands on.
 //!
 //! Apart from the pitched writers because almost nothing they read applies here. A drum has no
 //! range, no scale and no voicing; its density thins or thickens a groove somebody already wrote
 //! instead of choosing notes; and the length it writes is only there to make the piano roll
 //! readable, because a one-shot ignores its note-off. The fill is here because it is the snare
-//! that plays it.
+//! that plays it, and the crash because it is the hat's hand that leaves the hat for it. Where
+//! a section turns is `turn`, which both of them read, so the two agree without either reading
+//! the other.
 
 use auris_core::time::Ticks;
 
@@ -61,7 +64,7 @@ pub(super) fn drums(
             pattern.at_in_bar(step, grid.steps_per_bar(), grid.steps_per_beat(), own)
         }
     };
-    let stroke = |bar_start: Ticks, step: usize, accent: Accent| {
+    let stroke = |pitch: u8, bar_start: Ticks, step: usize, accent: Accent| {
         let at = bar_start + grid.tick_of(step);
         Draft {
             section: index,
@@ -84,14 +87,26 @@ pub(super) fn drums(
         let mut choose = bar_stream(frame, part, section, "answer", 0);
         answer(voice, grid, dialled, spelled, &mut choose)
     };
-    // Where the section's last bar stops being the groove, so the answer does not land in the
-    // middle of the snare's own run.
-    let filled_from = (voice == DrumVoice::Snare
-        && crate::rhythm::groove(&settings.groove).is_some())
-    .then(|| fill_from(settings, section, grid))
-    .flatten();
+    // A fill is a departure from a groove, so there has to be a groove to depart from. A name
+    // nobody recognises leaves every voice a bar of rests, and running a fill over that would
+    // be the kit inventing a part out of a typo.
+    let grooved = crate::rhythm::groove(&settings.groove).is_some();
+    // Whether this take's cymbal hand lands on the crash. One draw for the section, so a kit
+    // either marks its arrivals or does not; `lands` says which bars those are.
+    let crash = part
+        .crash
+        .filter(|_| voice == DrumVoice::ClosedHat && grooved && !written)
+        .filter(|_| {
+            let mut choose = bar_stream(frame, part, section, "crash", 0);
+            choose.chance(crashing(section.intensity))
+        });
 
     for bar in 0..section.bars {
+        // Where this bar stops being the groove, so the answer does not land in the middle of
+        // the snare's own run.
+        let filled_from = (voice == DrumVoice::Snare && grooved)
+            .then(|| fill_from(settings, section, grid, bar))
+            .flatten();
         // Every choice the kit makes for itself is made for a bar of the cell, not for a bar of
         // the section. Drawn bar by bar, a dial a notch off its middle wrote sixteen different
         // bars in sixteen: the thinning took another backbeat each time and the filling put its
@@ -130,22 +145,30 @@ pub(super) fn drums(
                 },
             };
             *sounded = true;
-            notes.push(stroke(bar_start, step, accent));
+            // The hand that would have struck the hat is on the crash, and it has one stick.
+            // Decided after the roll above so the bar's later rolls do not move with it.
+            if step == 0 && crash.is_some() && lands(settings, section, grid, bar) {
+                continue;
+            }
+            notes.push(stroke(pitch, bar_start, step, accent));
+        }
+        if let Some(crash) = crash
+            && lands(settings, section, grid, bar)
+        {
+            played[0] = true;
+            notes.push(stroke(crash, bar_start, 0, Accent::Strong));
         }
         // The cell's last bar takes the answer, wherever the dial's own strokes left room for
         // it and the fill has not taken the bar over.
         if cell + 1 == CELL_BARS
             && let Some((step, accent)) = answer
             && !played[step]
-            && !(bar + 1 == section.bars && filled_from.is_some_and(|from| step >= from))
+            && !filled_from.is_some_and(|from| step >= from)
         {
             played[step] = true;
-            notes.push(stroke(bar_start, step, accent));
+            notes.push(stroke(pitch, bar_start, step, accent));
         }
-        // A fill is a departure from a groove, so there has to be a groove to depart from. A
-        // name nobody recognises leaves every voice a bar of rests, and running a fill over that
-        // would be the kit inventing a part out of a typo.
-        if crate::rhythm::groove(&settings.groove).is_some() {
+        if grooved {
             fill(
                 settings, frame, section, index, part, voice, bar, &played, &mut notes,
             );
@@ -153,6 +176,76 @@ pub(super) fn drums(
     }
     notes
 }
+
+/// Which of a section's joins a bar runs into.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Turn {
+    /// The section's last bar: whatever follows is something else.
+    Section,
+    /// The bar that closes every second phrase: the middle of a sixteen-bar section, where the
+    /// kit turns the corner without leaving.
+    Phrase,
+}
+
+/// The join `bar` runs into, or `None` for a bar that simply leads to the next.
+///
+/// A fill used to belong to a section's last bar and nowhere else, so sixteen bars were fifteen
+/// bars of one groove and a run. The kit tracks of a pop and rock score corpus fill 1.5 bars in
+/// sixteen, and in more than half of the sixteen-bar windows one of them comes before the last
+/// bar. Where it comes is where the phrases are: the two-bar cell already says something back
+/// every second bar, a phrase is two cells, and the pair of phrases is the next size up — the
+/// eighth bar of sixteen.
+fn turn(section: &SectionPlan, bar: usize) -> Option<Turn> {
+    if bar + 1 == section.bars {
+        return Some(Turn::Section);
+    }
+    let closed = section
+        .phrases
+        .iter()
+        .position(|phrase| bar + 1 == phrase.end_bar())?;
+    (closed % 2 == 1).then_some(Turn::Phrase)
+}
+
+/// Whether `bar` is one a fill lands on: the section's first, and the one after every turn.
+///
+/// Asked of the same dial the fill is, because it is the same decision — a kit that runs into
+/// its joins lands on them, and one told not to fill is a loop that should come round without
+/// announcing it. The section's first bar is landed on by the fill of whatever led into it; a
+/// clip always follows something, another clip or another playing of itself.
+fn lands(
+    settings: &ScoreSettings,
+    section: &SectionPlan,
+    grid: crate::rhythm::Grid,
+    bar: usize,
+) -> bool {
+    let before = bar.checked_sub(1).unwrap_or(section.bars.saturating_sub(1));
+    fill_from(settings, section, grid, before).is_some()
+}
+
+/// The chance a take's cymbal hand lands on the crash at all.
+///
+/// Two thirds at the default intensity, which is the share of the corpus's sixteen-bar kit
+/// windows that strike one; nothing measured says how that moves with how hard a section is
+/// played, only that a verse played quietly is where a drummer leaves it out and a chorus is
+/// where it is hard to imagine one missing.
+fn crashing(intensity: f32) -> f32 {
+    (intensity.clamp(0.0, 1.0) * 1.2 - 0.18).clamp(0.0, 1.0)
+}
+
+/// How often a fill leaves the snare for the tom.
+///
+/// A quarter of them, which with two turns in sixteen bars puts a tom in four takes in ten —
+/// the corpus's sixteen-bar kit windows strike one in 39 in a hundred. Half was tried first,
+/// being the share of the corpus's *fill bars* that strike one, and wrote a tom into two takes
+/// in three: the bars a fill detector finds are the long ones, and the long ones travel.
+const TOM_FILLS: f32 = 0.25;
+
+/// How long a section has to be before its last bar gets the long fill.
+///
+/// Eight bars. A four-bar clip played four times round is four ways out in sixteen bars, and
+/// the corpus's kits fill a bar and a half in sixteen: a loop that short turns the way a phrase
+/// does.
+const LONG_SECTION_BARS: usize = 8;
 
 /// How many bars the kit's own choices repeat over.
 ///
@@ -335,31 +428,45 @@ fn fill_steps(shape: FillShape, from: usize, steps: usize, per_beat: usize) -> V
     }
 }
 
-/// The step of a section's last bar a fill runs from, or `None` when the dial asks for none.
+/// The step of `bar` a fill runs from, or `None` when the bar is no [`turn`] or the dial asks
+/// for no fill.
 ///
-/// How much of the bar runs, from none to two beats. The section's intensity still leans on
-/// it, so a quiet section fills shorter than a loud one at the same setting — the dial says
-/// how much of a fill this piece wants, not how much this one bar gets.
+/// How much of the bar runs: from none to two beats at a turn inside the section and at the
+/// end of a short one, and twice that — up to the whole bar — on the way out of a section of
+/// [`LONG_SECTION_BARS`] or more. The section's intensity still leans on it, so a quiet section
+/// fills shorter than a loud one at the same setting — the dial says how much of a fill this
+/// piece wants, not how much this one bar gets.
+///
+/// The way out used to be the same two beats at most, one at the default, and measured against
+/// the kit tracks of a pop and rock score corpus that was a third of a fill bar in sixteen
+/// where they play a bar and a half: three of the four shapes add fewer than three strokes to a
+/// beat-long window, which is a pickup rather than a fill.
 fn fill_from(
     settings: &ScoreSettings,
     section: &SectionPlan,
     grid: crate::rhythm::Grid,
+    bar: usize,
 ) -> Option<usize> {
+    let turn = turn(section, bar)?;
     let wanted = settings.fill.clamp(0.0, 1.0) * (0.6 + 0.4 * section.intensity);
-    let beats = (wanted * 2.0).round() as usize;
+    let beats = match turn {
+        Turn::Section if section.bars >= LONG_SECTION_BARS => (wanted * 4.0).round() as usize,
+        Turn::Section | Turn::Phrase => (wanted * 2.0).round() as usize,
+    };
     (beats > 0).then(|| {
         grid.steps_per_bar()
             .saturating_sub(beats * grid.steps_per_beat())
     })
 }
 
-/// Runs the snare into whatever follows the section.
+/// Runs the snare into whatever follows a [`turn`].
 ///
 /// A section that simply stops and is replaced sounds like an edit rather than like an arrival:
 /// the join is the one moment a listener is certain to notice, and nothing marked it. Only the
-/// last bar of a section gets one, and only the snare plays it — the other voices keep the groove
-/// underneath so the fill has something to be a departure from. Which [`FillShape`] it runs in
-/// is the section's own draw.
+/// snare's hands play it — the other voices keep the groove underneath so the fill has something
+/// to be a departure from. Which [`FillShape`] it runs in is the bar's own draw, and so is
+/// whether its back half leaves the snare for the tom: a fill that travels across the kit and
+/// one that stays put are the two a drummer has, about equally often.
 ///
 /// A part with a written rhythm is left alone, on the same principle as thinning: an instruction
 /// is not a suggestion.
@@ -375,16 +482,15 @@ fn fill(
     played: &[bool],
     notes: &mut Vec<Draft>,
 ) {
-    let last_bar = bar + 1 == section.bars;
     // A clip always leads into something — another clip, or another playing of itself.
-    if part.rhythm.is_some() || voice != DrumVoice::Snare || !last_bar {
+    if part.rhythm.is_some() || voice != DrumVoice::Snare {
         return;
     }
 
     let grid = part_grid(frame, part);
     let steps = grid.steps_per_bar();
     let per_beat = grid.steps_per_beat();
-    let Some(from) = fill_from(settings, section, grid) else {
+    let Some(from) = fill_from(settings, section, grid, bar) else {
         return;
     };
     let bar_start = grid.bar_ticks() * bar as i64;
@@ -398,6 +504,11 @@ fn fill(
     ];
     let mut choose = bar_stream(frame, part, section, "fill", bar);
     let shape = SHAPES[choose.weighted(&[1.4, 1.0, 0.9, 0.8]).min(SHAPES.len() - 1)];
+    // Drawn whether or not there is a tom to go to, so a kit with one and a kit without fill
+    // in the same shape.
+    let travels = choose.chance(TOM_FILLS);
+    let snare = part.drum_note().unwrap_or_else(|| voice.pitch());
+    let tom = part.tom.filter(|_| travels);
 
     for step in fill_steps(shape, from, steps, per_beat) {
         if played.get(step).copied().unwrap_or(false) {
@@ -412,8 +523,9 @@ fn fill(
         notes.push(Draft {
             section: index,
             // The same note the groove is being played on, or the fill would run on the snare a
-            // General MIDI kit has rather than the one this instrument actually carries.
-            pitch: part.drum_note().unwrap_or_else(|| voice.pitch()),
+            // General MIDI kit has rather than the one this instrument actually carries — and
+            // from half way through, the tom, when this fill is one that travels.
+            pitch: tom.filter(|_| through >= 0.5).unwrap_or(snare),
             velocity: rise.clamp(0.08, 1.0),
             start: section.start + bar_start + grid.tick_of(step),
             length: Ticks(120),
@@ -918,6 +1030,200 @@ mod tests {
                 .any(|note| note.section == 0 && note.start >= last_bar),
             "the recognised sparse groove lost its ending fill"
         );
+    }
+
+    /// A sixteen-bar kit that fills as long as the dial goes, with a crash and a tom to reach
+    /// for.
+    fn joined(seed: u64, fill: f32) -> Song {
+        let mut song = kit("basic-rock", 0.5, 1.0, seed, 16);
+        song.settings.fill = fill;
+        for voice in &mut song.parts {
+            voice.crash = (voice.role == Role::Hat).then_some(49);
+            voice.tom = (voice.role == Role::Snare).then_some(47);
+        }
+        song
+    }
+
+    #[test]
+    fn a_section_fills_where_its_phrases_turn_and_keeps_the_long_run_for_the_way_out() {
+        // Sixteen bars used to be fifteen of one groove and a run. The eighth bar turns the
+        // corner too — by half of what the way out may take — and the fourth and the twelfth
+        // are left to the two-bar cell.
+        for seed in 0..8u64 {
+            let (frame, parts) = joined(seed, 1.0).draft();
+            let snare = part(&parts, "snare");
+            // Against the cell's first bar: its second carries the answer, which is not a fill.
+            let usual = bar_steps(&frame, snare, 0).len();
+            let extra = |bar: usize| bar_steps(&frame, snare, bar).len() as i64 - usual as i64;
+            for bar in [3, 11] {
+                assert!(extra(bar) <= 1, "seed {seed}: bar {bar} filled");
+            }
+            assert!(extra(7) >= 1, "seed {seed}: the eighth bar did not turn");
+            assert!(extra(15) >= 1, "seed {seed}: the last bar did not fill");
+            let beat = frame.grid.steps_per_beat();
+            let steps = frame.grid.steps_per_bar();
+            // What the bar plays that the same bar of the cell before it did not, so the
+            // answer is not counted as the start of a fill.
+            let earliest = |bar: usize| {
+                let cell = bar_steps(&frame, snare, bar - CELL_BARS);
+                bar_steps(&frame, snare, bar)
+                    .into_iter()
+                    .filter(|step| !cell.contains(step))
+                    .min()
+            };
+            assert!(
+                earliest(7).is_none_or(|step| step >= steps - 2 * beat),
+                "seed {seed}: the turn ran long"
+            );
+            // A loop of four bars comes round four times in sixteen, and turns no further
+            // than a phrase does.
+            let mut short = kit("basic-rock", 0.5, 1.0, seed, 4);
+            short.settings.fill = 1.0;
+            let (frame, parts) = short.draft();
+            let snare = part(&parts, "snare");
+            let cell = bar_steps(&frame, snare, 1);
+            assert!(
+                bar_steps(&frame, snare, 3)
+                    .into_iter()
+                    .filter(|step| !cell.contains(step))
+                    .all(|step| step >= steps - 2 * beat),
+                "seed {seed}: four bars ended on the long fill"
+            );
+        }
+        // The way out of a long section is where the long one is: over the seeds, some fill
+        // of the last bar starts before its third beat.
+        let reaches_back = (0..8u64).any(|seed| {
+            let (frame, parts) = joined(seed, 1.0).draft();
+            let snare = part(&parts, "snare");
+            let cell = bar_steps(&frame, snare, 13);
+            let half = frame.grid.steps_per_bar() / 2;
+            bar_steps(&frame, snare, 15)
+                .into_iter()
+                .any(|step| step < half && !cell.contains(&step))
+        });
+        assert!(reaches_back, "no last bar used more than two beats");
+        // And a dial at zero is a loop: nothing turns anywhere.
+        let (frame, parts) = joined(3, 0.0).draft();
+        let snare = part(&parts, "snare");
+        for bar in [7, 15] {
+            assert_eq!(
+                bar_steps(&frame, snare, bar),
+                bar_steps(&frame, snare, bar - 2)
+            );
+        }
+    }
+
+    #[test]
+    fn a_fill_that_travels_leaves_the_snare_for_the_tom_half_way() {
+        let grid_ticks = |frame: &crate::frame::Frame| frame.grid.bar_ticks();
+        let mut travelled = 0;
+        let mut fills = 0;
+        for seed in 0..32u64 {
+            let (frame, parts) = joined(seed, 1.0).draft();
+            let bar = grid_ticks(&frame);
+            for last in [7i64, 15] {
+                fills += 1;
+                let from = bar * last;
+                let toms: Vec<_> = part(&parts, "snare")
+                    .notes
+                    .iter()
+                    .filter(|note| note.pitch == 47)
+                    .filter(|note| note.start >= from && note.start < from + bar)
+                    .collect();
+                if toms.is_empty() {
+                    continue;
+                }
+                travelled += 1;
+                // The tom is where the fill goes, not where it starts: nothing on the snare
+                // follows it inside the bar.
+                let first = toms.iter().map(|note| note.start).min().unwrap();
+                let window = if last == 15 { 4 } else { 2 };
+                let opens = from + bar - frame.grid.tick_of(frame.grid.steps_per_beat()) * window;
+                assert!(first > opens, "seed {seed}: a fill began on the tom");
+                // The groove's own backbeat is still the snare's; what the fill adds is not.
+                let groove = bar_steps(&frame, part(&parts, "snare"), last as usize - 2);
+                assert!(
+                    !part(&parts, "snare")
+                        .notes
+                        .iter()
+                        .any(|note| note.pitch == 38
+                            && note.start > first
+                            && note.start < from + bar
+                            && !groove.contains(&frame.grid.step_of(note.start - from))),
+                    "seed {seed}: the fill came back to the snare"
+                );
+            }
+            // No tom to go to, no tom: the same fill stays where it is.
+            let mut plain = joined(seed, 1.0);
+            for voice in &mut plain.parts {
+                voice.tom = None;
+            }
+            let (_, plain_parts) = plain.draft();
+            assert!(
+                part(&plain_parts, "snare")
+                    .notes
+                    .iter()
+                    .all(|n| n.pitch == 38)
+            );
+            assert_eq!(
+                part(&plain_parts, "snare").notes.len(),
+                part(&parts, "snare").notes.len()
+            );
+        }
+        // About a quarter of them.
+        assert!(
+            (fills / 10..=fills * 4 / 10).contains(&travelled),
+            "{travelled} of {fills} fills reached the tom"
+        );
+    }
+
+    #[test]
+    fn the_cymbal_hand_lands_on_the_crash_where_a_fill_lands() {
+        let mut crashed = 0;
+        for seed in 0..48u64 {
+            let (frame, parts) = joined(seed, 1.0).draft();
+            let bar = frame.grid.bar_ticks();
+            let hat = part(&parts, "hat");
+            let crashes: Vec<i64> = hat
+                .notes
+                .iter()
+                .filter(|note| note.pitch == 49)
+                .map(|note| note.start.raw() / bar.raw())
+                .collect();
+            if crashes.is_empty() {
+                continue;
+            }
+            crashed += 1;
+            // The first bar, which whatever came before ran into, and the bar after the turn.
+            assert_eq!(crashes, vec![0, 8], "seed {seed}");
+            for note in hat.notes.iter().filter(|note| note.pitch == 49) {
+                assert_eq!(note.start.raw() % bar.raw(), 0, "a crash off the downbeat");
+                // One hand, one stick: the hat is not struck under it.
+                assert!(
+                    !hat.notes
+                        .iter()
+                        .any(|other| other.pitch == 42 && other.start == note.start)
+                );
+            }
+        }
+        // Every take at this intensity, since the chance is past certain by then; and a quiet
+        // section leaves most of them out.
+        assert_eq!(crashed, 48);
+        let quiet = (0..48u64)
+            .filter(|seed| {
+                let mut song = joined(*seed, 1.0);
+                song.intensity = 0.3;
+                let (_, parts) = song.draft();
+                part(&parts, "hat").notes.iter().any(|n| n.pitch == 49)
+            })
+            .count();
+        assert!(
+            (1..24).contains(&quiet),
+            "{quiet} of 48 quiet takes crashed"
+        );
+        // A kit told not to fill is a loop, and a loop does not announce itself.
+        let (_, parts) = joined(1, 0.0).draft();
+        assert!(part(&parts, "hat").notes.iter().all(|n| n.pitch == 42));
     }
 
     #[test]

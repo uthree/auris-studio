@@ -49,7 +49,7 @@ The controls mean:
 | **Gate** | How long each note sounds, as a share of the gap to the next |
 | **Intensity** | How hard it is played |
 | **Dynamics** | How far apart the hardest and softest notes are struck |
-| **Fill** | How much of the last bar the snare runs into what follows — drums only |
+| **Fill** | How much of a bar the snare runs where the kit turns: its last bar, and in a long clip the end of every second phrase — drums only |
 | **Swing** | How late the offbeats are |
 
 Intensity and dynamics are the level and the spread, and they are separate because they are two
@@ -84,6 +84,15 @@ still the groove picker, and that is a choice from a drummer's own vocabulary ra
 number: `basic-rock`, `eight-beat`, `sixteen-beat`, `four-on-the-floor`, `shuffle`, `breakbeat`,
 `bossa-nova`, `half-time` and `sparse`.
 
+A kit turns where its phrases do. The last bar of a clip runs a fill, as long as **Fill** asks
+for; a clip of eight bars or more may run twice as much of that bar, up to the whole of it, and
+also turns at the end of every second phrase — the eighth bar of sixteen. A whole kit may run
+the back half of a fill onto a tom, and may land on a crash in the bar a fill leads into, the
+clip's first bar included; a section played hard crashes more often than a quiet one. A clip
+that is one drum on a track of its own stays that drum, and a kit whose sound assignment has no
+crash or no tom keeps those strokes on the hat and the snare. With **Fill** at zero the kit does
+none of this and the clip is a loop.
+
 A bass line follows the kick of a groove as well, without reading the kit's notes: a new bass
 clip takes the groove of the generated kit most of it lies under, and keeps it in its own recipe.
 It draws one figure for the section and holds it, plays mostly the root, lets go on the beat
@@ -94,7 +103,9 @@ An arpeggio breaks each chord in closed position, led from the chord before it t
 part is, so the figure stays under the hand while the harmony moves. It runs in one of six
 shapes drawn for the section — up, down, either of them turning round, every other note, or each
 note against the top one — at a rate the density sets, and it sits around the chords and under
-the middle of the tune.
+the middle of the tune. The rate is set beat by beat: quarters at the bottom of the dial, eighths
+round the middle and every step at the top, and between them the beats turn over one at a time,
+the weakest first — a little above quarters is long, long, long, short-short.
 
 Only the rows a preset can actually hear are drawn. A kit has no gate, subdivision, octave or
 syncopation — a one-shot ignores its note-off, its pitches are drum numbers rather than notes, and
@@ -109,7 +120,12 @@ subdivision entirely, since a groove is written in sixteenths and read by index.
 
 A chord part picks its figure once for the section and restates it, the way a keyboard player picks
 a feel and keeps it; only the closing bar of a planned phrase can turn it over, and only
-sometimes. Above 75% density, chords keep a driving figure and fill more of the subdivision.
+sometimes. Half the takes let a chord go on the beat before a syncopated strike and half hold
+every chord into the next. A stretch may *push*: every chord change struck half a beat early and
+held over the line. Whether it does is read off the chords under the clip and the **Syncopation**
+dial, not off the seed, so the chords and the bass over one stretch push the same changes, and
+another take of either does not change it; turning the dial down stops it. Above 75% density, chords keep their figure and fill in the steps
+round it.
 At 100%, every step is struck: sixteen attacks per 4/4 bar with a 1/16 subdivision, or
 twenty-four with 1/16 triplets. Foreground-aware arrangement preserves this explicit dense
 rhythm. Authored rhythms retain their rests regardless of density.

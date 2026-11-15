@@ -197,7 +197,14 @@ pub(super) fn backing_part_recipe(preset: ClipPreset, seed: u64) -> ClipRecipe {
         recipe.drum_map = Some(auris_core::DrumMap::from_voices(
             auris_compose::roles_of(preset)
                 .iter()
-                .filter_map(|role| Some((role.drum_role()?, role.drum_voice()?.pitch()))),
+                .filter_map(|role| Some((role.drum_role()?, role.drum_voice()?.pitch())))
+                // And the drums a kit reaches for at its joins, or a backing kit would be the
+                // one kit that never lands on a crash.
+                .chain(
+                    auris_compose::kit_reach(preset)
+                        .iter()
+                        .map(|reach| (reach.role, reach.voice.pitch())),
+                ),
         ));
     }
     recipe

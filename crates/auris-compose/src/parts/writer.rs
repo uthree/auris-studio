@@ -172,6 +172,58 @@ pub(super) fn bar_stream(
     Rng::stream(frame.seed, &path)
 }
 
+/// Whether the band pushes the chord changes of this stretch: each one struck half a beat
+/// early and held over the line.
+///
+/// The one decision two parts have to make alike and cannot make from a seed. A clip is one
+/// part with a seed of its own, so a comp that drew its push from its own stream pushed alone:
+/// the keyboard came in half a beat early over a bass restriking the old root on the line.
+/// What the clips over one stretch of a timeline do share is the stretch — how many bars, and
+/// which chords where — so that is what the draw is keyed by, and nothing else. Every part
+/// written over the same chords at the same syncopation answers alike, whatever its seed.
+///
+/// The price is that another take of a part cannot change it: whether these eight bars push is
+/// a fact about the song. The dial still decides, and now does so the same way every time —
+/// the draw is one number for the stretch, and the stretch pushes once the dial is past it. The
+/// top of the dial pushes six stretches in ten.
+pub(super) fn band_pushes(section: &SectionPlan, syncopation: f32) -> bool {
+    let mut path = vec![
+        RngKey::Word("band"),
+        RngKey::Word("push"),
+        RngKey::Index(section.bars as u64),
+    ];
+    for event in &section.events {
+        for value in [
+            event.start.raw(),
+            event.length.raw(),
+            i64::from(event.chord.root.semitones()),
+            i64::from(event.chord.bass_class().semitones()),
+        ] {
+            path.push(RngKey::Index(value.unsigned_abs()));
+        }
+    }
+    Rng::stream(0, &path).chance((syncopation * 0.6).clamp(0.0, 0.6))
+}
+
+/// Where a note lets go when the note after it is syncopated, as a step of the bar: the last
+/// beat before that note, or `None` to hold into it.
+///
+/// Measured on the bass, where there was something to measure against: a line that held every
+/// note into the next was sounding all of the time, where the bass lines of a pop and rock
+/// score corpus sound for 87 hundredths of it, and where they rest is here — a note a dotted
+/// quarter from the next is followed by a rest half the time, one an eighth from it one time in
+/// seven. Letting go on the beat is what makes the hit after it a push rather than a slur, and
+/// over a backbeat it is also the part leaving the snare its beat. The comp lets go by the same
+/// rule, because the push it makes room for is the same push.
+pub(super) fn lift_before(grid: Grid, here: usize, next: usize) -> Option<usize> {
+    if grid.weight(next) > 1 {
+        return None;
+    }
+    let beat = grid.steps_per_beat().max(1);
+    let boundary = next / beat * beat;
+    (boundary > here).then_some(boundary)
+}
+
 /// Picks the onsets of one bar, either from a written rhythm or by rolling one.
 ///
 /// The roll leans on the metric hierarchy: a strong step is far likelier to carry a note than a

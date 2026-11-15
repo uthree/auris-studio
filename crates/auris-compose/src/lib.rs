@@ -46,6 +46,8 @@ pub use auris_core::PerformanceStyle;
 
 pub use analysis::{Reading, detect_key, harmonise, motif_of, read_melody};
 pub use perform::{clip_performance, part_performance};
-pub use phrase::{apply_drum_map, parse_motif, preset_of, roles_of, write_phrase};
+pub use phrase::{
+    KitReach, apply_drum_map, kit_reach, parse_motif, preset_of, roles_of, write_phrase,
+};
 pub use spec::{Mood, PartSpec, Role};
 pub use vocal::{VocalRange, VocalRhythm, ornament_vocal, vocal_rhythm, write_vocal};

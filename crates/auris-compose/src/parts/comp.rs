@@ -17,7 +17,9 @@ use crate::theory::chord::Chord;
 use crate::theory::pitch::{OCTAVE, PitchClass};
 
 use super::voicing::voiced;
-use super::writer::{bar_onsets, bar_stream, density, part_grid, phrase_shape, velocity};
+use super::writer::{
+    band_pushes, bar_onsets, bar_stream, density, lift_before, part_grid, phrase_shape, velocity,
+};
 use super::{Draft, ScoreSettings};
 
 /// How a chord is struck through a bar.
@@ -47,6 +49,15 @@ pub(super) enum CompFigure {
     /// piano dance music is built on.
     Rolled,
 }
+
+/// How many takes of a comp let go before a syncopated strike; the rest hold every chord into
+/// the next. See `lift_before`.
+///
+/// Half, which is the bass's number and has nothing of the comp's own behind it: no score in
+/// the corpus carries a keyboard comp apart from the tune it accompanies, so there is nothing
+/// to count. What is known is that every comp held every chord into the next, on every figure,
+/// and that is one way of playing them.
+const LIFT: f32 = 0.5;
 
 /// How often the last bar of a planned phrase departs from the figure the section chose.
 ///
@@ -209,7 +220,12 @@ pub(super) fn comp(
             RngKey::Word(&section.name),
         ],
     );
-    let chosen_figure = if written || drive > 0.0 {
+    //
+    // Above three quarters of the dial the figure is still the figure, with the steps it leaves
+    // empty filling in round it. It used to be thrown away there for the rolled one: a comp at
+    // 0.75 struck four times a bar and at 0.76 seven, and from there on no style had a
+    // vocabulary and no section a push, because one figure had replaced all six.
+    let chosen_figure = if written {
         // The written rhythm plays through the rolled figure's machinery, which is already
         // "strike on exactly these steps".
         CompFigure::Rolled
@@ -223,33 +239,34 @@ pub(super) fn comp(
     // so that a turnaround reaching for it later finds the section's rhythm rather than a
     // different one — and so the stream does not shift under everything else depending on which
     // figure came out.
-    let mut rolled = bar_onsets(
+    let rolled = bar_onsets(
         grid,
         part.rhythm.as_ref(),
         busy,
         settings.mood.syncopation,
         &mut invent,
     );
+    // The steps of the bar the dial's upper quarter strikes on top of the figure.
+    let mut driven = vec![false; grid.steps_per_bar()];
     if drive > 0.0 {
         let mut fill = bar_stream(frame, part, section, "comp-density", 0);
-        for step in 0..grid.steps_per_bar() {
+        for step in driven.iter_mut() {
             // Draw on every step so raising density only opens more opportunities in this
             // stream, instead of rescrambling the following decisions.
-            let add = fill.chance(drive);
-            if add && !rolled.iter().any(|(at, _)| *at == step) {
-                rolled.push((step, crate::rhythm::Accent::Normal));
-            }
+            *step = fill.chance(drive);
         }
-        rolled.sort_unstable_by_key(|(step, _)| *step);
     }
     // Whether this section's comp pushes: each chord change struck half a beat early and held
     // over the line, the anticipation every keyboard player owns. A property of the section and
     // not of the chord — a player who pushes, pushes, and a per-change roll would also break the
     // promise that the figure holds through a phrase, since the push lands its strike in the bar
-    // *before* the change. Drawn whether or not it can apply, like everything on this stream.
-    let pushing = invent.chance((settings.mood.syncopation * 0.6).clamp(0.0, 0.6));
+    // *before* the change. And not of the take either: the bass pushes the same changes, so
+    // the answer is the band's. See `band_pushes`.
+    let pushing = band_pushes(section, settings.mood.syncopation);
     // Half a felt beat, the distance every push is early by.
     let push_early = grid.step_ticks() * (grid.steps_per_beat() / 2).max(1) as i64;
+    // Whether this take lets a chord go before a syncopated strike.
+    let lifting = invent.chance(LIFT) && !pad && !written;
 
     for (event_index, event) in section.events.iter().enumerate() {
         // The middle is pulled to the centre on every chord, not only the first, and the voice
@@ -286,7 +303,7 @@ pub(super) fn comp(
         // that could not do anything.
         let bar = grid.step_of(event.start) / grid.steps_per_bar().max(1);
         // The shared phrase plan supplies the turn, including unequal phrase lengths.
-        let figure = if pad || written || drive > 0.0 || !section.closes_phrase(bar) {
+        let figure = if pad || written || !section.closes_phrase(bar) {
             chosen_figure
         } else {
             let mut rng = bar_stream(frame, part, section, "comp", bar);
@@ -322,10 +339,14 @@ pub(super) fn comp(
             && !section.continues_chord(event_index)
             && !pad
             && !written
-            && drive == 0.0
+            // Every step struck leaves nothing to anticipate with: the push would take the
+            // strike on the line away, and full density promises that one.
+            && drive < 1.0
             && pushed_by > Ticks::ZERO
             && event.start >= pushed_by;
-        let mut onsets: Vec<usize> = if figure == CompFigure::Held {
+        // A held chord is held until the dial starts filling the bar in round it.
+        let held_whole = figure == CompFigure::Held && drive == 0.0;
+        let mut onsets: Vec<usize> = if held_whole {
             vec![0]
         } else {
             let beat = grid.steps_per_beat().max(1);
@@ -341,14 +362,15 @@ pub(super) fn comp(
             let mut chosen: Vec<usize> = (0..grid.step_of(event.length))
                 .filter(|offset| {
                     let at = (from + offset) % per_bar;
-                    match figure {
+                    let figured = match figure {
                         CompFigure::Beats => at.is_multiple_of(beat),
                         CompFigure::Offbeats => at % beat == half,
                         CompFigure::Charleston => at == 0 || at == beat + half,
                         CompFigure::Cross => cross.at(at).is_some(),
                         CompFigure::Rolled => rolled.iter().any(|(step, _)| *step == at),
                         CompFigure::Held => false,
-                    }
+                    };
+                    figured || driven.get(at).copied().unwrap_or(false)
                 })
                 .collect();
             // A chord nobody strikes is a chord nobody hears change, so its own start always
@@ -364,7 +386,7 @@ pub(super) fn comp(
         if push {
             onsets.retain(|offset| *offset != 0);
         }
-        let held = pad || figure == CompFigure::Held;
+        let held = pad || held_whole;
         let last = onsets.len().saturating_sub(1);
         let mut still_sounding: Vec<(i32, usize)> = Vec::new();
 
@@ -420,7 +442,21 @@ pub(super) fn comp(
             } else {
                 event.end()
             };
-            let length = (next - at).min(event.end() - at).max(Ticks(1));
+            let mut length = (next - at).min(event.end() - at).max(Ticks(1));
+            // Let go on the beat before a syncopated strike, so the strike is a push and not a
+            // slur — unless that beat is less than half a beat away, because a chord shorter
+            // than that is a click, and one let go anywhere else leaves no beat free. Only
+            // inside the chord: the strike that opens the next one is on its line, or is the
+            // section's own push, which lets this one go itself.
+            if lifting && position < last {
+                let here = grid.step_of(at);
+                let half = (grid.steps_per_beat() / 2).max(1);
+                if let Some(boundary) = lift_before(grid, here, grid.step_of(next))
+                    && boundary >= here + half
+                {
+                    length = (grid.tick_of(boundary) - at).max(Ticks(1));
+                }
+            }
             let weight = grid.weight(grid.step_of(at));
             // Every note of a strum still lets go where the strike does: the strum delays the
             // attacks, it does not move the chord.
@@ -517,6 +553,122 @@ mod tests {
         }
         let steps = 16;
         assert!(counts.iter().all(|count| *count == steps), "{counts:?}");
+    }
+
+    #[test]
+    fn the_dial_fills_in_round_the_figure_past_three_quarters() {
+        // The figure used to be thrown away for the rolled one the moment the dial crossed
+        // 0.75: four strikes a bar at 0.75 and seven at 0.76, and no idiom above it.
+        let strikes = |density: f32, style: Option<PerformanceStyle>| -> f32 {
+            let mut total = 0;
+            for seed in 0..48u64 {
+                // Syncopation at zero, so that no stretch pushes: a push takes the strike on the
+                // line away, which is its own subject.
+                let mut song = chords("@axis", 8, seed, 0.0);
+                song.parts[0].density = Some(density);
+                song.settings.style = style;
+                let (frame, parts) = song.draft();
+                let comp = part(&parts, "chords");
+                total += (0..8)
+                    .map(|bar| bar_steps(&frame, comp, bar).len())
+                    .sum::<usize>();
+            }
+            total as f32 / (48.0 * 8.0)
+        };
+        let mut last = strikes(0.70, None);
+        for density in [0.75, 0.76, 0.80, 0.85, 0.90, 0.95, 1.0] {
+            let now = strikes(density, None);
+            assert!(
+                now >= last - 0.2 && now - last < 3.5,
+                "from {last} strikes a bar to {now} at {density}"
+            );
+            last = now;
+        }
+        assert!(strikes(0.76, None) - strikes(0.75, None) < 1.0);
+        assert_eq!(strikes(1.0, None), 16.0);
+        // An idiom still has its vocabulary up there: a trio's comp and a rock band's are not
+        // the same bar.
+        let trio = strikes(0.8, Some(PerformanceStyle::JazzTrio));
+        let rock = strikes(0.8, Some(PerformanceStyle::Rock));
+        assert!(
+            (trio - rock).abs() > 0.05,
+            "{trio} and {rock} strikes a bar"
+        );
+    }
+
+    #[test]
+    fn a_comp_that_lifts_lets_go_on_the_beat_before_a_syncopated_strike() {
+        let mut lifting = 0;
+        for seed in 0..64u64 {
+            let (frame, parts) = chords("@axis", 8, seed, 0.0).draft();
+            let grid = frame.grid;
+            let comp = part(&parts, "chords");
+            let beat = grid.tick_of(grid.steps_per_beat());
+            let mut starts: Vec<_> = comp.notes.iter().map(|note| note.start).collect();
+            starts.sort_unstable();
+            starts.dedup();
+            let mut rested = false;
+            for note in &comp.notes {
+                let end = note.start + note.length;
+                let Some(next) = starts.iter().find(|start| **start > note.start) else {
+                    continue;
+                };
+                if end >= *next {
+                    continue;
+                }
+                rested = true;
+                // It lets go on a beat, having sounded for half of one at least, and what it
+                // makes room for is a strike off the beat.
+                assert_eq!(
+                    end.raw() % beat.raw(),
+                    0,
+                    "seed {seed}: let go off the beat"
+                );
+                assert!(note.length.raw() * 2 >= beat.raw(), "seed {seed}: a click");
+                assert!(
+                    grid.weight(grid.step_of(*next)) <= 1,
+                    "seed {seed}: before a beat"
+                );
+                // And never across a bar line: the chord that follows is struck on its line.
+                assert_eq!(
+                    note.start.raw() / grid.bar_ticks().raw(),
+                    next.raw() / grid.bar_ticks().raw()
+                );
+            }
+            lifting += usize::from(rested);
+        }
+        // Half the takes lift, and a lift only shows on a figure with a syncopated strike in
+        // it, so fewer than half of them do.
+        assert!((10..=32).contains(&lifting), "{lifting} of 64 takes let go");
+
+        // A pad has nothing to lift for, and a rhythm somebody wrote says where its rests are.
+        for seed in 0..16u64 {
+            let mut pad = chords("@axis", 4, seed, 0.0);
+            pad.parts = vec![PartSpec::of_role("pad", Role::Pad)];
+            let (frame, parts) = pad.draft();
+            let total: i64 = part(&parts, "pad")
+                .notes
+                .iter()
+                .map(|n| n.length.raw())
+                .sum();
+            assert!(total >= frame.grid.bar_ticks().raw() * 4 * 3);
+            let mut written = chords("@axis", 4, seed, 0.0);
+            written.parts[0].rhythm = crate::rhythm::Pattern::parse("x ~ ~ x ~ ~ x ~");
+            let (_, parts) = written.draft();
+            let notes = &part(&parts, "chords").notes;
+            let mut starts: Vec<_> = notes.iter().map(|note| note.start).collect();
+            starts.sort_unstable();
+            starts.dedup();
+            for note in notes {
+                if let Some(next) = starts.iter().find(|start| **start > note.start) {
+                    assert_eq!(
+                        note.start + note.length,
+                        *next,
+                        "a written rhythm was lifted"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

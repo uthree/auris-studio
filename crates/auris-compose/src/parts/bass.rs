@@ -10,14 +10,16 @@ use auris_core::time::Ticks;
 
 use crate::PerformanceStyle;
 use crate::frame::{Frame, SectionPlan};
-use crate::rhythm::{DrumVoice, Grid};
+use crate::rhythm::DrumVoice;
 use crate::rng::Rng;
 use crate::spec::PartSpec;
 use crate::theory::chord::Chord;
 use crate::theory::chord_scale::ChordScale;
 use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 
-use super::writer::{bar_stream, density, part_grid, phrase_shape, velocity};
+use super::writer::{
+    band_pushes, bar_stream, density, lift_before, part_grid, phrase_shape, velocity,
+};
 use super::{Draft, ScoreSettings};
 
 /// The octave a bass leaps to from `root`, staying inside `low..=high`.
@@ -114,10 +116,17 @@ fn pick_figure(rng: &mut Rng, busy: f32, style: Option<PerformanceStyle>) -> Bas
             [0.3, 0.8, 0.6, 2.0, 0.15, 3.0]
         }
         Some(PerformanceStyle::PopBand) => [0.7, 1.2, 1.8, 0.7, 0.3, 1.6],
-        // With no idiom named every figure is as likely as its dial makes it — but for the
-        // walk, which is an idiom of its own: quarter notes through the third over a kit
-        // playing a backbeat is a jazz player sitting in, and a take nobody asked for.
-        None => [1.0, 1.0, 1.0, 1.0, 0.2, 1.0],
+        // With no idiom named, the figures are weighted by what the bass lines of a pop and
+        // rock score corpus play, where every one but the root-and-fifth pair used to be as
+        // likely as its dial made it. The walk is an idiom of its own: quarter notes through
+        // the third over a kit playing a backbeat is a jazz player sitting in, and a take
+        // nobody asked for. The held root was one take in six, and two of the corpus's
+        // intervals in a hundred are a bar long. The octave figure was one take in five and
+        // put an octave leap into 15 intervals in a hundred, where the corpus leaps one in
+        // five. And the pulse is the line those scores play most: 46 of their intervals in a
+        // hundred are an eighth apart and 42 are the same note again, where these takes had
+        // 22 and 28.
+        None => [0.5, 1.0, 1.0, 0.4, 0.2, 2.5],
     };
     for (weight, preference) in weights.iter_mut().zip(vocabulary) {
         *weight *= preference;
@@ -250,21 +259,20 @@ const PICKUP_EVERY: usize = 2;
 /// How many takes pick up. The rest play the figure plain, which is a line too.
 const PICKUP: f32 = 0.6;
 
-/// Where a note lets go when the note after it is syncopated, as a step of the bar: the last
-/// beat before that note, or `None` to hold into it.
+/// The dial setting from which a pulse runs eighths rather than quarters, whatever the idiom.
 ///
-/// A bass that held every note into the next was sounding all of the time, where the corpus
-/// lines sound for 87 hundredths of it, and where they rest is here: a note a dotted quarter
-/// from the next is followed by a rest half the time, one an eighth from it one time in seven.
-/// Letting go on the beat is what makes the hit after it a push rather than a slur — and over
-/// a backbeat it is also the bass leaving the snare its beat.
-fn lift_before(grid: Grid, here: usize, next: usize) -> Option<usize> {
-    if grid.weight(next) > 1 {
-        return None;
-    }
-    let beat = grid.steps_per_beat().max(1);
-    let boundary = next / beat * beat;
-    (boundary > here).then_some(boundary)
+/// Just under the middle, so a bass nobody has touched plays the eighths a pop bass plays. Rock
+/// and the sequenced idioms run them at any setting.
+const PULSE_EIGHTHS_FROM: f32 = 0.45;
+
+/// The dial setting from which the run into a new phrase is two sixteenths, not two eighths.
+const QUICK_RUN_FROM: f32 = 0.66;
+
+/// The scale note under `pitch`, a step away: what a line stands on before it steps up to it.
+fn step_below(scale: &ChordScale, pitch: i32) -> Option<i32> {
+    (1..=3)
+        .map(|step| pitch - step)
+        .find(|below| scale.contains(PitchClass::new(*below)))
 }
 
 /// The bass line.
@@ -296,7 +304,7 @@ pub(super) fn bass(
         kick.at_in_bar(step, drums.steps_per_bar(), drums.steps_per_beat(), own)
             .is_some()
     };
-    let mut notes = Vec::new();
+    let mut notes: Vec<Draft> = Vec::new();
 
     // How the part plays, drawn once for the section and kept over every chord in it.
     //
@@ -318,6 +326,12 @@ pub(super) fn bass(
     let fifth_above = bar_stream(frame, part, section, "voicing", 0).chance(0.5);
     // Whether this take's second bar answers its first. See `PICKUP_EVERY`.
     let picks_up = bar_stream(frame, part, section, "pickup", 0).chance(PICKUP);
+    // The dial as it was set, for the two things it switches rather than scales.
+    let dial = part.density.unwrap_or_else(|| settings.mood.density());
+    // Whether the band pushes this stretch's chord changes, and whether the chord in hand was
+    // pushed into by the one before it. A rhythm somebody wrote says where its notes are.
+    let pushing = part.rhythm.is_none() && band_pushes(section, settings.mood.syncopation);
+    let mut pushed_in = false;
 
     for (position_in_section, event) in section.events.iter().enumerate() {
         let root = fold_into(event.chord.bass_class().midi(part.octave), low, high);
@@ -386,14 +400,15 @@ pub(super) fn bass(
                     })
                     .collect(),
                 BassFigure::Pulse => {
-                    let division = if matches!(
-                        settings.style,
-                        Some(
-                            PerformanceStyle::Rock
-                                | PerformanceStyle::Synthwave
-                                | PerformanceStyle::Chiptune
-                        )
-                    ) {
+                    let division = if dial >= PULSE_EIGHTHS_FROM
+                        || matches!(
+                            settings.style,
+                            Some(
+                                PerformanceStyle::Rock
+                                    | PerformanceStyle::Synthwave
+                                    | PerformanceStyle::Chiptune
+                            )
+                        ) {
                         (grid.steps_per_beat() / 2).max(1)
                     } else {
                         grid.steps_per_beat().max(1)
@@ -409,22 +424,61 @@ pub(super) fn bass(
         };
         // Always sound the chord's start, so a change of chord is heard whatever the figure —
         // except under a written rhythm, whose rests are part of the instruction.
-        if part.rhythm.is_none() && !onsets.contains(&0) {
+        // And except where the chord before pushed into this one: the change has been heard,
+        // half a beat ago, and striking it again on the line is a stutter.
+        if pushed_in {
+            onsets.retain(|offset| *offset != 0);
+        } else if part.rhythm.is_none() && !onsets.contains(&0) {
             onsets.insert(0, 0);
         }
         // The pickup: in every second bar the last half-beat steps into the bar after it. A
         // held root and a walk are left alone — the one is a player keeping out of the way and
         // the other approaches every chord already.
+        //
+        // Where a phrase closes the pickup is a run: two notes up the scale into the bar
+        // after it, eighths, or sixteenths once the dial is past two thirds. A take that
+        // picked up the same way every second bar wrote a bar and a half of different rhythms
+        // in sixteen, where the corpus lines write five; the end of a phrase is where a bass
+        // player says something else.
         let half = (grid.steps_per_beat() / 2).max(1);
+        let closing = section.closes_phrase(bar);
+        // The push: the next chord's root, half a beat before its line and held over it. The
+        // comp strikes the same change at the same moment — see `band_pushes` — and a bass
+        // that waited for the line would be restriking the old root under the new chord. A
+        // walk does not push: it is on every beat by definition.
+        let pushes_out = pushing
+            && figure != BassFigure::Walk
+            && steps > half
+            && section
+                .events
+                .get(position_in_section + 1)
+                .is_some_and(|next| next.start == event.end())
+            && !section.continues_chord(position_in_section + 1);
         let picking_up = picks_up
             && part.rhythm.is_none()
-            && bar % PICKUP_EVERY == PICKUP_EVERY - 1
+            && (bar % PICKUP_EVERY == PICKUP_EVERY - 1 || closing)
+            // A push is already the way into the next bar, and takes the same half-beat.
+            && !pushes_out
             && !matches!(figure, BassFigure::Root | BassFigure::Walk)
             && first + steps == per_bar
             && steps > half;
-        if picking_up && !onsets.contains(&(steps - half)) {
+        let stride = if dial >= QUICK_RUN_FROM {
+            (half / 2).max(1)
+        } else {
+            half
+        };
+        let running_up = picking_up && closing && steps > 2 * stride;
+        if running_up {
+            // The run owns the end of the bar: nothing of the figure is struck inside it.
+            onsets.retain(|offset| *offset < steps - 2 * stride);
+            onsets.extend([steps - 2 * stride, steps - stride]);
+        } else if picking_up && !onsets.contains(&(steps - half)) {
             onsets.push(steps - half);
             onsets.sort_unstable();
+        }
+        if pushes_out {
+            onsets.retain(|offset| *offset < steps - half);
+            onsets.push(steps - half);
         }
         // Stepping into whatever comes next, on the last hit before it: what the approach
         // figure does under every chord, and the pickup in its own bar.
@@ -445,6 +499,14 @@ pub(super) fn bass(
         });
 
         let last = onsets.len().saturating_sub(1);
+        // The note that pushed into this chord is held to the first thing the chord plays for
+        // itself, or through all of it.
+        if pushed_in && let Some(held) = notes.last_mut() {
+            let until = onsets
+                .first()
+                .map_or(event.length, |offset| grid.tick_of(*offset));
+            held.length = (section.start + event.start + until - held.start).max(Ticks(1));
+        }
         let answering = answering_hit(&onsets, steps);
         for (position, offset) in onsets.iter().enumerate() {
             let at = event.start + grid.tick_of(*offset);
@@ -474,15 +536,21 @@ pub(super) fn bass(
                 // chord or to the key, and one part quietly breaking that would be a wrong note
                 // to anybody reading the piano roll. Inside the scale the chord implies, so an
                 // approach into a dominant does not walk through the degree it just altered.
+                _ if pushes_out && position == last => target.unwrap_or(root),
                 _ if approaching && position == last && last > 0 => target
                     .and_then(|next| {
                         let scale = ChordScale::new(event.key, event.chord);
-                        (1..=3)
-                            .map(|step| next - step)
-                            .find(|pitch| scale.contains(PitchClass::new(*pitch)))
-                            .map(|pitch| fold_into(pitch, low, high))
+                        step_below(&scale, next).map(|pitch| fold_into(pitch, low, high))
                     })
                     .unwrap_or(fifth),
+                // The note before it in a run: one more step down the same scale.
+                _ if running_up && position + 1 == last && last > 1 => target
+                    .and_then(|next| {
+                        let scale = ChordScale::new(event.key, event.chord);
+                        let under = step_below(&scale, next)?;
+                        step_below(&scale, under).map(|pitch| fold_into(pitch, low, high))
+                    })
+                    .unwrap_or(root),
                 BassFigure::Root | BassFigure::Pulse => root,
                 BassFigure::Fifth | BassFigure::Approach => {
                     if answers {
@@ -523,6 +591,7 @@ pub(super) fn bass(
                 length: length.min(event.end() - at).max(Ticks(1)),
             });
         }
+        pushed_in = pushes_out;
     }
     notes
 }
@@ -660,7 +729,7 @@ mod tests {
 
     #[test]
     fn a_note_lets_go_on_the_beat_before_a_syncopated_hit() {
-        let grid = Grid::default();
+        let grid = crate::rhythm::Grid::default();
         assert_eq!(
             lift_before(grid, 0, 6),
             Some(4),
@@ -750,6 +819,93 @@ mod tests {
             picking_up > 4 && plain > 4,
             "{picking_up} takes pick up and {plain} play the figure plain"
         );
+    }
+
+    #[test]
+    fn a_pulse_runs_eighths_from_the_middle_of_the_dial() {
+        // A repeated root on every beat was the unstyled pulse at any setting, and eighths the
+        // property of two idioms. Eighths are what the corpus's bass lines play most.
+        use crate::fixture::bar_steps;
+        let pumping = |density: f32| -> usize {
+            (0..64u64)
+                .filter(|seed| {
+                    let mut song = line(*seed, None);
+                    song.parts[0].density = Some(density);
+                    let (frame, parts) = song.draft();
+                    bar_steps(&frame, part(&parts, "bass"), 0) == vec![0, 2, 4, 6, 8, 10, 12, 14]
+                })
+                .count()
+        };
+        assert_eq!(pumping(0.3), 0, "a sparse pulse stays on the beat");
+        let middle = pumping(0.5);
+        assert!(
+            (12..=44).contains(&middle),
+            "{middle} of 64 unstyled takes run eighths"
+        );
+    }
+
+    #[test]
+    fn a_bass_that_picks_up_runs_into_a_new_phrase() {
+        // The pickup came round every second bar and never changed, so a take had a bar and a
+        // half of different rhythms in sixteen. Where a phrase closes it is two notes up the
+        // scale into the bar after: eighths, and sixteenths once the dial is past two thirds.
+        use crate::fixture::bar_steps;
+        for (density, run) in [(0.5, [12usize, 14]), (0.8, [14, 15])] {
+            let mut running = 0;
+            for seed in 0..48u64 {
+                let mut song = line(seed, Some(PerformanceStyle::PopBand));
+                song.parts[0].density = Some(density);
+                let (frame, parts) = song.draft();
+                let bass = part(&parts, "bass");
+                let (plain, pickup, close) = (
+                    bar_steps(&frame, bass, 0),
+                    bar_steps(&frame, bass, 1),
+                    bar_steps(&frame, bass, 3),
+                );
+                // A take that plays the figure plain, a held root or a walk has no run.
+                if plain == pickup && !plain.contains(&14) || plain == vec![0, 4, 8, 12] {
+                    continue;
+                }
+                let bar = frame.grid.bar_ticks();
+                let step = frame.grid.step_ticks();
+                let at = |index: usize| {
+                    bass.notes
+                        .iter()
+                        .find(|note| note.start == bar * 3 + step * index as i64)
+                        .map(|note| i32::from(note.pitch))
+                };
+                let (Some(first), Some(second)) = (at(run[0]), at(run[1])) else {
+                    continue;
+                };
+                let arriving = bass
+                    .notes
+                    .iter()
+                    .find(|note| note.start == bar * 4)
+                    .map(|note| i32::from(note.pitch))
+                    .expect("the downbeat of bar five");
+                if !(first < second && (1..=3).contains(&(second - first))) {
+                    continue;
+                }
+                running += 1;
+                assert!(
+                    close
+                        .iter()
+                        .all(|step| *step < run[0] || run.contains(step)),
+                    "seed {seed}: the figure struck inside the run: {close:?}"
+                );
+                // The line may fold at the edge of the instrument, so it is the pitch class
+                // the run arrives under.
+                let under = (arriving - second).rem_euclid(12);
+                assert!(
+                    (1..=3).contains(&under),
+                    "seed {seed}: {second} into {arriving}"
+                );
+            }
+            assert!(
+                running >= 8,
+                "{running} of 48 takes ran into bar five at {density}"
+            );
+        }
     }
 
     #[test]

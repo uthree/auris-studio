@@ -163,6 +163,72 @@ warning sits at the 90th percentile and fires on one in ten: at the 95th, four s
 a row all finished at 76-78%, just under it. With `--any-part`, 518 songs give 3.9%, 5.8% and
 11% for the three rows.
 
+## What the accompaniment writers write
+
+```
+cargo run --release -p auris-compose --example dump_parts > takes.jsonl
+uv run tools/eval/accompaniment_parts.py corpus takes.jsonl corpus/
+uv run tools/eval/accompaniment_parts.py intrinsic takes.jsonl
+uv run tools/eval/accompaniment_parts.py kit corpus/
+cargo run --release -p auris-compose --example dump_parts -- --sweep > sweep.jsonl
+uv run tools/eval/accompaniment_parts.py sweep sweep.jsonl
+```
+
+The instrument for the parts `write_phrase` puts under a tune: the bass, the chords, the pad,
+the arpeggio and the kit. It reads notes, not audio, so it says what a writer wrote and nothing
+about how it sounds; run it on the commit before a change to a writer and on the one after.
+
+`dump_parts` writes sixteen-bar takes as JSON lines: six charts, six idioms, three densities
+and 24 seeds for each pitched part, and eight grooves at three densities and three intensities
+for the kit — 12,102 takes. `--seeds N` changes the run of seeds, and `--sweep` writes the two
+dials that are read as a curve instead, the chords' density from 0.6 to 1.0 and the kit's from
+0.3 to 0.8.
+
+`corpus` measures the bass and the kit beside the bass and drum tracks of a folder of MIDI
+files, on one ruler: everything quantised to sixteenths of 4/4 and cut into sixteen-bar windows.
+`intrinsic` reads the pitched takes against the chords they were written over, which the dump
+carries, and is all there is for the chords, the pad and the arpeggio: no score in the corpus
+below carries one of them apart from the tune it accompanies. `kit` prints where a corpus's
+kits put a crash, an open hat and a tom and what their fill bars look like. `sweep` reads the
+`--sweep` dump and prints the two dials as curves, which is how a cliff in one shows: the
+chords used to strike 4.2 times a bar at a density of 0.75 and 6.8 at 0.76.
+
+The reference is the PDMX subset the melody model reads: pop and rock scores with lyrics, 4/4
+only. It holds 264 sixteen-bar bass windows from 51 files (General MIDI programs 32 to 39) and
+165 kit windows from 37 — a drum window counts only with a kick and a snare in every bar and
+two strokes of a timekeeper, since a tambourine part is not a kit playing time. Unstyled takes
+at the default density, the kit's over its eight grooves, stood here when the tool was written:
+
+| A bass line | Corpus | Takes |
+| --- | --- | --- |
+| Notes in a bar | 5.4 | 5.1 |
+| Onset spacings of an eighth | 46% | 48% |
+| Onset spacings of a dotted quarter | 5% | 19% |
+| Intervals that repeat the note | 42% | 40% |
+| Time sounding | 87% | 92% |
+| Bars that strike their downbeat | 89% | 85% |
+| Bars with the rhythm of the bar before | 39% | 67% |
+| Different bar rhythms in sixteen bars | 5.1 | 1.7 |
+
+| A kit | Corpus | Takes |
+| --- | --- | --- |
+| Different bars in sixteen | 6.1 | 4.6 |
+| Fill bars in sixteen | 1.5 | 0.6 |
+| Kick strokes in a bar | 3.0 | 3.4 |
+| Sixteen bars that strike a crash | 66% | 67% |
+| Sixteen bars that strike a tom | 39% | 45% |
+
+Three things to know before reading a difference. The corpus is scores somebody transcribed
+and not performances, so a figure from it is a direction and never a target; it carries no
+velocities worth reading at all. A window is cut from the top of the file and does not line up
+with a song's sections, so nothing here says which bar of a phrase a fill or a crash belongs
+in: both come out evenly spread over the bars of a four-bar phrase. And a share needs seeds. A
+take draws its figure once, so 24 seeds are 24 draws however many charts they are multiplied
+by; a crash meant for two takes in three measured nine in ten that way, and the last two rows
+of the kit table are counted over a thousand.
+
+The corpus stays on the machine that holds it, and so does anything counted from one song.
+
 ## Melody against the lyric's accent
 
 ```
@@ -321,6 +387,8 @@ match the listening excerpts. It uses local audio players and uploads nothing.
 ```sh
 uv run --python 3.11 --with pytest --with numpy --with scipy --with soundfile pytest tools/eval/test_music.py
 uv run --with ruff ruff check tools/eval/music.py tools/eval/learned_models.py
+uv run --with pytest --with mido==1.3.3 pytest tools/eval/test_accompaniment_parts.py
+uv run --with ruff ruff check tools/eval/accompaniment_parts.py
 ```
 
 The contract tests require no model download. Real-model comparisons should use
