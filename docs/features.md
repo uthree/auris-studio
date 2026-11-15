@@ -123,6 +123,10 @@ every note you tried to pick up.
 
 The wheel over the arrangement moves down the tracks; ⇧ turns it sideways along the song, and
 **Ctrl or ⌥** zooms the time axis about the pointer, so the bar being looked at stays where it is.
+The piano roll and the drum editor take the same keys over their own time axis, which zooms and
+scrolls apart from the arrangement's: the view under the pointer is the one that zooms. In the
+piano roll the plain wheel moves up and down the keyboard, and **Ctrl+⇧** (or ⌥⇧) zooms the pitch
+axis.
 
 **No bar takes the wheel.** A fader, a plugin parameter, a clip dial — every one of
 them is swept with the pointer and none of them answers a scroll. They all sit inside panels that

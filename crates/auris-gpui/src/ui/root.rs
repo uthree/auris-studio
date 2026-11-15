@@ -252,6 +252,10 @@ impl Render for AurisApp {
         let width = self.arrangement_width;
         self.timeline
             .follow(&mut self.playhead_follow, playhead, width, playing);
+        if let Some(roll) = self.canvas.roll.get() {
+            self.roll_timeline
+                .follow(&mut self.roll_follow, playhead, roll.size.width, playing);
+        }
 
         // The taskbar and the Alt-Tab list are where a user looks to tell one project's window
         // from another's, and they were both showing a constant. Only on a change: setting it is
@@ -1652,7 +1656,7 @@ impl AurisApp {
             }
             Drag::RollPlayhead => {
                 let x = event.position.x - self.roll_origin().x;
-                let tick = self.snap_unless_held(self.timeline.x_to_tick(x), event.modifiers);
+                let tick = self.snap_unless_held(self.roll_timeline.x_to_tick(x), event.modifiers);
                 self.seek(tick);
             }
             Drag::AuditionHarmony => {
@@ -1886,7 +1890,7 @@ impl AurisApp {
                     }
                 }
                 let origin = self.roll_origin();
-                let tick = self.timeline.x_to_tick(event.position.x - origin.x);
+                let tick = self.roll_timeline.x_to_tick(event.position.x - origin.x);
                 let pitch = self.pitch.y_to_pitch(event.position.y - origin.y);
                 let Some(clip_start) = self.session.midi_clip(clip).map(|c| c.start) else {
                     return;
@@ -1913,7 +1917,7 @@ impl AurisApp {
                     return;
                 };
                 // A vertical drag must not quantize an off-grid phrase because the pointer wobbled.
-                let travel = if f32::from(self.timeline.duration_to_width(travel)).abs()
+                let travel = if f32::from(self.roll_timeline.duration_to_width(travel)).abs()
                     < f32::from(crate::gestures::DRAG_THRESHOLD)
                 {
                     Ticks::ZERO
@@ -1944,7 +1948,7 @@ impl AurisApp {
                 let at = self
                     .project()
                     .tempo_map
-                    .ticks_to_seconds(self.timeline.x_to_tick(x))
+                    .ticks_to_seconds(self.roll_timeline.x_to_tick(x))
                     .0;
                 let widest = (end_seconds - from_seconds - auris_session::MIN_PHONEME_SECONDS)
                     .max(auris_session::MIN_PHONEME_SECONDS);
@@ -1977,7 +1981,7 @@ impl AurisApp {
                 let start = tempo.ticks_to_seconds(clip_start + note.start).0;
                 let end = tempo.ticks_to_seconds(clip_start + note.end()).0;
                 let at = tempo
-                    .ticks_to_seconds(self.timeline.x_to_tick(event.position.x - origin.x))
+                    .ticks_to_seconds(self.roll_timeline.x_to_tick(event.position.x - origin.x))
                     .0;
                 let centre = (self.pitch.top_pitch as f32 - f32::from(note.pitch))
                     * self.pitch.row_height
@@ -2052,7 +2056,7 @@ impl AurisApp {
                     }
                 }
                 let origin = self.roll_origin();
-                let tick = self.timeline.x_to_tick(event.position.x - origin.x);
+                let tick = self.roll_timeline.x_to_tick(event.position.x - origin.x);
                 let Some(clip_start) = self.session.midi_clip(clip).map(|clip| clip.start) else {
                     return;
                 };
@@ -2177,6 +2181,7 @@ impl AurisApp {
                 self.drag_volume_contour_point(clip, index, bounds, event.position);
             }
             Drag::TimeZoom {
+                surface,
                 start_fraction,
                 start_x,
             } => {
@@ -2184,7 +2189,8 @@ impl AurisApp {
                 // measured against the width the widget was drawn at.
                 let travel = f32::from(crate::ui::widgets::ZOOM_SLIDER_WIDTH).max(1.0);
                 let delta = f32::from(event.position.x - start_x) / travel;
-                self.timeline.set_zoom_fraction(start_fraction + delta);
+                self.time_view_mut(surface)
+                    .set_zoom_fraction(start_fraction + delta);
             }
             Drag::Tempo {
                 at,
@@ -3636,8 +3642,9 @@ impl AurisApp {
         cx.notify();
     }
 
-    fn on_zoom_in(&mut self, _: &actions::ZoomIn, _window: &mut Window, cx: &mut Context<Self>) {
-        self.timeline.zoom_by(1.3, px(0.0));
+    fn on_zoom_in(&mut self, _: &actions::ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
+        let surface = self.time_surface_at(window.mouse_position());
+        self.time_view_mut(surface).zoom_by(1.3, px(0.0));
         cx.notify();
     }
 
@@ -3651,8 +3658,9 @@ impl AurisApp {
         cx.notify();
     }
 
-    fn on_zoom_out(&mut self, _: &actions::ZoomOut, _window: &mut Window, cx: &mut Context<Self>) {
-        self.timeline.zoom_by(1.0 / 1.3, px(0.0));
+    fn on_zoom_out(&mut self, _: &actions::ZoomOut, window: &mut Window, cx: &mut Context<Self>) {
+        let surface = self.time_surface_at(window.mouse_position());
+        self.time_view_mut(surface).zoom_by(1.0 / 1.3, px(0.0));
         cx.notify();
     }
 

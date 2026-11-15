@@ -128,8 +128,8 @@ impl AurisApp {
         };
         let origin = self.roll_origin();
         let ticks = (
-            self.timeline.x_to_tick(band.origin.x - origin.x) - clip.start,
-            self.timeline
+            self.roll_timeline.x_to_tick(band.origin.x - origin.x) - clip.start,
+            self.roll_timeline
                 .x_to_tick(band.origin.x + band.size.width - origin.x)
                 - clip.start,
         );

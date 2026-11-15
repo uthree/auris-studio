@@ -18,6 +18,7 @@ use gpui::{
 };
 
 use crate::app::{AurisApp, Drag};
+use crate::ui::timeline::TimeSurface;
 
 /// A panel that scrolls, and so draws a bar saying where in it you are.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -36,7 +37,7 @@ pub(crate) enum ScrollPanel {
     TrackGrid,
     /// The arrangement's horizontal musical time axis.
     ArrangementTime,
-    /// The shared piano-roll and drum-editor time axis.
+    /// The piano-roll and drum-editor time axis, scrolled apart from the arrangement's.
     EditorTime,
 }
 
@@ -68,6 +69,15 @@ impl ScrollPanel {
                 Axis::Horizontal
             }
             _ => Axis::Vertical,
+        }
+    }
+
+    /// Which time axis a horizontal time bar scrolls: the editor's for its own bar, and the
+    /// arrangement's for everything else.
+    pub(crate) fn time_surface(self) -> TimeSurface {
+        match self {
+            ScrollPanel::EditorTime => TimeSurface::Editor,
+            _ => TimeSurface::Arrangement,
         }
     }
 
@@ -128,12 +138,15 @@ impl AurisApp {
                     self.t(auris_i18n::Key::TimelineScrollHelp),
                     "Shift+Wheel",
                 ))
-                .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
-                    let delta = event.delta.pixel_delta(px(24.0));
-                    this.timeline.scroll_by(-delta.x - delta.y);
-                    cx.stop_propagation();
-                    cx.notify();
-                }))
+                .on_scroll_wheel(
+                    cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
+                        let delta = event.delta.pixel_delta(px(24.0));
+                        this.time_view_mut(panel.time_surface())
+                            .scroll_by(-delta.x - delta.y);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                )
                 .child(self.panel_scrollbar(panel, cx)),
         )
     }
@@ -171,8 +184,9 @@ impl AurisApp {
                 .0
                 .saturating_add(8 * TICKS_PER_QUARTER)
                 .max(64 * TICKS_PER_QUARTER);
-            let offset = f32::from(self.timeline.duration_to_width(self.timeline.scroll_ticks));
-            let extent = f32::from(self.timeline.duration_to_width(Ticks(end)));
+            let view = self.time_view(panel.time_surface());
+            let offset = f32::from(view.duration_to_width(view.scroll_ticks));
+            let extent = f32::from(view.duration_to_width(Ticks(end)));
             return ScrollView {
                 offset: -offset,
                 max_offset: (extent - viewport).max(offset).max(0.0),
@@ -212,9 +226,8 @@ impl AurisApp {
             ScrollPanel::ArrangementTime | ScrollPanel::EditorTime
         ) {
             let maximum = self.scroll_view(panel).max_offset;
-            self.timeline.scroll_ticks = self
-                .timeline
-                .width_to_duration(px((-offset).clamp(0.0, maximum)));
+            let view = self.time_view_mut(panel.time_surface());
+            view.scroll_ticks = view.width_to_duration(px((-offset).clamp(0.0, maximum)));
             return;
         }
         let Some(handle) = self.scroll_handle(panel) else {
@@ -438,7 +451,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn piano_roll_time_bar_shares_the_arrangement_position_and_clamps_at_start(
+    fn piano_roll_time_bar_scrolls_the_editor_apart_from_the_arrangement_and_clamps_at_start(
         cx: &mut gpui::TestAppContext,
     ) {
         use crate::harness::{drag, paint, with_a_clip};
@@ -455,13 +468,10 @@ mod tests {
         let from = gpui::point(bar.left() + px(3.0), bar.center().y);
         drag(cx, from, bar.center());
         app.update(cx, |this, _| {
-            assert!(this.timeline.scroll_ticks > Ticks::ZERO);
-            assert_eq!(
-                this.scroll_view(ScrollPanel::EditorTime).offset,
-                this.scroll_view(ScrollPanel::ArrangementTime).offset
-            );
-            this.set_scroll_offset(ScrollPanel::EditorTime, 100.0);
+            assert!(this.roll_timeline.scroll_ticks > Ticks::ZERO);
             assert_eq!(this.timeline.scroll_ticks, Ticks::ZERO);
+            this.set_scroll_offset(ScrollPanel::EditorTime, 100.0);
+            assert_eq!(this.roll_timeline.scroll_ticks, Ticks::ZERO);
         });
     }
 

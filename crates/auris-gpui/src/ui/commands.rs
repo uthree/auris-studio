@@ -535,22 +535,25 @@ impl AurisApp {
     pub(crate) fn zoom_slider(
         &self,
         id: &'static str,
+        surface: crate::ui::timeline::TimeSurface,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::AnyElement {
         let theme = self.theme.clone();
         gpui::IntoElement::into_any_element(crate::ui::widgets::zoom_slider(
             id,
-            self.timeline.zoom_fraction(),
+            self.time_view(surface).zoom_fraction(),
             &theme,
             cx.listener(move |this, event: &gpui::MouseDownEvent, _, _| {
                 this.begin_drag(Drag::TimeZoom {
-                    start_fraction: this.timeline.zoom_fraction(),
+                    surface,
+                    start_fraction: this.time_view(surface).zoom_fraction(),
                     start_x: event.position.x,
                 });
             }),
             cx.listener(
                 move |this, event: &crate::ui::widgets::SliderKeyboardEvent, _, cx| {
-                    this.timeline.set_zoom_fraction(event.fraction);
+                    this.time_view_mut(surface)
+                        .set_zoom_fraction(event.fraction);
                     cx.notify();
                 },
             ),
@@ -1003,6 +1006,7 @@ impl AurisApp {
         self.sung_retry.clear();
         self.sung_badges.clear();
         self.timeline.scroll_ticks = Ticks::ZERO;
+        self.roll_timeline.scroll_ticks = Ticks::ZERO;
         self.lane_scroll = gpui::px(0.0);
     }
 
@@ -2162,6 +2166,7 @@ impl AurisApp {
             self.selected_notes = BTreeSet::from([index]);
             self.score_layer = crate::ui::score_layer::ScoreLayer::Source;
             self.timeline.scroll_ticks = start.max(Ticks::ZERO);
+            self.roll_timeline.scroll_ticks = start.max(Ticks::ZERO);
             let height = self
                 .canvas
                 .roll

@@ -686,7 +686,11 @@ impl AurisApp {
                         .items_center()
                         .gap_1()
                         .children(caption(self.t(Key::Zoom)))
-                        .child(self.zoom_slider("timeline-zoom", cx))
+                        .child(self.zoom_slider(
+                            "timeline-zoom",
+                            crate::ui::timeline::TimeSurface::Arrangement,
+                            cx,
+                        ))
                         .when(compact, |slot| {
                             slot.tooltip(crate::ui::tooltip::text_tip(self.t(Key::Zoom)))
                         })

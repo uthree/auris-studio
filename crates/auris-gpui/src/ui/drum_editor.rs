@@ -17,7 +17,7 @@ use crate::app::{AurisApp, BandSurface, Drag};
 use crate::theme::{Metrics, Theme};
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use crate::ui::paint;
-use crate::ui::piano_roll::{RollTool, paint_clip_extent};
+use crate::ui::piano_roll::{NEIGHBOUR_ALPHA, RollTool, paint_track_extent};
 use crate::ui::prompt::{Prompt, PromptTarget};
 use crate::ui::widgets::{ButtonStyle, button};
 
@@ -32,7 +32,7 @@ pub(crate) enum DrumRowsMode {
     /// The authored map, plus otherwise hidden notes already used by the clip.
     #[default]
     Map,
-    /// Only MIDI keys used by this clip.
+    /// Only MIDI keys used by this clip and the others on its track.
     Used,
     /// Every physical MIDI key.
     All,
@@ -49,7 +49,9 @@ pub(crate) struct DrumLearn {
 pub(crate) struct DrumEditorState {
     scroll: f32,
     mode: DrumRowsMode,
-    clip: Option<ClipId>,
+    /// The track the rows were laid out for. A track rather than a clip, so a press that moves
+    /// to the clip next door keeps the rows, their scroll and the lane in hand where they were.
+    track: Option<TrackId>,
     pub(crate) selected_lane: Option<u64>,
     learn: Option<DrumLearn>,
 }
@@ -595,6 +597,16 @@ impl AurisApp {
             self.score_preview_notes().unwrap_or(&clip.notes)
         };
         let mut pitches: Vec<u8> = notes.iter().map(|note| note.pitch).collect();
+        // The other clips on the track are edited from here too, so their rows are laid out
+        // whether or not they are on screen: rows that came and went as the view scrolled, or as
+        // a press moved to the clip next door, would move every hit under the pointer.
+        for (id, _, _) in self.roll_track_spans() {
+            if id != clip.id
+                && let Some(neighbour) = self.session.midi_clip(id)
+            {
+                pitches.extend(neighbour.notes.iter().map(|note| note.pitch));
+            }
+        }
         if self.overlay_score()
             && let Some(performed) = self.score_preview_notes()
         {
@@ -615,8 +627,12 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        if self.drum_editor.clip != self.selected_clip {
-            self.drum_editor.clip = self.selected_clip;
+        let track = self
+            .selected_clip
+            .and_then(|clip| self.project().track_of_clip(clip));
+        self.reveal_clip_in_roll();
+        if self.drum_editor.track != track {
+            self.drum_editor.track = track;
             self.drum_editor.scroll = 0.0;
             self.drum_editor.selected_lane = None;
             self.drum_editor.learn = None;
@@ -636,6 +652,16 @@ impl AurisApp {
         let notes = self.score_notes();
         let performance_overlay = self.score_performance_overlay();
         let rows = self.drum_rows();
+        // The rest of the track, the way the piano roll shows it: a press there edits that clip.
+        let ghosts = if editable {
+            self.neighbouring_notes()
+        } else {
+            Vec::new()
+        };
+        let neighbour_spans: Vec<(Ticks, Ticks)> = ghosts
+            .iter()
+            .map(|(start, end, _)| (*start, *end))
+            .collect();
         let height = self
             .canvas
             .roll
@@ -773,7 +799,7 @@ impl AurisApp {
                 Some(element.into_any_element())
             })
             .collect::<Vec<_>>();
-        let view = self.timeline.clone();
+        let view = self.roll_timeline.clone();
         let signatures = self.project().signatures.spans();
         let playhead = self.playhead_ticks();
         let selected = if editable {
@@ -869,7 +895,7 @@ impl AurisApp {
                         }),
                     ))
                     .when(editable, |row| row.child(self.drum_map_actions(cx)))
-                    .child(self.zoom_slider("drum-zoom", cx)),
+                    .child(self.zoom_slider("drum-zoom", crate::ui::timeline::TimeSurface::Editor, cx)),
             )
             .child(
                 div()
@@ -952,14 +978,49 @@ impl AurisApp {
                                                 &signatures,
                                                 &theme,
                                             );
-                                            paint_clip_extent(
+                                            paint_track_extent(
                                                 window,
                                                 bounds,
                                                 &view,
-                                                clip_start,
-                                                clip_length,
+                                                (clip_start, clip_length),
+                                                &neighbour_spans,
                                                 &theme,
                                             );
+                                            for (start, _, notes) in &ghosts {
+                                                for note in notes {
+                                                    let Some(row) = rows
+                                                        .iter()
+                                                        .position(|row| row.pitch == note.pitch)
+                                                    else {
+                                                        continue;
+                                                    };
+                                                    let x = bounds.origin.x
+                                                        + view.tick_to_x(*start + note.start);
+                                                    let y = bounds.origin.y
+                                                        + px(row as f32 * ROW_HEIGHT - scroll
+                                                            + 4.0);
+                                                    paint::rounded_rect(
+                                                        window,
+                                                        Bounds {
+                                                            origin: point(x + px(1.0), y),
+                                                            size: size(
+                                                                px(HIT_WIDTH),
+                                                                px(ROW_HEIGHT - 8.0),
+                                                            ),
+                                                        },
+                                                        px(3.0),
+                                                        Theme::translucent(
+                                                            theme.accent,
+                                                            NEIGHBOUR_ALPHA
+                                                                * (0.4
+                                                                    + 0.6
+                                                                        * note
+                                                                            .velocity
+                                                                            .clamp(0.0, 1.0)),
+                                                        ),
+                                                    );
+                                                }
+                                            }
                                             for (index, note) in notes.iter().enumerate() {
                                                 let Some(row) = rows
                                                     .iter()
@@ -1084,14 +1145,19 @@ impl AurisApp {
     }
 
     fn drum_hit_at(&self, at: Point<Pixels>, pitch: u8) -> Option<usize> {
-        let clip = self.selected_midi_clip()?;
+        self.drum_hit_in(self.selected_clip?, at, pitch)
+    }
+
+    /// The hit of `clip` drawn under `at` in the row for `pitch`, newest first.
+    fn drum_hit_in(&self, clip: ClipId, at: Point<Pixels>, pitch: u8) -> Option<usize> {
+        let clip = self.session.midi_clip(clip)?;
         let x = at.x - self.roll_origin().x;
         clip.notes
             .iter()
             .enumerate()
             .rev()
             .find(|(_, note)| {
-                let start = self.timeline.tick_to_x(clip.start + note.start);
+                let start = self.roll_timeline.tick_to_x(clip.start + note.start);
                 note.pitch == pitch && x >= start && x <= start + px(HIT_WIDTH + 2.0)
             })
             .map(|(index, _)| index)
@@ -1106,17 +1172,18 @@ impl AurisApp {
         if !self.editable_score() {
             return;
         }
-        let Some(clip) = self.selected_clip else {
-            return;
-        };
         let origin = self.roll_origin();
         let Some(pitch) = self.drum_pitch_at(event.position.y - origin.y) else {
+            return;
+        };
+        let tick = self.roll_timeline.x_to_tick(event.position.x - origin.x);
+        // A press over the clip next door edits that clip, as it does in the piano roll.
+        let Some(clip) = self.retarget_drum_press(event.position, tick, pitch) else {
             return;
         };
         let Some(clip_start) = self.session.midi_clip(clip).map(|clip| clip.start) else {
             return;
         };
-        let tick = self.timeline.x_to_tick(event.position.x - origin.x);
         let under = self.drum_hit_at(event.position, pitch);
         if self.tool == RollTool::Velocity {
             if let Some(index) = under {
@@ -1196,7 +1263,7 @@ impl AurisApp {
             return;
         };
         let grid = Ticks(self.project().grid.raw().max(1));
-        let tick = self.timeline.x_to_tick(at.x - origin.x);
+        let tick = self.roll_timeline.x_to_tick(at.x - origin.x);
         let current = (tick.snap_nearest(grid) - clip_start).max_zero();
         let mut cells = Vec::new();
         if let Some((last_pitch, previous)) = last
@@ -1275,6 +1342,11 @@ impl AurisApp {
         let Some(pitch) = self.drum_pitch_at(event.position.y - self.roll_origin().y) else {
             return;
         };
+        let tick = self
+            .roll_timeline
+            .x_to_tick(event.position.x - self.roll_origin().x);
+        // The menu is about what was pointed at, which may be a hit in the clip next door.
+        self.retarget_drum_press(event.position, tick, pitch);
         let Some(clip_start) = self.selected_midi_clip().map(|clip| clip.start) else {
             return;
         };
@@ -1285,12 +1357,17 @@ impl AurisApp {
             self.selected_notes.clear();
             self.selected_notes.insert(index);
         }
-        let tick = self
-            .timeline
-            .x_to_tick(event.position.x - self.roll_origin().x);
         let start = (tick.snap_nearest(self.project().grid) - clip_start).max_zero();
         self.open_menu(self.roll_menu(event.position, under, pitch, start));
         cx.notify();
+    }
+
+    /// Points the editor at whichever of the track's clips a press at `at` belongs to: the one
+    /// whose hit is under it, else the one whose stretch holds `tick`.
+    fn retarget_drum_press(&mut self, at: Point<Pixels>, tick: Ticks, pitch: u8) -> Option<ClipId> {
+        self.retarget_track_press(tick, |this, id, _| {
+            this.drum_hit_in(id, at, pitch).is_some()
+        })
     }
 
     fn scroll_drums(
@@ -1300,13 +1377,19 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         let delta = event.delta.pixel_delta(px(ROW_HEIGHT));
-        if event.modifiers.alt {
-            self.timeline.zoom_by(
-                if delta.y > px(0.0) { 1.12 } else { 1.0 / 1.12 },
-                event.position.x - self.roll_origin().x,
-            );
-        } else if event.modifiers.shift {
-            self.timeline.scroll_by(-delta.y - delta.x);
+        // The kit's rows are a fixed height, so the zoom that would be the pitch axis's in the
+        // piano roll zooms time here too, rather than doing nothing at all.
+        let wheel = crate::gestures::roll_wheel_action(event.modifiers);
+        if matches!(
+            wheel,
+            crate::gestures::RollWheel::ZoomTime | crate::gestures::RollWheel::ZoomPitch
+        ) {
+            if let Some(factor) = crate::gestures::wheel_zoom_factor(delta.y) {
+                self.roll_timeline
+                    .zoom_by(factor, event.position.x - self.roll_origin().x);
+            }
+        } else if wheel == crate::gestures::RollWheel::AlongTheSong {
+            self.roll_timeline.scroll_by(-delta.y - delta.x);
         } else {
             let height = self
                 .canvas
@@ -1316,7 +1399,7 @@ impl AurisApp {
             let max = (self.drum_rows().len() as f32 * ROW_HEIGHT - height).max(0.0);
             self.drum_editor.scroll =
                 (self.drum_editor.scroll - f32::from(delta.y)).clamp(0.0, max);
-            self.timeline.scroll_by(-delta.x);
+            self.roll_timeline.scroll_by(-delta.x);
         }
         cx.notify();
     }
@@ -1421,7 +1504,7 @@ impl AurisApp {
                 let Some(row) = rows.iter().position(|row| row.pitch == note.pitch) else {
                     return false;
                 };
-                let x = origin.x + self.timeline.tick_to_x(clip.start + note.start);
+                let x = origin.x + self.roll_timeline.tick_to_x(clip.start + note.start);
                 let y = origin.y + px(row as f32 * ROW_HEIGHT - self.drum_editor.scroll);
                 x < band.right()
                     && x + px(HIT_WIDTH + 2.0) > band.origin.x
@@ -1568,7 +1651,7 @@ mod window_tests {
             bar.center(),
         );
         app.read_with(cx, |this, _| {
-            assert!(this.timeline.scroll_ticks > Ticks::ZERO);
+            assert!(this.roll_timeline.scroll_ticks > Ticks::ZERO);
             assert_eq!(this.project(), &before);
         });
     }
@@ -1587,7 +1670,7 @@ mod window_tests {
                 .unwrap();
             let origin = this.roll_origin();
             point(
-                origin.x + this.timeline.tick_to_x(tick) + px(5.0),
+                origin.x + this.roll_timeline.tick_to_x(tick) + px(5.0),
                 origin.y + px(row as f32 * ROW_HEIGHT - this.drum_editor.scroll + ROW_HEIGHT / 2.0),
             )
         })
@@ -1664,6 +1747,88 @@ mod window_tests {
         click_at(cx, at, Modifiers::none());
         app.read_with(cx, |this, _| {
             assert_eq!(this.session.midi_clip(clip).unwrap().notes.len(), 3)
+        });
+    }
+
+    /// A second clip on the kit's track, right after the first, with a kick on its second beat.
+    fn with_a_neighbour(
+        app: &Entity<AurisApp>,
+        cx: &mut VisualTestContext,
+        track: TrackId,
+    ) -> ClipId {
+        let next = app.update(cx, |this, _| {
+            let next = this
+                .session
+                .add_midi_clip(track, "Next", CLIP_LENGTH, CLIP_LENGTH)
+                .unwrap();
+            this.session
+                .add_note(next, Note::new(36, Ticks::QUARTER, Ticks::QUARTER))
+                .unwrap();
+            next
+        });
+        paint(app, cx);
+        next
+    }
+
+    /// A click over the next clip's stretch writes a hit into that clip, at its own position,
+    /// and a click back on the first clip writes there again — the way the piano roll does.
+    #[gpui::test]
+    fn a_hit_drawn_over_the_next_clip_lands_in_it(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = fixture(cx);
+        let next = with_a_neighbour(&app, cx, track);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.neighbouring_notes().len(), 1, "the next clip is drawn");
+        });
+
+        let at = hit_point(&app, cx, CLIP_LENGTH + Ticks::QUARTER * 2, 36);
+        click_at(cx, at, Modifiers::none());
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.selected_clip,
+                Some(next),
+                "the editor follows the press"
+            );
+            assert!(this.session.midi_clip(clip).unwrap().notes.is_empty());
+            let starts: Vec<Ticks> = this
+                .session
+                .midi_clip(next)
+                .unwrap()
+                .notes
+                .iter()
+                .map(|note| note.start)
+                .collect();
+            assert_eq!(starts, [Ticks::QUARTER, Ticks::QUARTER * 2]);
+        });
+
+        let back = hit_point(&app, cx, Ticks::QUARTER, 36);
+        click_at(cx, back, Modifiers::none());
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.selected_clip, Some(clip));
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes.len(), 1);
+            assert_eq!(this.session.midi_clip(next).unwrap().notes.len(), 2);
+        });
+    }
+
+    /// The next clip's hit is taken where it is drawn and moved inside its own clip, and the
+    /// rows and their scroll stay put while the editor changes clip.
+    #[gpui::test]
+    fn a_neighbours_hit_can_be_dragged_where_it_is_drawn(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = fixture(cx);
+        let next = with_a_neighbour(&app, cx, track);
+        let rows = app.read_with(cx, |this, _| this.drum_rows());
+
+        let from = hit_point(&app, cx, CLIP_LENGTH + Ticks::QUARTER, 36);
+        let to = hit_point(&app, cx, CLIP_LENGTH + Ticks::QUARTER * 3, 36);
+        drag(cx, from, to);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.selected_clip, Some(next));
+            assert!(this.session.midi_clip(clip).unwrap().notes.is_empty());
+            let notes = &this.session.midi_clip(next).unwrap().notes;
+            assert_eq!(notes.len(), 1);
+            assert_eq!(notes[0].start, Ticks::QUARTER * 3);
+            assert_eq!(this.drum_rows(), rows, "the kit's rows do not move");
         });
     }
 

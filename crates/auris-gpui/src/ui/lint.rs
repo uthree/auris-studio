@@ -442,6 +442,10 @@ impl AurisApp {
         }
         let width = self.arrangement_width;
         self.timeline.scroll_to_reveal(diagnostic.start, width);
+        if let Some(roll) = self.canvas.roll.get() {
+            self.roll_timeline
+                .scroll_to_reveal(diagnostic.start, roll.size.width);
+        }
         self.lint.focused = Some(id.to_string());
     }
 
@@ -1200,8 +1204,11 @@ impl AurisApp {
                     .filter_map(|id| self.lint.report.find(id))
                     .collect();
                 let first = entry.ids.first()?.clone();
-                let left = self.timeline.tick_to_x(clip_start + note.start);
-                let width = self.timeline.duration_to_width(note.length).max(px(2.0));
+                let left = self.roll_timeline.tick_to_x(clip_start + note.start);
+                let width = self
+                    .roll_timeline
+                    .duration_to_width(note.length)
+                    .max(px(2.0));
                 let bottom =
                     squiggle_baseline(self.pitch.pitch_to_y(note.pitch), self.pitch.row_height);
                 let index = entry.index;
