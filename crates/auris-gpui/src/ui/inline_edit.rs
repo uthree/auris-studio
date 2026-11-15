@@ -115,15 +115,15 @@ fn fitted(
 
 /// A rectangle from `from` to `to` on the timeline, `height` tall from `top`.
 fn span(
-    app: &AurisApp,
+    view: &crate::ui::timeline::TimelineView,
     origin_x: Pixels,
     from: Ticks,
     to: Ticks,
     top: Pixels,
     height: Pixels,
 ) -> Bounds<Pixels> {
-    let left = origin_x + app.timeline.tick_to_x(from);
-    let right = origin_x + app.timeline.tick_to_x(to);
+    let left = origin_x + view.tick_to_x(from);
+    let right = origin_x + view.tick_to_x(to);
     Bounds {
         origin: point(left, top),
         size: size((right - left).max(px(0.0)), height),
@@ -220,7 +220,7 @@ impl AurisApp {
                 let at = self.session.snap_harmony(at);
                 let height = row.size.height.max(LINE_HEIGHT);
                 let top = row.origin.y + (row.size.height - height) / 2.0;
-                let mut found = span(self, lane.origin.x, at, at, top, height);
+                let mut found = span(&self.timeline, lane.origin.x, at, at, top, height);
                 found.size.width = MIN_WIDTH;
                 Some(fitted(found, height, Some(lane)))
             }
@@ -236,7 +236,7 @@ impl AurisApp {
                 if top + LINE_HEIGHT < lanes.origin.y || top > lanes.origin.y + lanes.size.height {
                     return None;
                 }
-                let found = span(self, lanes.origin.x, start, end, top, LINE_HEIGHT);
+                let found = span(&self.timeline, lanes.origin.x, start, end, top, LINE_HEIGHT);
                 Some(fitted(found, LINE_HEIGHT, Some(lanes)))
             }
             PromptTarget::Lyric { clip, index } | PromptTarget::Phonemes { clip, index } => {
@@ -254,7 +254,7 @@ impl AurisApp {
                 }
                 let start = midi.start + note.start;
                 let found = span(
-                    self,
+                    &self.roll_timeline,
                     origin.x,
                     start,
                     start + note.length,
@@ -289,7 +289,7 @@ impl AurisApp {
         let height = lane.size.height.max(LINE_HEIGHT);
         // Centred on the strip: a strip thinner than a field still has the field over it.
         let top = lane.origin.y + (lane.size.height - height) / 2.0;
-        let bounds = span(self, lane.origin.x, from, to, top, height);
+        let bounds = span(&self.timeline, lane.origin.x, from, to, top, height);
         fitted(bounds, height, Some(lane))
     }
 
@@ -357,7 +357,7 @@ impl AurisApp {
                     None => px(2.0),
                 };
                 (
-                    origin.x + self.timeline.tick_to_x(start + at),
+                    origin.x + self.roll_timeline.tick_to_x(start + at),
                     origin.y + tag_top,
                     roll,
                 )

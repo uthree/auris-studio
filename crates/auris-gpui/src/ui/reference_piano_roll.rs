@@ -57,7 +57,7 @@ impl ReferencePianoRoll {
             app.last_pane = Pane::PianoRoll;
             if let Some(note) = score.tracks[0].notes.first() {
                 app.pitch.top_pitch = note.pitch.saturating_add(6).min(127);
-                app.timeline.scroll_ticks = note.start;
+                app.roll_timeline.scroll_ticks = note.start;
             } else {
                 app.pitch.top_pitch = 72;
             }

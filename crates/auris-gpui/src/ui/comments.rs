@@ -158,7 +158,7 @@ impl AurisApp {
                 };
                 let origin = self.roll_origin();
                 let song = self.snap_unless_held(
-                    self.timeline.x_to_tick(event.position.x - origin.x) - grab_offset,
+                    self.roll_timeline.x_to_tick(event.position.x - origin.x) - grab_offset,
                     event.modifiers,
                 );
                 let at = (song - start).max_zero().min(length);
@@ -260,7 +260,7 @@ impl AurisApp {
                     .midi_clip(clip)
                     .map_or(Ticks::ZERO, |clip| clip.start);
                 (
-                    self.timeline
+                    self.roll_timeline
                         .x_to_tick(event.position.x - self.roll_origin().x),
                     start + at,
                 )
@@ -375,7 +375,7 @@ impl AurisApp {
         clip.comments
             .iter()
             .map(|comment| {
-                let left = self.timeline.tick_to_x(clip.start + comment.at);
+                let left = self.roll_timeline.tick_to_x(clip.start + comment.at);
                 let top = match comment.pitch {
                     // Just above its row, so the note it is about stays in sight under the pin.
                     Some(pitch) => (self.pitch.pitch_to_y(pitch) - TAG_HEIGHT).max(px(0.0)),
