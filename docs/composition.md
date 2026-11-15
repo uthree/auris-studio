@@ -103,7 +103,9 @@ An arpeggio breaks each chord in closed position, led from the chord before it t
 part is, so the figure stays under the hand while the harmony moves. It runs in one of six
 shapes drawn for the section — up, down, either of them turning round, every other note, or each
 note against the top one — at a rate the density sets, and it sits around the chords and under
-the middle of the tune.
+the middle of the tune. The rate is set beat by beat: quarters at the bottom of the dial, eighths
+round the middle and every step at the top, and between them the beats turn over one at a time,
+the weakest first — a little above quarters is long, long, long, short-short.
 
 Only the rows a preset can actually hear are drawn. A kit has no gate, subdivision, octave or
 syncopation — a one-shot ignores its note-off, its pitches are drum numbers rather than notes, and
@@ -118,7 +120,9 @@ subdivision entirely, since a groove is written in sixteenths and read by index.
 
 A chord part picks its figure once for the section and restates it, the way a keyboard player picks
 a feel and keeps it; only the closing bar of a planned phrase can turn it over, and only
-sometimes. Above 75% density, chords keep a driving figure and fill more of the subdivision.
+sometimes. Half the takes let a chord go on the beat before a syncopated strike and half hold
+every chord into the next. Above 75% density, chords keep their figure and fill in the steps
+round it.
 At 100%, every step is struck: sixteen attacks per 4/4 bar with a 1/16 subdivision, or
 twenty-four with 1/16 triplets. Foreground-aware arrangement preserves this explicit dense
 rhythm. Authored rhythms retain their rests regardless of density.

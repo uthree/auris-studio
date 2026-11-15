@@ -2,13 +2,15 @@
 //!
 //! The shortest of the writers, and its own file for the same reason as the rest: nothing calls
 //! it. Two things worth knowing before reading it. Its density is a *rate* — how fast the figure
-//! runs — rather than how many of its notes survive, because an arpeggio with holes punched in it
-//! is not a sparser arpeggio, it is a broken one. And the notes it breaks are not its own: they
+//! runs, beat by beat — rather than how many of its notes survive, because an arpeggio with
+//! holes punched in it is not a sparser arpeggio, it is a broken one. And the notes it breaks
+//! are not its own: they
 //! are the inversion `voicing` leads from one chord to the next, by the rule the comp's chords
 //! are led by, so the figure moves under a chord change the way a keyboard player's hand does.
 
 use crate::PerformanceStyle;
 use crate::frame::{Frame, SectionPlan};
+use crate::rhythm::Grid;
 use crate::rng::{Key as RngKey, Rng};
 use crate::spec::PartSpec;
 use crate::theory::pitch::OCTAVE;
@@ -96,6 +98,62 @@ fn pick_shape(rng: &mut Rng, style: Option<PerformanceStyle>) -> ArpShape {
     ArpShape::ALL[rng.weighted(&weights).min(ArpShape::ALL.len() - 1)]
 }
 
+/// The steps of a bar an arpeggio this busy strikes.
+///
+/// Each beat runs at one of three rates — once, at the beat's own division, or on every step
+/// of the grid — and the dial turns the beats over one at a time: the weakest beat first, the
+/// last of them when two are equally weak, the downbeat last. So a figure a little busier than
+/// quarters is quarters with its last beat split, long long long short-short, and the one
+/// after that splits the second beat too. A simple beat divides in two and a compound one in
+/// three, which is the eighths of a 6/8 and not the dotted eighths that halving it would give.
+///
+/// It used to be one rate for the whole bar, chosen from three, and the dial did nothing
+/// between them: every setting from a quarter of the way to a half wrote the same notes, and
+/// the next notch doubled them. The three plateaus are still where they were — quarters at the
+/// bottom, eighths round the middle, every step at the top — with a ramp between each pair.
+fn strikes(grid: Grid, busy: f32) -> Vec<usize> {
+    let per_bar = grid.steps_per_bar().max(1);
+    let per_beat = grid.steps_per_beat().clamp(1, per_bar);
+    let beats: Vec<usize> = (0..per_bar).step_by(per_beat).collect();
+    // The order the beats turn over in: by how little the bar leans on them, latest first.
+    let mut order: Vec<usize> = (0..beats.len()).collect();
+    order.sort_by_key(|beat| (grid.weight(beats[*beat]), std::cmp::Reverse(*beat)));
+    let turned = |from: f32| {
+        let share = ((busy - from) / RAMP).clamp(0.0, 1.0);
+        (share * beats.len() as f32).round() as usize
+    };
+    let (halved, run) = (turned(HALVES_FROM), turned(RUNS_FROM));
+    let parts = if grid.signature.is_compound() { 3 } else { 2 };
+    let mut steps = Vec::new();
+    for (rank, beat) in order.iter().enumerate() {
+        let start = beats[*beat];
+        let end = (start + per_beat).min(per_bar);
+        let every = if rank < run {
+            1
+        } else if rank < halved && per_beat.is_multiple_of(parts) {
+            per_beat / parts
+        } else if rank < halved {
+            // A grid that does not divide the beat that way has no rate between: the next one
+            // up is all of it.
+            1
+        } else {
+            per_beat
+        };
+        steps.extend((start..end).step_by(every));
+    }
+    steps.sort_unstable();
+    steps
+}
+
+/// Where the dial starts splitting beats in two, and where it starts running them on every
+/// step. Each ramp is [`RAMP`] wide, which leaves the plateau between them — a bar of plain
+/// eighths — a fifth of the dial, with the default in the middle of it.
+const HALVES_FROM: f32 = 0.25;
+/// See [`HALVES_FROM`].
+const RUNS_FROM: f32 = 0.6;
+/// See [`HALVES_FROM`].
+const RAMP: f32 = 0.15;
+
 /// A broken chord.
 pub(super) fn arp(
     settings: &ScoreSettings,
@@ -109,15 +167,11 @@ pub(super) fn arp(
     // How fast the figure runs. An arpeggio's density is the rate it climbs at, not how many of
     // its notes are dropped — dropping them would leave a broken chord with holes in it.
     let busy = density(settings, part, section);
-    let step_length = grid.step_ticks()
-        * if busy > 0.66 {
-            1
-        } else if busy > 0.33 {
-            2
-        } else {
-            4
-        };
-    let mut notes = Vec::new();
+    let struck = strikes(grid, busy);
+    let mut notes: Vec<Draft> = Vec::new();
+    // The notes the figure before this chord would have struck next, for the one place a
+    // figure says a note twice: see below.
+    let mut carried_on: Vec<i32> = Vec::new();
     let mut rng = Rng::stream(
         frame.seed,
         &[
@@ -190,16 +244,52 @@ pub(super) fn arp(
                 notes.push(draft(at, figure(strike), grid.step_ticks()));
                 strike += 1;
             }
+            // A rhythm somebody wrote is played as written, repeats and all.
+            carried_on.clear();
             continue;
         }
 
+        let per_bar = grid.steps_per_bar().max(1);
+        let from = grid.step_of(event.start);
+        let span = grid.step_of(event.length).max(1);
+        let mut offsets: Vec<usize> = (0..span)
+            .filter(|offset| struck.binary_search(&((from + offset) % per_bar)).is_ok())
+            .collect();
         // Even a chord shorter than the chosen rate needs an onset: otherwise a coarse
         // arpeggio silently skips dense harmony changes altogether.
-        let count = (event.length.raw() / step_length.raw().max(1)).max(1) as usize;
-        for position in 0..count {
-            let at = event.start + step_length * position as i64;
-            notes.push(draft(at, figure(position), step_length));
+        if offsets.first() != Some(&0) {
+            offsets.insert(0, 0);
         }
+        // A figure restarts on every chord, and one bar line in twelve it restarted on the note
+        // it had just struck: a run that ends on its bottom note and begins again there, or a
+        // tone two chords share. Nothing inside a bar ever repeats a note, so at the line it
+        // was a stutter. The note before the line moves on to where its own figure was going.
+        let before = notes
+            .len()
+            .checked_sub(2)
+            .map(|index| i32::from(notes[index].pitch));
+        if let Some(last) = notes.last_mut()
+            && i32::from(last.pitch) == figure(0)
+            && let Some(onward) = carried_on
+                .iter()
+                .find(|pitch| **pitch != figure(0) && Some(**pitch) != before)
+        {
+            last.pitch = (*onward).clamp(0, 127) as u8;
+        }
+        for (position, offset) in offsets.iter().enumerate() {
+            let here = grid.tick_of(*offset);
+            let next = offsets
+                .get(position + 1)
+                .map_or(event.length, |next| grid.tick_of(*next));
+            notes.push(draft(
+                event.start + here,
+                figure(position),
+                (next - here).max(auris_core::time::Ticks(1)),
+            ));
+        }
+        carried_on = (0..order.len())
+            .map(|ahead| figure(offsets.len() + ahead))
+            .collect();
     }
     notes
 }
@@ -209,6 +299,62 @@ mod tests {
     use super::*;
     use crate::fixture::{Song, part};
     use crate::spec::Role;
+
+    #[test]
+    fn the_density_dial_turns_an_arpeggio_over_a_beat_at_a_time() {
+        let grid = Grid::new(auris_core::time::TimeSignature::new(4, 4), 4);
+        // The three rates it always had, where it always had them.
+        assert_eq!(strikes(grid, 0.1), vec![0, 4, 8, 12]);
+        assert_eq!(strikes(grid, 0.5), vec![0, 2, 4, 6, 8, 10, 12, 14]);
+        assert_eq!(strikes(grid, 0.9), (0..16).collect::<Vec<_>>());
+        // And between them a beat at a time, the last weak beat first: long long long
+        // short-short, then the second beat as well.
+        assert_eq!(strikes(grid, 0.30), vec![0, 4, 8, 12, 14]);
+        assert_eq!(strikes(grid, 0.33), vec![0, 4, 6, 8, 12, 14]);
+        let mut last = strikes(grid, 0.0).len();
+        let mut biggest = 0;
+        for hundredth in 0..=100 {
+            let now = strikes(grid, hundredth as f32 / 100.0).len();
+            assert!(
+                now >= last,
+                "asking for more took a note away at {hundredth}"
+            );
+            biggest = biggest.max(now - last);
+            last = now;
+        }
+        // One beat's worth at the most. It used to double between 0.33 and 0.34.
+        assert!(biggest <= 2, "the dial jumped by {biggest} notes");
+        // A compound beat divides in three: the eighths of a 6/8, not its dotted eighths.
+        let compound = Grid::new(auris_core::time::TimeSignature::new(6, 8), 4);
+        assert_eq!(strikes(compound, 0.1), vec![0, 6]);
+        assert_eq!(strikes(compound, 0.5), vec![0, 2, 4, 6, 8, 10]);
+        assert_eq!(strikes(compound, 0.9).len(), compound.steps_per_bar());
+        let waltz = Grid::new(auris_core::time::TimeSignature::new(3, 4), 4);
+        assert_eq!(strikes(waltz, 0.5), vec![0, 2, 4, 6, 8, 10]);
+    }
+
+    #[test]
+    fn an_arpeggio_never_strikes_the_note_it_has_just_struck() {
+        // One bar line in twelve it did, at the rates where the figure's length leaves it on
+        // its first note at the end of the bar.
+        for chart in ["@axis", "| I | I | IV | IV |", "@canon"] {
+            for density in [0.2, 0.3, 0.5, 0.7, 0.9] {
+                for seed in 0..24u64 {
+                    let mut song = arpeggio(chart, seed);
+                    song.parts[0].density = Some(density);
+                    let (_, parts) = song.draft();
+                    let notes = &part(&parts, "arp").notes;
+                    for pair in notes.windows(2) {
+                        assert_ne!(
+                            pair[0].pitch, pair[1].pitch,
+                            "{chart} at {density}, seed {seed}: a note twice at {:?}",
+                            pair[1].start
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     /// The arpeggio alone over `chart` for eight bars at `seed`.
     fn arpeggio(chart: &str, seed: u64) -> Song {
