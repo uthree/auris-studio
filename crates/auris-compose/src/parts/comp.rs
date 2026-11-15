@@ -18,7 +18,7 @@ use crate::theory::pitch::{OCTAVE, PitchClass};
 
 use super::voicing::voiced;
 use super::writer::{
-    bar_onsets, bar_stream, density, lift_before, part_grid, phrase_shape, velocity,
+    band_pushes, bar_onsets, bar_stream, density, lift_before, part_grid, phrase_shape, velocity,
 };
 use super::{Draft, ScoreSettings};
 
@@ -260,12 +260,12 @@ pub(super) fn comp(
     // over the line, the anticipation every keyboard player owns. A property of the section and
     // not of the chord — a player who pushes, pushes, and a per-change roll would also break the
     // promise that the figure holds through a phrase, since the push lands its strike in the bar
-    // *before* the change. Drawn whether or not it can apply, like everything on this stream.
-    let pushing = invent.chance((settings.mood.syncopation * 0.6).clamp(0.0, 0.6));
+    // *before* the change. And not of the take either: the bass pushes the same changes, so
+    // the answer is the band's. See `band_pushes`.
+    let pushing = band_pushes(section, settings.mood.syncopation);
     // Half a felt beat, the distance every push is early by.
     let push_early = grid.step_ticks() * (grid.steps_per_beat() / 2).max(1) as i64;
-    // Whether this take lets a chord go before a syncopated strike. Last on the stream, so the
-    // draws above it are the ones they always were.
+    // Whether this take lets a chord go before a syncopated strike.
     let lifting = invent.chance(LIFT) && !pad && !written;
 
     for (event_index, event) in section.events.iter().enumerate() {
@@ -562,7 +562,9 @@ mod tests {
         let strikes = |density: f32, style: Option<PerformanceStyle>| -> f32 {
             let mut total = 0;
             for seed in 0..48u64 {
-                let mut song = chords("@axis", 8, seed, 0.3);
+                // Syncopation at zero, so that no stretch pushes: a push takes the strike on the
+                // line away, which is its own subject.
+                let mut song = chords("@axis", 8, seed, 0.0);
                 song.parts[0].density = Some(density);
                 song.settings.style = style;
                 let (frame, parts) = song.draft();

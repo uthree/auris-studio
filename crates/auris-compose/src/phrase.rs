@@ -534,6 +534,95 @@ mod tests {
     }
 
     #[test]
+    fn two_clips_over_one_stretch_push_the_same_changes_whatever_their_seeds() {
+        // A clip is one part with a seed of its own, and a comp that drew its push from that
+        // seed pushed alone: the keyboard half a beat early over a bass restriking the old
+        // root on the line. Whether a stretch pushes is read off the stretch.
+        const HALF_BEAT: Ticks = Ticks(480);
+        // The bar lines a part arrives at early: a note begun half a beat before the line and
+        // held across it, with nothing struck on the line itself.
+        let pushed = |notes: &[Note], bars: i64| -> Vec<i64> {
+            (1..bars)
+                .filter(|bar| {
+                    let line = BAR * *bar;
+                    notes.iter().any(|note| {
+                        note.start == line - HALF_BEAT && note.start + note.length > line
+                    }) && !notes.iter().any(|note| note.start == line)
+                })
+                .collect()
+        };
+        let charts = [
+            "| I | V | vi | IV |",
+            "| IV | V | iii | vi |",
+            "| vi | IV | I | V |",
+            "| I | vi | IV | V |",
+            "| ii | V | I | vi |",
+            "| I | IV | V | IV |",
+        ];
+        let mut stretches_that_push = 0;
+        for chart in charts {
+            let mut harmony = Harmony::in_key(Key::parse("C major").unwrap());
+            harmony.stamp(&Chart::parse(chart).unwrap(), Ticks::ZERO, 8, four_four());
+            let write = |preset: ClipPreset, seed: u64, syncopation: f32| {
+                let mut recipe = ClipRecipe::new(preset, seed);
+                recipe.style = Some(crate::PerformanceStyle::Rock);
+                recipe.syncopation = syncopation;
+                write_phrase(&harmony, Ticks::ZERO, BAR * 8, four_four(), &recipe, None)
+            };
+            let band = pushed(&write(ClipPreset::Chords, 0, 1.0), 8);
+            stretches_that_push += usize::from(!band.is_empty());
+            for seed in 1..12u64 {
+                assert_eq!(
+                    pushed(&write(ClipPreset::Chords, seed, 1.0), 8),
+                    band,
+                    "{chart}: another take of the comp pushed other changes"
+                );
+                let bass = write(ClipPreset::Bass, seed * 31, 1.0);
+                // A walking line is on every beat by definition and pushes nothing.
+                let walks = (0..8).all(|bar| {
+                    let mut steps: Vec<i64> = bass
+                        .iter()
+                        .filter(|note| note.start.raw() / BAR.raw() == bar)
+                        .map(|note| note.start.raw() % BAR.raw() / 240)
+                        .collect();
+                    steps.dedup();
+                    steps == vec![0, 4, 8, 12]
+                });
+                if !walks {
+                    assert_eq!(
+                        pushed(&bass, 8),
+                        band,
+                        "{chart}, seed {seed}: the bass and the comp pushed different changes"
+                    );
+                }
+                // The pushed note is the root it arrives at.
+                for bar in pushed(&bass, 8) {
+                    let line = BAR * bar;
+                    let early = bass
+                        .iter()
+                        .find(|note| note.start == line - HALF_BEAT)
+                        .unwrap();
+                    let arriving = harmony.chord_at(line).unwrap().bass_class();
+                    assert_eq!(
+                        crate::theory::pitch::PitchClass::new(i32::from(early.pitch)),
+                        arriving,
+                        "{chart}, seed {seed}: pushed onto something other than the new root"
+                    );
+                }
+                // And with the dial at zero nobody pushes anything.
+                assert!(pushed(&write(ClipPreset::Chords, seed, 0.0), 8).is_empty());
+                assert!(pushed(&write(ClipPreset::Bass, seed * 31, 0.0), 8).is_empty());
+            }
+        }
+        // Six stretches in ten at the top of the dial; of these six, some and not all.
+        assert!(
+            (1..charts.len()).contains(&stretches_that_push),
+            "{stretches_that_push} of {} stretches push",
+            charts.len()
+        );
+    }
+
+    #[test]
     fn a_kit_reaches_for_the_crash_and_the_tom_its_map_assigns_and_no_others() {
         use auris_core::project::{DrumMap, DrumRole};
         let write = |recipe: &ClipRecipe| {

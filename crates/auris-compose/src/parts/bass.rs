@@ -17,7 +17,9 @@ use crate::theory::chord::Chord;
 use crate::theory::chord_scale::ChordScale;
 use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 
-use super::writer::{bar_stream, density, lift_before, part_grid, phrase_shape, velocity};
+use super::writer::{
+    band_pushes, bar_stream, density, lift_before, part_grid, phrase_shape, velocity,
+};
 use super::{Draft, ScoreSettings};
 
 /// The octave a bass leaps to from `root`, staying inside `low..=high`.
@@ -302,7 +304,7 @@ pub(super) fn bass(
         kick.at_in_bar(step, drums.steps_per_bar(), drums.steps_per_beat(), own)
             .is_some()
     };
-    let mut notes = Vec::new();
+    let mut notes: Vec<Draft> = Vec::new();
 
     // How the part plays, drawn once for the section and kept over every chord in it.
     //
@@ -326,6 +328,10 @@ pub(super) fn bass(
     let picks_up = bar_stream(frame, part, section, "pickup", 0).chance(PICKUP);
     // The dial as it was set, for the two things it switches rather than scales.
     let dial = part.density.unwrap_or_else(|| settings.mood.density());
+    // Whether the band pushes this stretch's chord changes, and whether the chord in hand was
+    // pushed into by the one before it. A rhythm somebody wrote says where its notes are.
+    let pushing = part.rhythm.is_none() && band_pushes(section, settings.mood.syncopation);
+    let mut pushed_in = false;
 
     for (position_in_section, event) in section.events.iter().enumerate() {
         let root = fold_into(event.chord.bass_class().midi(part.octave), low, high);
@@ -418,7 +424,11 @@ pub(super) fn bass(
         };
         // Always sound the chord's start, so a change of chord is heard whatever the figure —
         // except under a written rhythm, whose rests are part of the instruction.
-        if part.rhythm.is_none() && !onsets.contains(&0) {
+        // And except where the chord before pushed into this one: the change has been heard,
+        // half a beat ago, and striking it again on the line is a stutter.
+        if pushed_in {
+            onsets.retain(|offset| *offset != 0);
+        } else if part.rhythm.is_none() && !onsets.contains(&0) {
             onsets.insert(0, 0);
         }
         // The pickup: in every second bar the last half-beat steps into the bar after it. A
@@ -432,9 +442,23 @@ pub(super) fn bass(
         // player says something else.
         let half = (grid.steps_per_beat() / 2).max(1);
         let closing = section.closes_phrase(bar);
+        // The push: the next chord's root, half a beat before its line and held over it. The
+        // comp strikes the same change at the same moment — see `band_pushes` — and a bass
+        // that waited for the line would be restriking the old root under the new chord. A
+        // walk does not push: it is on every beat by definition.
+        let pushes_out = pushing
+            && figure != BassFigure::Walk
+            && steps > half
+            && section
+                .events
+                .get(position_in_section + 1)
+                .is_some_and(|next| next.start == event.end())
+            && !section.continues_chord(position_in_section + 1);
         let picking_up = picks_up
             && part.rhythm.is_none()
             && (bar % PICKUP_EVERY == PICKUP_EVERY - 1 || closing)
+            // A push is already the way into the next bar, and takes the same half-beat.
+            && !pushes_out
             && !matches!(figure, BassFigure::Root | BassFigure::Walk)
             && first + steps == per_bar
             && steps > half;
@@ -451,6 +475,10 @@ pub(super) fn bass(
         } else if picking_up && !onsets.contains(&(steps - half)) {
             onsets.push(steps - half);
             onsets.sort_unstable();
+        }
+        if pushes_out {
+            onsets.retain(|offset| *offset < steps - half);
+            onsets.push(steps - half);
         }
         // Stepping into whatever comes next, on the last hit before it: what the approach
         // figure does under every chord, and the pickup in its own bar.
@@ -471,6 +499,14 @@ pub(super) fn bass(
         });
 
         let last = onsets.len().saturating_sub(1);
+        // The note that pushed into this chord is held to the first thing the chord plays for
+        // itself, or through all of it.
+        if pushed_in && let Some(held) = notes.last_mut() {
+            let until = onsets
+                .first()
+                .map_or(event.length, |offset| grid.tick_of(*offset));
+            held.length = (section.start + event.start + until - held.start).max(Ticks(1));
+        }
         let answering = answering_hit(&onsets, steps);
         for (position, offset) in onsets.iter().enumerate() {
             let at = event.start + grid.tick_of(*offset);
@@ -500,6 +536,7 @@ pub(super) fn bass(
                 // chord or to the key, and one part quietly breaking that would be a wrong note
                 // to anybody reading the piano roll. Inside the scale the chord implies, so an
                 // approach into a dominant does not walk through the degree it just altered.
+                _ if pushes_out && position == last => target.unwrap_or(root),
                 _ if approaching && position == last && last > 0 => target
                     .and_then(|next| {
                         let scale = ChordScale::new(event.key, event.chord);
@@ -554,6 +591,7 @@ pub(super) fn bass(
                 length: length.min(event.end() - at).max(Ticks(1)),
             });
         }
+        pushed_in = pushes_out;
     }
     notes
 }

@@ -121,7 +121,10 @@ subdivision entirely, since a groove is written in sixteenths and read by index.
 A chord part picks its figure once for the section and restates it, the way a keyboard player picks
 a feel and keeps it; only the closing bar of a planned phrase can turn it over, and only
 sometimes. Half the takes let a chord go on the beat before a syncopated strike and half hold
-every chord into the next. Above 75% density, chords keep their figure and fill in the steps
+every chord into the next. A stretch may *push*: every chord change struck half a beat early and
+held over the line. Whether it does is read off the chords under the clip and the **Syncopation**
+dial, not off the seed, so the chords and the bass over one stretch push the same changes, and
+another take of either does not change it; turning the dial down stops it. Above 75% density, chords keep their figure and fill in the steps
 round it.
 At 100%, every step is struck: sixteen attacks per 4/4 bar with a 1/16 subdivision, or
 twenty-four with 1/16 triplets. Foreground-aware arrangement preserves this explicit dense
