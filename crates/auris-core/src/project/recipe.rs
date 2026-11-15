@@ -322,10 +322,15 @@ pub struct ClipRecipe {
     /// when the answer is "the same thing, higher". This is that answer.
     #[serde(default)]
     pub octave: i32,
-    /// How much of the last bar the snare runs as a fill, from 0 for none to 1 for two beats.
+    /// How much of a bar the snare runs as a fill where the kit turns, from 0 for none to 1
+    /// for two beats — and twice that, up to the whole bar, on the way out of a clip of eight
+    /// bars or more.
     ///
     /// Read by the drums alone. A bar that simply stops and is replaced sounds like an edit
     /// rather than an arrival, and the join is the one moment a listener is certain to notice.
+    /// A kit turns at the end of its clip and, in a long one, at the end of every second
+    /// phrase; a whole kit may run the back of a fill onto a tom and land on a crash in the
+    /// bar after it. At 0 it does none of that and the clip is a loop.
     #[serde(default = "default_fill")]
     pub fill: f32,
     /// Whether a chord part adds the chord's root below its voicing, in the octave under it.

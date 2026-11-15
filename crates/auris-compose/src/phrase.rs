@@ -12,7 +12,7 @@ use auris_core::{ClipPreset, ClipRecipe, Note, Subdivision};
 
 use crate::frame::{Frame, SectionPlan, skeleton};
 use crate::parts::{ScoreSettings, write_parts};
-use crate::rhythm::Grid;
+use crate::rhythm::{DrumVoice, Grid};
 use crate::spec::{Mood, PartSpec, Role};
 use crate::theory::chart::HarmonicEvent;
 use crate::theory::key::Key;
@@ -32,6 +32,49 @@ pub fn roles_of(preset: ClipPreset) -> &'static [Role] {
         ClipPreset::Kick => &[Role::Kick],
         ClipPreset::Snare => &[Role::Snare],
         ClipPreset::Hat => &[Role::Hat],
+    }
+}
+
+/// A drum a kit clip strikes that is not one of its parts.
+///
+/// A kit is three writers and a drummer has more than three things to hit. The ones a join is
+/// marked with are reached for by a hand that is already playing: see
+/// [`PartSpec::crash`](crate::PartSpec::crash).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct KitReach {
+    /// The voice name its notes carry, the way a part's notes carry the part's.
+    pub name: &'static str,
+    /// The musical role a kit map assigns a sound to.
+    pub role: auris_core::project::DrumRole,
+    /// The drum itself, for the General MIDI note it has when no map says otherwise.
+    pub voice: DrumVoice,
+    /// The part whose hand reaches for it, and whose drum is struck instead when a kit has
+    /// nothing assigned to [`Self::role`].
+    pub hand: Role,
+}
+
+/// The drums a preset's clip may strike beyond the ones [`roles_of`] writes.
+///
+/// Only the whole kit has any. A clip that is one drum is one drum: somebody who asked for a
+/// hat on a track of its own did not ask for a cymbal on it.
+pub fn kit_reach(preset: ClipPreset) -> &'static [KitReach] {
+    use auris_core::project::DrumRole;
+    match preset {
+        ClipPreset::Drums => &[
+            KitReach {
+                name: "crash",
+                role: DrumRole::Crash,
+                voice: DrumVoice::Crash,
+                hand: Role::Hat,
+            },
+            KitReach {
+                name: "tom",
+                role: DrumRole::Tom,
+                voice: DrumVoice::Percussion,
+                hand: Role::Snare,
+            },
+        ],
+        _ => &[],
     }
 }
 
@@ -216,6 +259,22 @@ pub fn write_phrase(
             {
                 part.note = Some(*map.voices.get(&role)?);
             }
+            // What the part's hand may reach for. A kit with a map strikes what the map
+            // assigns and nothing it does not; one with no map at all is General MIDI's; and a
+            // recipe that names one note for everything has said what it wants struck.
+            for reach in kit_reach(recipe.preset) {
+                if reach.hand != *role {
+                    continue;
+                }
+                let note = match &recipe.drum_map {
+                    Some(map) => map.voices.get(&reach.role).copied(),
+                    None => recipe.drum_note.is_none().then(|| reach.voice.pitch()),
+                };
+                match reach.voice {
+                    DrumVoice::Crash => part.crash = note,
+                    _ => part.tom = note,
+                }
+            }
             // A register somebody asked for, on top of the one the role implies. The one the
             // part chooses for itself is drawn from the seed, which is right for a take and no
             // use at all when the answer wanted is "the same thing, an octave up".
@@ -240,16 +299,26 @@ pub fn write_phrase(
 
     let mut notes: Vec<Note> = write_parts(&settings, &roster, &frame)
         .into_iter()
-        .flat_map(|draft| {
-            let voice = if recipe.preset.is_drums() {
-                draft.name
-            } else {
-                String::new()
-            };
-            draft
-                .notes
-                .into_iter()
-                .map(move |note| (voice.clone(), note))
+        .zip(&roster)
+        .flat_map(|(draft, part)| {
+            let drums = recipe.preset.is_drums();
+            let name = draft.name;
+            draft.notes.into_iter().map(move |note| {
+                // A drum the part reached for is a voice of its own: a kit map moves a crash
+                // by its role, and one named `hat` would be moved onto the hat.
+                let reached =
+                    [(part.crash, "crash"), (part.tom, "tom")]
+                        .into_iter()
+                        .find(|(reach, _)| {
+                            *reach == Some(note.pitch) && part.drum_note() != Some(note.pitch)
+                        });
+                let voice = match reached {
+                    _ if !drums => String::new(),
+                    Some((_, reach)) => reach.to_string(),
+                    None => name.clone(),
+                };
+                (voice, note)
+            })
         })
         .filter(|(_, draft)| draft.start >= Ticks::ZERO && draft.start < length)
         .map(|(voice, draft)| Note {
@@ -457,8 +526,72 @@ mod tests {
         assert_eq!(pitches(ClipPreset::Kick), vec![36]);
         assert_eq!(pitches(ClipPreset::Snare), vec![38]);
         assert_eq!(pitches(ClipPreset::Hat), vec![42]);
-        // And together they are the kit: the same three voices the one preset writes at once.
-        assert_eq!(pitches(ClipPreset::Drums), vec![36, 38, 42]);
+        // And together they are the kit: the same three voices, and the two drums their hands
+        // reach for at a join.
+        let kit = pitches(ClipPreset::Drums);
+        assert!([36, 38, 42].iter().all(|pitch| kit.contains(pitch)));
+        assert!(kit.iter().all(|pitch| [36, 38, 42, 47, 49].contains(pitch)));
+    }
+
+    #[test]
+    fn a_kit_reaches_for_the_crash_and_the_tom_its_map_assigns_and_no_others() {
+        use auris_core::project::{DrumMap, DrumRole};
+        let write = |recipe: &ClipRecipe| {
+            write_phrase(&axis(), Ticks::ZERO, BAR * 16, four_four(), recipe, None)
+        };
+        let reached = |recipe: &ClipRecipe, voice: &str| -> Vec<u8> {
+            let mut pitches: Vec<u8> = write(recipe)
+                .iter()
+                .filter(|note| note.drum_voice == voice)
+                .map(|note| note.pitch)
+                .collect();
+            pitches.sort_unstable();
+            pitches.dedup();
+            pitches
+        };
+        let mut crashed = 0;
+        let mut travelled = 0;
+        for seed in 0..16u64 {
+            let mut recipe = ClipRecipe::new(ClipPreset::Drums, seed);
+            recipe.fill = 1.0;
+            recipe.intensity = 1.0;
+            // With no map a kit is General MIDI's, and the notes say which drum they are: a
+            // kit map moves a note by its voice's role.
+            assert_eq!(reached(&recipe, "hat"), vec![42]);
+            assert_eq!(reached(&recipe, "snare"), vec![38]);
+            assert_eq!(reached(&recipe, "crash"), vec![49], "seed {seed}");
+            travelled += usize::from(reached(&recipe, "tom") == vec![47]);
+            crashed += 1;
+
+            // A map names what the kit has. What it does not assign is not struck, and the
+            // strokes stay with the hands they would have left.
+            let full = write(&recipe).len();
+            recipe.drum_map = Some(DrumMap::from_voices([
+                (DrumRole::Kick, 60),
+                (DrumRole::Snare, 61),
+                (DrumRole::ClosedHat, 62),
+                (DrumRole::Crash, 63),
+            ]));
+            assert_eq!(reached(&recipe, "crash"), vec![63]);
+            assert_eq!(reached(&recipe, "tom"), Vec::<u8>::new());
+            assert_eq!(reached(&recipe, "snare"), vec![61]);
+            assert_eq!(write(&recipe).len(), full, "a missing tom lost its strokes");
+
+            // One drum on a track of its own is one drum.
+            for preset in [ClipPreset::Hat, ClipPreset::Snare] {
+                let mut single = ClipRecipe::new(preset, seed);
+                single.fill = 1.0;
+                single.intensity = 1.0;
+                let mut pitches: Vec<u8> = write(&single).iter().map(|n| n.pitch).collect();
+                pitches.dedup();
+                assert_eq!(pitches.len(), 1, "{preset:?} reached for another drum");
+            }
+        }
+        assert_eq!(crashed, 16);
+        assert!(
+            (3..=13).contains(&travelled),
+            "{travelled} of 16 kits used the tom"
+        );
     }
 
     #[test]
