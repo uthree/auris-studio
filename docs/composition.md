@@ -84,6 +84,12 @@ still the groove picker, and that is a choice from a drummer's own vocabulary ra
 number: `basic-rock`, `eight-beat`, `sixteen-beat`, `four-on-the-floor`, `shuffle`, `breakbeat`,
 `bossa-nova`, `half-time` and `sparse`.
 
+A bass line follows the kick of a groove as well, without reading the kit's notes: a new bass
+clip takes the groove of the generated kit most of it lies under, and keeps it in its own recipe.
+It draws one figure for the section and holds it, plays mostly the root, lets go on the beat
+before a syncopated note in some takes, and in most takes steps into the next bar at the end of
+every second one.
+
 Only the rows a preset can actually hear are drawn. A kit has no gate, subdivision, octave or
 syncopation — a one-shot ignores its note-off, its pitches are drum numbers rather than notes, and
 where it plays is which groove it plays. Nothing but a kit has a fill, because nothing else has a

@@ -280,7 +280,9 @@ pub struct ClipRecipe {
     ///
     /// Every preset reads this: it sets how the notes are struck, not how many there are.
     pub intensity: f32,
-    /// Which drum groove the kit plays. Ignored by everything except the drums.
+    /// Which drum groove the kit plays, and the one a bass follows the kick of.
+    ///
+    /// Every part reads it for which pairs a swing delays; nothing else reads its patterns.
     #[serde(default = "default_groove")]
     pub groove: String,
     /// How far the offbeats are delayed, as a percentage where 50 is straight.
