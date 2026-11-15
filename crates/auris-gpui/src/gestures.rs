@@ -61,6 +61,35 @@ pub fn wheel_action(modifiers: Modifiers) -> Wheel {
     }
 }
 
+/// What a turn of the wheel over the piano roll or the drum editor means.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RollWheel {
+    /// Zoom the editor's time axis about the pointer.
+    ZoomTime,
+    /// Zoom the pitch axis about the pointer.
+    ZoomPitch,
+    /// Travel along the song.
+    AlongTheSong,
+    /// Travel up and down the keyboard.
+    AcrossThePitches,
+}
+
+/// Which of the four a wheel event over the clip editor is asking for.
+///
+/// The arrangement's gestures first, so a hand that zooms the song up there zooms the phrase
+/// down here with the same keys: Ctrl or Alt zooms time and Shift travels along it, and only the
+/// axis that zooms is the editor's own rather than the arrangement's — the pointer says which
+/// view a turn of the wheel is about. The pitch axis, which the arrangement has no equivalent
+/// of, takes the zoom modifier with Shift added.
+pub fn roll_wheel_action(modifiers: Modifiers) -> RollWheel {
+    match (modifiers.control || modifiers.alt, modifiers.shift) {
+        (true, true) => RollWheel::ZoomPitch,
+        (true, false) => RollWheel::ZoomTime,
+        (false, true) => RollWheel::AlongTheSong,
+        (false, false) => RollWheel::AcrossThePitches,
+    }
+}
+
 /// The zoom step for vertical wheel movement, ignoring horizontal and phase-only events.
 ///
 /// macOS delivers zero-delta events when a trackpad gesture ends. They must not undo a zoom
@@ -283,6 +312,42 @@ mod tests {
     use super::*;
     use auris_i18n::Language;
     use gpui::{Modifiers, MouseButton, point, px};
+
+    #[test]
+    fn the_roll_wheel_zooms_time_with_the_arrangements_keys_and_pitch_with_shift_added() {
+        let with = |control, alt, shift| Modifiers {
+            control,
+            alt,
+            shift,
+            ..Modifiers::default()
+        };
+        assert_eq!(
+            roll_wheel_action(with(true, false, false)),
+            RollWheel::ZoomTime
+        );
+        assert_eq!(
+            roll_wheel_action(with(false, true, false)),
+            RollWheel::ZoomTime
+        );
+        assert_eq!(
+            roll_wheel_action(with(true, false, true)),
+            RollWheel::ZoomPitch
+        );
+        assert_eq!(
+            roll_wheel_action(with(false, true, true)),
+            RollWheel::ZoomPitch
+        );
+        assert_eq!(
+            roll_wheel_action(with(false, false, true)),
+            RollWheel::AlongTheSong
+        );
+        assert_eq!(
+            roll_wheel_action(with(false, false, false)),
+            RollWheel::AcrossThePitches
+        );
+        // The same modifier zooms time in the arrangement and in the editor.
+        assert_eq!(wheel_action(with(true, false, false)), Wheel::Zoom);
+    }
 
     #[test]
     fn wheel_zoom_ignores_zero_movement_and_preserves_direction() {

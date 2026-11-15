@@ -194,6 +194,7 @@ impl AurisApp {
         let take_state = self.singer_take_badge(track_id);
         let singer_label = self.singer_voice_label(track_id);
         let sound = self.track_sound_label(track_id);
+        let untuned = self.track_plays_untuned(track_id);
         let Some(track) = self.project().track(track_id) else {
             return div().into_any_element();
         };
@@ -546,6 +547,25 @@ impl AurisApp {
                                     // also carries the take's state; one name is enough.
                                     .when(voice.is_none(), |this| {
                                         this.child(sound_label(format!("track-sound-{index}")))
+                                    })
+                                    // A plugin that cannot follow the tuning says so for as long
+                                    // as it cannot: the notes play, a little out of tune, and
+                                    // nothing else on screen would show why.
+                                    .when(untuned, |this| {
+                                        this.child(
+                                            div()
+                                                .id(("untuned-badge", index))
+                                                .debug_selector(move || {
+                                                    format!("untuned-badge-{index}")
+                                                })
+                                                .flex_shrink_0()
+                                                .text_xs()
+                                                .text_color(theme.record)
+                                                .child(self.t(Key::TrackUntunedBadge))
+                                                .tooltip(crate::ui::tooltip::text_tip(
+                                                    self.t(Key::TrackUntunedTip).to_string(),
+                                                )),
+                                        )
                                     })
                                     .when_some(voice, |this, voice| {
                                         let label_tip =

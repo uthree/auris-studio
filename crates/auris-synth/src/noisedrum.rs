@@ -251,11 +251,13 @@ impl SegmentRenderer for NoiseDrum {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
+                key: pitch,
+                velocity,
+                ..
             } => self.note_on(pitch, velocity),
             // A hit rings for its decay whatever the key does; the allocator still marks the
             // voice released so it is the first one stolen.
-            NoteEvent::NoteOff { pitch, .. } => {
+            NoteEvent::NoteOff { key: pitch, .. } => {
                 self.allocator.note_off(pitch);
             }
             NoteEvent::AllNotesOff { .. } => {
@@ -389,11 +391,7 @@ mod tests {
     }
 
     fn hit(frame: u32, pitch: u8) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame,
-            pitch,
-            velocity: 1.0,
-        }
+        NoteEvent::note_on(frame, pitch, 1.0)
     }
 
     #[test]
@@ -565,7 +563,7 @@ mod tests {
             hit(0, 60),
             NoteEvent::NoteOff {
                 frame: 480,
-                pitch: 60,
+                key: 60,
             },
         ];
         let rendered = rig.render(9_600, &events);

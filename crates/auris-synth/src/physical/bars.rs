@@ -403,7 +403,7 @@ impl Engine for Bars {
     fn start(&mut self, index: usize, note: &Note, quality: Quality) {
         let (rate, settings) = (self.rate, self.settings);
         let bar = settings.bar;
-        let pitch = f32::from(note.pitch);
+        let pitch = note.pitch;
         let fundamental = hertz(pitch);
         // A tine is plucked at its tip; a bar is struck between its middle and an end.
         let contact = match (note.touch, bar.is_clamped()) {

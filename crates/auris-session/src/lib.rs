@@ -322,6 +322,7 @@ pub mod prelude {
         VolumeContour, VolumeContourPreset,
     };
     pub use auris_core::{PerformancePreset, PresetFamily, builtin_performance_presets};
+    pub use auris_core::{Tuning, TuningError, TuningPreset};
     /// Offline source analysis, prepared through [`Session::spectrogram_job`].
     pub use auris_dsp::Spectrogram;
     /// The equalizer's band table, the settings a display reads out of one, and the curve those

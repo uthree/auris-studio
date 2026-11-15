@@ -256,14 +256,10 @@ fn render_blocks(request: &Request, block: usize) -> Result<Vec<f32>, Box<dyn Er
             number: 11,
             value: point.value,
         }));
-        scheduled.push(NoteEvent::NoteOn {
-            frame: 0,
-            pitch: note.pitch,
-            velocity: note.velocity,
-        });
+        scheduled.push(NoteEvent::note_on(0, note.pitch, note.velocity));
         scheduled.push(NoteEvent::NoteOff {
             frame: (hold * rate as f32).round() as u32,
-            pitch: note.pitch,
+            key: note.pitch,
         });
         // Stable sorting applies time-zero controls before the excitation and keeps
         // every later control at its actual sample, independently of host blocks.

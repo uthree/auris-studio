@@ -35,12 +35,23 @@ impl Session {
     /// playback transforms, automation, audio clips and the sound of instruments are not read.
     pub fn analyze_music(&self) -> Vec<MusicalClipAnalysis> {
         let mut reports = Vec::new();
+        // A pitch class is a degree of the scale: one of twelve in a twelve-note tuning, one of
+        // thirty-one in 31-tone equal temperament. A drum track's keys are sounds, counted the
+        // same way they always were.
+        let tuning = &self.project.tuning;
         for track in &self.project.tracks {
+            let (steps, root) = match track.kind.is_drum() {
+                true => (12, 0),
+                false => (
+                    tuning.steps_per_period() as i64,
+                    i64::from(tuning.root_key()),
+                ),
+            };
             for clip in track.kind.note_clips().into_iter().flatten() {
                 let mut classes = BTreeSet::new();
                 let mut bars: BTreeMap<u32, Vec<(i64, u8, i64)>> = BTreeMap::new();
                 for note in &clip.notes {
-                    classes.insert(note.pitch % 12);
+                    classes.insert((i64::from(note.pitch) - root).rem_euclid(steps));
                     let at = clip.start + note.start;
                     let bar = self.project.signatures.bar_of(at);
                     let offset = at - self.project.signatures.bar_start(bar);

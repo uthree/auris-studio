@@ -47,6 +47,9 @@ fn neutral() -> String {
 
 impl Session {
     pub(super) fn agent_suggest_harmony(&self, request: Request) -> Result<String, String> {
+        // A chord fitted to a melody is pitch classes fitted to pitch classes.
+        crate::session::tuning::require_twelve_tone(self.project())
+            .map_err(|error| error.to_string())?;
         if request.melody_clips.is_empty()
             || request.melody_clips.len() > 8
             || request.melody_clips.iter().collect::<HashSet<_>>().len()

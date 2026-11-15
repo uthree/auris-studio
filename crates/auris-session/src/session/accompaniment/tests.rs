@@ -157,7 +157,8 @@ fn authored_instrumental_foreground_shapes_backing_without_editing_the_melody() 
         actual.length,
         actual.recipe.as_ref().unwrap(),
         None,
-    );
+    )
+    .unwrap();
     assert_ne!(actual.notes, unadapted, "authored foreground was ignored");
     assert_eq!(result["foreground_clips"], json!([lead.0]));
     assert_eq!(result["clips"][0]["adaptation"]["status"], "evaluated");
@@ -327,6 +328,7 @@ fn authored_rhythm_and_sustained_ambient_backing_are_not_thinned() {
         assert_eq!(
             notes,
             unarranged_project_phrase(session.project(), Ticks::ZERO, Ticks(3840), &recipe)
+                .unwrap()
         );
     }
 }
@@ -363,7 +365,7 @@ fn generated_backing_preserves_the_complete_melody_and_undo_redo_are_atomic() {
         let recipe = clip.recipe.as_ref().unwrap();
         assert_eq!(
             clip.notes,
-            project_phrase(&before, clip.start, clip.length, recipe, None)
+            project_phrase(&before, clip.start, clip.length, recipe, None).unwrap()
         );
         assert_eq!(recipe.text_digest, auris_core::notes_digest(&clip.notes));
     }

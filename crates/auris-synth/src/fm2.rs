@@ -207,16 +207,16 @@ impl Fm2 {
         }
     }
 
-    fn note_on(&mut self, pitch: u8, velocity: f32) {
+    fn note_on(&mut self, key: u8, pitch: f32, velocity: f32) {
         let velocity = finite_or(velocity, 1.0).clamp(0.0, 1.0);
-        let Some(assignment) = self.allocator.note_on(pitch, velocity) else {
+        let Some(assignment) = self.allocator.note_on(key, velocity) else {
             return;
         };
         let stolen = assignment.stolen;
         let Some(voice) = self.voices.get_mut(assignment.index) else {
             return;
         };
-        voice.pitch = f32::from(pitch);
+        voice.pitch = crate::params::sounding_pitch(key, pitch);
         voice.velocity = velocity;
         if !stolen {
             voice.presence.reset();
@@ -317,9 +317,12 @@ impl SegmentRenderer for Fm2 {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
-            } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { pitch, .. } => self.note_off(pitch),
+                key,
+                pitch,
+                velocity,
+                ..
+            } => self.note_on(key, pitch, velocity),
+            NoteEvent::NoteOff { key, .. } => self.note_off(key),
             NoteEvent::AllNotesOff { .. } => {
                 for index in self.allocator.release_all() {
                     if let Some(voice) = self.voices.get_mut(index) {
@@ -498,11 +501,7 @@ mod tests {
     }
 
     fn note_on(frame: u32, pitch: u8) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame,
-            pitch,
-            velocity: 1.0,
-        }
+        NoteEvent::note_on(frame, pitch, 1.0)
     }
 
     #[test]
@@ -628,7 +627,7 @@ mod tests {
             note_on(0, 69),
             NoteEvent::NoteOff {
                 frame: 4_800,
-                pitch: 69,
+                key: 69,
             },
         ];
         let rendered = rig.render(4_800 + 9_600 + 4_800, &events);
@@ -697,11 +696,7 @@ mod tests {
             // Velocity zero fills the pool without contributing anything to the output, so what
             // comes back after the steal is the stolen voice alone and can be measured directly.
             let held: Vec<NoteEvent> = (0..VOICE_COUNT)
-                .map(|slot| NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch: 48 + slot as u8 * 2,
-                    velocity: 0.0,
-                })
+                .map(|slot| NoteEvent::note_on(0, 48 + slot as u8 * 2, 0.0))
                 .collect();
             rig.render(512, &held);
             // Long enough for every modulator envelope to reach Idle, which is the state a steal
@@ -784,7 +779,7 @@ mod tests {
                 },
                 NoteEvent::NoteOff {
                     frame: 400,
-                    pitch: 127,
+                    key: 127,
                 },
             ];
             let rendered = rig.render(8_192, &events);

@@ -21,7 +21,7 @@ use clack_host::events::{Match, Pckn, UnknownEvent};
 use clack_host::prelude::*;
 
 use crate::host::AurisHost;
-use crate::notes::{NoteLanguage, Translated, translate};
+use crate::notes::{NoteLanguage, NoteMap, Translated};
 use crate::plugin::ParamList;
 use crate::ports::PortLayout;
 
@@ -116,6 +116,9 @@ pub(crate) struct Bridge {
     /// What the plugin's note input port speaks, or `None` if it has none — which is what an
     /// effect has, and also what an instrument Auris cannot drive has.
     language: Option<NoteLanguage>,
+    /// The notes the plugin is playing, as they went out: the key and id each was sent on, and
+    /// its offset from that key. See [`NoteMap`] for why translation needs a memory.
+    sounding: NoteMap,
     /// How many events `outgoing` was sized for, parameters included.
     ///
     /// Written down because [`EventBuffer`] cannot be asked its capacity, and
@@ -181,6 +184,7 @@ impl Bridge {
             main_input: ports.main_input,
             main_output: ports.main_output,
             language,
+            sounding: NoteMap::new(),
             event_room,
             dropped_input_events: 0,
             max_frames: frames,
@@ -315,6 +319,7 @@ impl Bridge {
             main_output,
             sidechain_input,
             language,
+            sounding,
             event_room,
             dropped_input_events,
             steady_time,
@@ -342,18 +347,26 @@ impl Bridge {
 
             outgoing.clear();
             let dirty_count = changed.iter().filter(|dirty| **dirty).count();
-            let note_count = language.map_or(0, |language| {
-                notes
-                    .iter()
-                    .filter(|note| {
-                        let at = note.frame() as usize;
-                        at >= offset
-                            && at < end
-                            && !matches!(translate(**note, language), Translated::Nothing)
-                    })
-                    .count()
-            });
             let reset_notes = *pending_note_reset && language.is_some();
+            // Counted on a copy of the table, because one event can become several: a bend
+            // re-sends every retuned note's own offset on top of it.
+            let note_count = language.map_or(0, |language| {
+                let mut dry = *sounding;
+                if reset_notes {
+                    dry.translate(NoteEvent::AllSoundOff { frame: 0 }, language, |_| true);
+                }
+                let mut count = 0usize;
+                for note in notes.iter() {
+                    let at = note.frame() as usize;
+                    if at >= offset && at < end {
+                        dry.translate(*note, language, |_| {
+                            count += 1;
+                            true
+                        });
+                    }
+                }
+                count
+            });
             let required = dirty_count
                 .saturating_add(note_count)
                 .saturating_add(usize::from(reset_notes));
@@ -374,6 +387,7 @@ impl Bridge {
                 // EVENT_HEADROOM keeps room even for an unprepared caller.
                 if push_note(
                     outgoing,
+                    sounding,
                     NoteEvent::AllSoundOff { frame: 0 },
                     language,
                     *event_room,
@@ -413,6 +427,7 @@ impl Bridge {
                             && at < end
                             && !push_note(
                                 outgoing,
+                                sounding,
                                 note.with_frame((at - offset) as u32),
                                 language,
                                 *event_room,
@@ -594,31 +609,50 @@ fn add_dropped_events(counter: &mut u64, count: usize) {
 /// rather than at the start of the block it fell in.
 fn push_note(
     queue: &mut EventBuffer,
+    sounding: &mut NoteMap,
     note: NoteEvent,
     language: NoteLanguage,
     event_room: usize,
 ) -> bool {
     let at = note.frame();
+    sounding.translate(note, language, |translated| {
+        push_translated(queue, at, translated, event_room)
+    })
+}
+
+/// Pushes one translated event onto the outgoing queue at `at`.
+fn push_translated(
+    queue: &mut EventBuffer,
+    at: u32,
+    translated: Translated,
+    event_room: usize,
+) -> bool {
     // Port zero and channel zero: Auris has one note stream per track, and no concept of a
     // plugin's second note port to point the other one at.
-    let voice = |key: u16| Pckn {
+    let voice = |key: u16, note_id: Option<u32>| Pckn {
         port_index: Match::Specific(0),
         channel: Match::Specific(0),
         key: Match::Specific(key),
-        note_id: Match::All,
+        note_id: note_id.map_or(Match::All, Match::Specific),
     };
 
-    match translate(note, language) {
-        Translated::NoteOn { key, velocity } => push_bounded(
+    match translated {
+        Translated::NoteOn {
+            key,
+            note_id,
+            velocity,
+        } => push_bounded(
             queue,
-            &NoteOnEvent::new(at, voice(key), velocity),
+            &NoteOnEvent::new(at, voice(key, Some(note_id)), velocity),
             event_room,
         ),
         // Zero release velocity: Auris does not record one, and inventing a number a plugin might
         // map to its release stage would be putting a gesture in that nobody made.
-        Translated::NoteOff { key } => {
-            push_bounded(queue, &NoteOffEvent::new(at, voice(key), 0.0), event_room)
-        }
+        Translated::NoteOff { key, note_id } => push_bounded(
+            queue,
+            &NoteOffEvent::new(at, voice(key, note_id), 0.0),
+            event_room,
+        ),
         Translated::ReleaseAll => push_bounded(
             queue,
             &NoteOffEvent::new(at, Pckn::match_all(), 0.0),
@@ -634,8 +668,21 @@ fn push_note(
             &NoteExpressionEvent::new(at, Pckn::match_all(), NoteExpressionType::Tuning, semitones),
             event_room,
         ),
+        Translated::NoteTuning {
+            key,
+            note_id,
+            semitones,
+        } => push_bounded(
+            queue,
+            &NoteExpressionEvent::new(
+                at,
+                voice(key, Some(note_id)),
+                NoteExpressionType::Tuning,
+                semitones,
+            ),
+            event_room,
+        ),
         Translated::Midi(data) => push_bounded(queue, &MidiEvent::new(at, 0, data), event_room),
-        Translated::Nothing => true,
     }
 }
 

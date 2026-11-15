@@ -123,6 +123,10 @@ every note you tried to pick up.
 
 The wheel over the arrangement moves down the tracks; ⇧ turns it sideways along the song, and
 **Ctrl or ⌥** zooms the time axis about the pointer, so the bar being looked at stays where it is.
+The piano roll and the drum editor take the same keys over their own time axis, which zooms and
+scrolls apart from the arrangement's: the view under the pointer is the one that zooms. In the
+piano roll the plain wheel moves up and down the keyboard, and **Ctrl+⇧** (or ⌥⇧) zooms the pitch
+axis.
 
 **No bar takes the wheel.** A fader, a plugin parameter, a clip dial — every one of
 them is swept with the pointer and none of them answers a scroll. They all sit inside panels that
@@ -736,6 +740,37 @@ choose *Accompany This Melody*: its key and one chord per bar are written here, 
 and a kit are added as tracks beside it. The melody itself is not touched, everything it guessed is
 here to be corrected. Choose **Write It Again** on the generated clips to follow a correction — see
 [composition.md](composition.md) for what it reads and what it cannot know.
+
+## Tuning
+
+The key and the chords are written in a pitch system, and the tuning is which one. It is chosen
+from *Tuning (…)…* on the harmony lane's right-click menu, which lists 12-tone equal
+temperament; 19, 22, 24, 31 and 53 equal steps to the octave; just intonation, quarter-comma
+meantone and Pythagorean tuning on the song's key; Werckmeister III; and the Bohlen–Pierce scale.
+*Reference Pitch…* sets the frequency the tuning is pinned to — A4 = 442 in equal temperament —
+with every interval kept. A scale of your own comes in as a Scala file: *Import Scala Scale
+(.scl)…* for the scale, *Import Keyboard Map (.kbm)…* to move its root or its pitch. Only keyboard
+maps that play consecutive degrees on consecutive keys are read.
+
+A note is still a key. The piano roll has one row per key in every tuning, and what the tuning
+changes is where each key sounds. In a twelve-note tuning the roll looks as it always has; in any
+other, the strong line falls under each key that plays the scale's root, named after the note it
+sounds nearest, and a row is dark where the equal-tempered key nearest its sound is a black one.
+Dragging a note shows where it sounds, in cents off the nearest equal-tempered note when it is not
+on one. A drum track is never retuned.
+
+Every built-in instrument, the SoundFont player, the audio sampler and the singers play each note
+where the tuning puts it. A CLAP or VST3 plugin is sent each note on the key nearest its pitch,
+with the rest as that note's own tuning; a plugin that ignores the tuning plays the nearest
+semitone. A CLAP plugin that speaks only MIDI 1.0 cannot be told anything finer, and its track
+header says *12-TET* for as long as the tuning puts notes between keys. There are 128 keys, so 31
+steps to the octave reach about four octaves and 53 a little over two.
+
+The composer, *Accompany This Melody*, the chord and note recognisers and the chord suggestions
+read a key as a semitone of a twelve-note scale, so they work in the twelve-note tunings — just
+intonation and the meantones included — and say so rather than run in any other. A drum part is
+written in every tuning. The music linter leaves out its rules about intervals, chords, frets and
+range there too, and keeps the ones about timing, level and the sung line.
 
 ## The structure lane
 

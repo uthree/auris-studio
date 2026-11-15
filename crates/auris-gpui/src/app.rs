@@ -37,7 +37,7 @@ use crate::ui::menu_bar::OpenMenu;
 use crate::ui::piano_roll::RollTool;
 use crate::ui::prompt::Prompt;
 use crate::ui::score_layer::{ScoreLayer, ScorePreview};
-use crate::ui::timeline::{PitchView, TimelineView};
+use crate::ui::timeline::{PitchView, TimeSurface, TimelineView};
 use crate::voice_setup_window::VoiceSetupWindow;
 
 /// What a press or a sweep at one position should do to whatever is already sounding.
@@ -779,6 +779,8 @@ pub enum Drag {
     },
     /// Dragging the time-zoom slider.
     TimeZoom {
+        /// Which time axis the slider zooms.
+        surface: TimeSurface,
         /// Slider position when the drag began, from 0 to 1.
         start_fraction: f32,
         /// Pointer x when the drag began.
@@ -1490,10 +1492,21 @@ pub struct AurisApp {
     pub(crate) theme: Theme,
     /// Persistent appearance choices, including palettes created in the settings window.
     pub(crate) appearance: Appearance,
+    /// The arrangement's time axis: the ruler, the lanes and the strips above them.
     pub(crate) timeline: TimelineView,
     /// Whether the timeline keeps the playhead in view during playback, or a scroll has
     /// released it.
     pub(crate) playhead_follow: atelier::Follow,
+    /// The clip editor's time axis — the piano roll, the drum editor and their lanes — zoomed
+    /// and scrolled apart from the arrangement's, the way Logic's editors are: a phrase is
+    /// edited close up while the song stays laid out whole above it. Which one a wheel or a
+    /// zoom command turns is decided by where the pointer is; see [`TimeSurface`].
+    pub(crate) roll_timeline: TimelineView,
+    /// [`Self::playhead_follow`] for the editor's axis, which pages on its own.
+    pub(crate) roll_follow: atelier::Follow,
+    /// The clip the editor last brought into view, so a newly chosen clip off its screen is
+    /// scrolled to once, and a press on the clip next door (already on screen) moves nothing.
+    pub(crate) roll_revealed: Option<ClipId>,
     /// Fractional time-signature wheel notches carried between precise-scroll events.
     pub(crate) signature_scroll_remainder: f32,
     pub(crate) pitch: PitchView,
@@ -1550,6 +1563,10 @@ pub struct AurisApp {
     pub(crate) sung_badges: std::collections::HashMap<TrackId, auris_session::SingerTakeState>,
     /// The revision [`Self::sung_badges`] was computed under.
     pub(crate) sung_badges_revision: u64,
+    /// The tracks playing every note on the nearest semitone, and the revision that was asked
+    /// under: the answer means asking each hosted plugin what it speaks, which is not a question
+    /// for thirty repaints a second. See [`AurisApp::track_plays_untuned`].
+    pub(crate) untuned_tracks: (u64, Vec<TrackId>),
     /// The background re-render keeping voiced singer tracks abreast of their notes.
     ///
     /// Editing the score is the ask; this is the performer noticing. The repaint timer
@@ -2149,6 +2166,9 @@ impl AurisApp {
             appearance,
             timeline: TimelineView::default(),
             playhead_follow: atelier::Follow::new(),
+            roll_timeline: TimelineView::default(),
+            roll_follow: atelier::Follow::new(),
+            roll_revealed: None,
             signature_scroll_remainder: 0.0,
             pitch: PitchView::default(),
             drum_editor: crate::ui::drum_editor::DrumEditorState::default(),
@@ -2177,6 +2197,7 @@ impl AurisApp {
             export: None,
             sung_badges: std::collections::HashMap::new(),
             sung_badges_revision: 0,
+            untuned_tracks: (u64::MAX, Vec::new()),
             auto_sing: None,
             auto_sing_seen: (0, std::time::Instant::now()),
             sung_failures: std::collections::HashMap::new(),
@@ -2762,14 +2783,19 @@ impl AurisApp {
     pub(crate) fn seek(&mut self, tick: Ticks) {
         self.session.seek(tick);
         self.playhead_follow.engage();
+        self.roll_follow.engage();
     }
 
     /// Brings the playhead back into view and follows it again.
     pub(crate) fn reveal_playhead(&mut self) {
         self.playhead_follow.engage();
+        self.roll_follow.engage();
         let playhead = self.playhead_ticks();
         let width = self.arrangement_width;
         self.timeline.page_to(playhead, width);
+        if let Some(roll) = self.canvas.roll.get() {
+            self.roll_timeline.page_to(playhead, roll.size.width);
+        }
     }
 
     // ---------------------------------------------------------------- selection
@@ -2803,6 +2829,61 @@ impl AurisApp {
                     .as_audio()
                     .is_some_and(|inner| inner.clips.iter().any(|c| c.id == clip))
             })
+    }
+
+    /// The time axis of `surface`.
+    pub(crate) fn time_view(&self, surface: TimeSurface) -> &TimelineView {
+        match surface {
+            TimeSurface::Arrangement => &self.timeline,
+            TimeSurface::Editor => &self.roll_timeline,
+        }
+    }
+
+    /// The time axis of `surface`, to zoom or scroll.
+    pub(crate) fn time_view_mut(&mut self, surface: TimeSurface) -> &mut TimelineView {
+        match surface {
+            TimeSurface::Arrangement => &mut self.timeline,
+            TimeSurface::Editor => &mut self.roll_timeline,
+        }
+    }
+
+    /// Which time axis a zoom command is about: the editor's when the pointer is over its grid,
+    /// the arrangement's anywhere else, the way the wheel decides.
+    pub(crate) fn time_surface_at(&self, pointer: Point<Pixels>) -> TimeSurface {
+        // The bounds outlive a closed panel, so they only count while it is open.
+        let open = self.panels.is_open(crate::dock::Panel::PianoRoll);
+        match self.canvas.roll.get() {
+            Some(roll) if open && roll.contains(&pointer) => TimeSurface::Editor,
+            _ => TimeSurface::Arrangement,
+        }
+    }
+
+    /// Brings a clip newly put in the editor into the editor's view.
+    ///
+    /// Once per clip, and only when no part of it is on screen: the editor scrolls apart from the
+    /// arrangement, so a clip chosen up there may be somewhere the editor is not looking. A clip
+    /// already in sight — the one next door that a press in the editor just moved to — leaves
+    /// the view where the hand put it.
+    pub(crate) fn reveal_clip_in_roll(&mut self) {
+        if self.roll_revealed == self.selected_clip {
+            return;
+        }
+        self.roll_revealed = self.selected_clip;
+        let Some((start, end)) = self
+            .selected_midi_clip()
+            .map(|clip| (clip.start, clip.start + clip.length))
+        else {
+            return;
+        };
+        let width = self
+            .canvas
+            .roll
+            .get()
+            .map_or(self.arrangement_width, |bounds| bounds.size.width);
+        let (from, to) = self.roll_timeline.visible_range(width);
+        if end <= from || start >= to {
+            self.roll_timeline.scroll_ticks = start.max_zero();
+        }
     }
 
     /// The selected MIDI clip, if there is one.

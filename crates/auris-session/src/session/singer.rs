@@ -98,6 +98,7 @@ pub struct SingerFramesExportJob {
     path: PathBuf,
     singer: SingerTrack,
     tempo_map: TempoMap,
+    tuning: auris_core::Tuning,
     sources: CurveSources,
 }
 
@@ -229,6 +230,7 @@ impl Session {
         auris_vocal::render_frames_with_sources(
             singer,
             &self.project.tempo_map,
+            &self.project.tuning,
             self.capabilities_for_singer(singer).curves,
         )
     }
@@ -837,6 +839,7 @@ impl Session {
             sources: self.capabilities_for_singer(&singer).curves,
             singer,
             tempo_map: self.project.tempo_map.clone(),
+            tuning: self.project.tuning.clone(),
         })
     }
 
@@ -1498,6 +1501,7 @@ impl Session {
         let frames = auris_vocal::render_frames_with_sources(
             self.require_singer(track)?,
             &self.project.tempo_map,
+            &self.project.tuning,
             loaded.capabilities.curves,
         );
         let fingerprint =
@@ -1539,6 +1543,7 @@ impl Session {
         let frames = auris_vocal::render_frames_with_sources(
             self.require_singer(track)?,
             &self.project.tempo_map,
+            &self.project.tuning,
             loaded.capabilities.curves,
         );
         let fingerprint =
@@ -1569,8 +1574,11 @@ impl Session {
         SessionError,
     > {
         let singer = self.require_singer(track)?;
-        let (score, origins) =
-            auris_vocal::frames::render_score_with_origins(singer, &self.project.tempo_map);
+        let (score, origins) = auris_vocal::frames::render_score_with_origins(
+            singer,
+            &self.project.tempo_map,
+            &self.project.tuning,
+        );
         if score.notes.is_empty() {
             return Err(SessionError::NothingToSing(track.0));
         }
@@ -1689,8 +1697,10 @@ impl Session {
             lyric: String::new(),
         }];
         if held > 1 {
+            // The key nearest where the note sounds, as the song's score has it.
+            let sounding = self.project.tuning.sounding_pitch(pitch);
             notes.push(auris_vocal::SingerNote {
-                key: Some(pitch),
+                key: Some(sounding.round().clamp(0.0, 127.0) as u8),
                 frame_length: held - 1,
                 lyric: "ア".into(),
             });
@@ -2004,7 +2014,7 @@ impl Session {
             .as_ref()
             .ok_or(SessionError::NoVoice(track.0))?;
         let frames = self.render_singer_frames(singer);
-        let score = render_score(singer, &self.project.tempo_map);
+        let score = render_score(singer, &self.project.tempo_map, &self.project.tuning);
         Ok(take_fingerprint(
             &frames,
             &score,
@@ -2408,8 +2418,12 @@ impl SingerFramesExportJob {
         if cancelled.load(Ordering::Relaxed) {
             return Ok(None);
         }
-        let frames =
-            auris_vocal::render_frames_with_sources(&self.singer, &self.tempo_map, self.sources);
+        let frames = auris_vocal::render_frames_with_sources(
+            &self.singer,
+            &self.tempo_map,
+            &self.tuning,
+            self.sources,
+        );
         if cancelled.load(Ordering::Relaxed) {
             return Ok(None);
         }
@@ -2975,6 +2989,7 @@ mod tests {
         let expected = auris_vocal::render_frames_with_sources(
             session.require_singer(track).unwrap(),
             &session.project.tempo_map,
+            &session.project.tuning,
             sources,
         );
         assert_eq!(session.singer_capabilities(track).unwrap().curves, sources);
@@ -3010,7 +3025,11 @@ mod tests {
         let (mut session, track, _) = sung(2);
         session.set_singer_voice(track, Some(&path)).unwrap();
         let singer = session.require_singer(track).unwrap();
-        let expected = auris_vocal::render_expression_frames(singer, &session.project.tempo_map);
+        let expected = auris_vocal::render_expression_frames(
+            singer,
+            &session.project.tempo_map,
+            &session.project.tuning,
+        );
         assert_eq!(session.singer_frames(track).unwrap(), expected);
         let plan = session.sing_plan(track, None).unwrap();
         assert_eq!(plan.frames, expected);
@@ -4111,6 +4130,7 @@ mod tests {
         let score = render_score(
             session.require_singer(track).unwrap(),
             &session.project.tempo_map,
+            &session.project.tuning,
         );
         assert_eq!(
             take_fingerprint(&frames, &score, &voice, None, 3),
@@ -4157,6 +4177,7 @@ mod tests {
         let edited_score = render_score(
             session.require_singer(track).unwrap(),
             &session.project.tempo_map,
+            &session.project.tuning,
         );
         assert_ne!(
             take_fingerprint(&frames, &score, &voice, None, 3),
@@ -4189,6 +4210,7 @@ mod tests {
         let score = render_score(
             session.require_singer(track).unwrap(),
             &session.project.tempo_map,
+            &session.project.tuning,
         );
         let voice = AssetPath::external("/voices/legacy.onnx");
         let fingerprint = take_fingerprint(&frames, &score, &voice, None, 0);

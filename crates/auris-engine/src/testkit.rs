@@ -102,6 +102,11 @@ pub(crate) const HUGE_LATENCY_ID: &str = "test.huge-latency";
 pub(crate) const LOOKAHEAD_ID: &str = "test.lookahead";
 /// Registry id of [`KeyedGain`].
 pub(crate) const KEYED_ID: &str = "test.keyed";
+/// Registry id of [`PitchProbe`].
+pub(crate) const PITCH_ID: &str = "test.pitch";
+
+/// What [`PitchProbe`] divides a pitch by to make a level: every key fits under full scale.
+pub(crate) const PITCH_PROBE_SCALE: f32 = 128.0;
 
 /// Frames [`Lookahead`] holds its input back by, and declares as its latency.
 pub(crate) const LOOKAHEAD_FRAMES: usize = 64;
@@ -116,6 +121,7 @@ pub(crate) const TAIL_FRAMES: usize = 1_024;
 pub(crate) fn registry() -> PluginRegistry {
     let mut registry = PluginRegistry::new();
     registry.register_instrument(|| Box::new(ConstantTone::new()));
+    registry.register_instrument(|| Box::new(PitchProbe { level: 0.0 }));
     registry.register_effect(|| Box::new(LinearGain::new()));
     registry.register_effect(|| Box::new(RingingTail::new()));
     registry.register_effect(|| Box::new(BlockCounter));
@@ -269,6 +275,55 @@ impl Instrument for ConstantTone {
 
     fn active_voices(&self) -> usize {
         self.held as usize
+    }
+}
+
+/// Emits a DC level telling the pitch of the last note-on it was given, over
+/// [`PITCH_PROBE_SCALE`].
+///
+/// What a test reads to learn where the graph told an instrument to sound — the only way to see
+/// a tuning from outside, since the event list itself never leaves the audio thread.
+pub(crate) struct PitchProbe {
+    level: f32,
+}
+
+impl Parameterized for PitchProbe {
+    fn parameters(&self) -> &[ParamDescriptor] {
+        &[]
+    }
+
+    fn param(&self, _id: ParamId) -> f32 {
+        0.0
+    }
+
+    fn set_param(&mut self, _id: ParamId, _value: f32) {}
+}
+
+impl Instrument for PitchProbe {
+    fn descriptor(&self) -> PluginDescriptor {
+        PluginDescriptor::instrument(
+            PITCH_ID,
+            "Pitch Probe",
+            "Emits the last note's pitch as a level",
+            PluginCategory::Synth,
+        )
+    }
+
+    fn prepare(&mut self, _ctx: &PrepareContext) {}
+
+    fn reset(&mut self) {
+        self.level = 0.0;
+    }
+
+    fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, _ctx: &ProcessContext) {
+        for event in events {
+            if let NoteEvent::NoteOn { pitch, .. } = event {
+                self.level = pitch / PITCH_PROBE_SCALE;
+            }
+        }
+        for channel in out.channels_mut() {
+            channel.fill(self.level);
+        }
     }
 }
 

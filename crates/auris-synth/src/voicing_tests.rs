@@ -80,14 +80,7 @@ fn bright_instruments_reduce_upper_midrange_without_losing_the_note() {
     for (instrument, pitch, attack, ceiling, minimum_fundamental) in cases {
         let name = instrument.descriptor().id.to_string();
         let mut rig = Rig::new(instrument, 48_000.0, 256, 2);
-        let audio = rig.render(
-            86_400,
-            &[NoteEvent::NoteOn {
-                frame: 0,
-                pitch,
-                velocity: 1.0,
-            }],
-        );
+        let audio = rig.render(86_400, &[NoteEvent::note_on(0, pitch, 1.0)]);
         let mut highpass = Biquad::new(BiquadCoefficients::highpass(
             48_000.0,
             2_000.0,

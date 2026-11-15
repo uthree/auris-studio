@@ -1009,7 +1009,13 @@ unsafe fn set_view_scale_factor(view: &ComPtr<IPlugView>, factor: f32) -> Result
 /// no such alias, so the alias has to become a real `kNoteOffEvent`: a zero-velocity
 /// `kNoteOnEvent` leaves the plugin holding the voice while the host's own note tracker counts
 /// it as released, and `midi_panic` then has nothing left to release it with.
-fn write_midi_note_on(event: &mut Event, channel: MidiChannel, note: u8, velocity: u8) -> bool {
+fn write_midi_note_on(
+    event: &mut Event,
+    channel: MidiChannel,
+    note: u8,
+    velocity: u8,
+    tuning: f32,
+) -> bool {
     if velocity == 0 {
         write_note_off_event(event, channel, note, 0);
         return true;
@@ -1017,7 +1023,8 @@ fn write_midi_note_on(event: &mut Event, channel: MidiChannel, note: u8, velocit
     event.r#type = kNoteOnEvent as u16;
     event.__field0.noteOn.channel = channel.as_index() as i16;
     event.__field0.noteOn.pitch = note as i16;
-    event.__field0.noteOn.tuning = 0.0;
+    // Changed by the Auris fork: cents from the key, which a tuning fills in.
+    event.__field0.noteOn.tuning = tuning;
     event.__field0.noteOn.velocity = velocity as f32 / 127.0;
     event.__field0.noteOn.length = 0;
     event.__field0.noteOn.noteId = -1;
@@ -3061,129 +3068,27 @@ impl PluginInternal for PluginImpl {
     }
 
     fn send_midi_event_at(&mut self, event: MidiEvent, sample_offset: i32) -> Result<()> {
-        // Floor to non-negative (the VST3 SDK treats a negative sampleOffset as undefined);
-        // `process()` additionally clamps queued offsets to the actual block length.
-        let sample_offset = sample_offset.max(0);
-        unsafe {
-            let mut vst_event: Event = std::mem::zeroed();
-            vst_event.busIndex = 0;
-            vst_event.sampleOffset = sample_offset;
-            vst_event.ppqPosition = 0.0;
-            vst_event.flags = Event_::EventFlags_::kIsLive as u16;
-            let mut ordinary_note_update = None;
+        self.queue_midi_event_at(event, sample_offset, 0.0)
+    }
 
-            match event {
-                MidiEvent::NoteOn {
-                    channel,
-                    note,
-                    velocity,
-                } => {
-                    let index = channel.as_index() as usize * 128 + note as usize;
-                    let released = write_midi_note_on(&mut vst_event, channel, note, velocity);
-                    ordinary_note_update = Some((index, released));
-                }
-                MidiEvent::NoteOff {
-                    channel,
-                    note,
-                    velocity,
-                } => {
-                    let index = channel.as_index() as usize * 128 + note as usize;
-                    ordinary_note_update = Some((index, true));
-                    write_note_off_event(&mut vst_event, channel, note, velocity);
-                }
-                MidiEvent::ControlChange {
-                    channel,
-                    controller,
-                    value,
-                } => {
-                    return self.queue_mapped_midi_controller(
-                        channel,
-                        controller as u16,
-                        value as f64 / 127.0,
-                        sample_offset,
-                    );
-                }
-                MidiEvent::PitchBend { channel, value } => {
-                    return self.queue_mapped_midi_controller(
-                        channel,
-                        ControllerNumbers_::kPitchBend as u16,
-                        value as f64 / 16_383.0,
-                        sample_offset,
-                    );
-                }
-                MidiEvent::ChannelAftertouch { channel, pressure } => {
-                    return self.queue_mapped_midi_controller(
-                        channel,
-                        ControllerNumbers_::kAfterTouch as u16,
-                        pressure as f64 / 127.0,
-                        sample_offset,
-                    );
-                }
-                MidiEvent::PolyAftertouch {
-                    channel,
-                    note,
-                    pressure,
-                } => {
-                    // Per-note pressure maps to a first-class VST3 poly-pressure event.
-                    vst_event.r#type = kPolyPressureEvent as u16;
-                    vst_event.__field0.polyPressure.channel = channel.as_index() as i16;
-                    vst_event.__field0.polyPressure.pitch = note as i16;
-                    vst_event.__field0.polyPressure.pressure = pressure as f32 / 127.0;
-                    vst_event.__field0.polyPressure.noteId = -1;
-                }
-                MidiEvent::ProgramChange { program, .. } => {
-                    // VST3 has no MIDI program-change event; a program change is routed to the
-                    // root unit's (id 0) program-change parameter via IUnitInfo. The MIDI
-                    // channel does not map cleanly to a VST3 unit, so we target the root unit
-                    // regardless of channel. select_program drives the controller + processor
-                    // queue itself, so we return directly rather than falling through to the
-                    // event-list add below.
-                    if !self.realtime_owned {
-                        self.service_control_thread_caches();
-                    }
-                    if let Some(mapping) = self.cached_program_change(0) {
-                        let index = program as i32;
-                        if index < mapping.program_count {
-                            let value = if mapping.program_count > 1 {
-                                index as f64 / (mapping.program_count - 1) as f64
-                            } else {
-                                0.0
-                            };
-                            self.queue_processor_parameter_at(
-                                mapping.param_id,
-                                value,
-                                sample_offset,
-                            )?;
-                        }
-                    }
-                    return Ok(());
-                }
-            }
-
-            if matches!(ordinary_note_update, Some((_, false)))
-                && tracked_note_capacity_remaining(
-                    self.active_notes.len(),
-                    self.ordinary_active_notes,
-                ) == 0
-            {
-                return Err(Error::RealtimeCapacityExceeded);
-            }
-            if !self.input_events.add_raw_event(&vst_event) {
-                return Err(Error::RealtimeCapacityExceeded);
-            }
-            if let Some((index, released)) = ordinary_note_update {
-                if released {
-                    if self.ordinary_note_counts[index] != 0 {
-                        self.ordinary_note_counts[index] -= 1;
-                        self.ordinary_active_notes = self.ordinary_active_notes.saturating_sub(1);
-                    }
-                } else {
-                    self.ordinary_note_counts[index] += 1;
-                    self.ordinary_active_notes += 1;
-                }
-            }
-        }
-        Ok(())
+    // Added by the Auris fork: an ordinary note-on with the VST3 event's tuning filled in.
+    fn send_tuned_note_on_at(
+        &mut self,
+        channel: MidiChannel,
+        note: u8,
+        velocity: u8,
+        cents: f32,
+        sample_offset: i32,
+    ) -> Result<()> {
+        self.queue_midi_event_at(
+            MidiEvent::NoteOn {
+                channel,
+                note,
+                velocity,
+            },
+            sample_offset,
+            cents,
+        )
     }
 
     fn send_plugin_event(&mut self, event: PluginEvent) -> Result<()> {
@@ -4762,6 +4667,142 @@ pub(crate) fn event_to_midi(e: &Event) -> Option<MidiEvent> {
 }
 
 impl PluginImpl {
+    /// Queues `event` for the next block; a note-on carries `tuning` cents in its own field.
+    ///
+    /// Changed by the Auris fork: the body of `send_midi_event_at`, with the tuning a
+    /// note-on is written with passed in rather than fixed at zero.
+    fn queue_midi_event_at(
+        &mut self,
+        event: MidiEvent,
+        sample_offset: i32,
+        tuning: f32,
+    ) -> Result<()> {
+        // Floor to non-negative (the VST3 SDK treats a negative sampleOffset as undefined);
+        // `process()` additionally clamps queued offsets to the actual block length.
+        let sample_offset = sample_offset.max(0);
+        unsafe {
+            let mut vst_event: Event = std::mem::zeroed();
+            vst_event.busIndex = 0;
+            vst_event.sampleOffset = sample_offset;
+            vst_event.ppqPosition = 0.0;
+            vst_event.flags = Event_::EventFlags_::kIsLive as u16;
+            let mut ordinary_note_update = None;
+
+            match event {
+                MidiEvent::NoteOn {
+                    channel,
+                    note,
+                    velocity,
+                } => {
+                    let index = channel.as_index() as usize * 128 + note as usize;
+                    let released =
+                        write_midi_note_on(&mut vst_event, channel, note, velocity, tuning);
+                    ordinary_note_update = Some((index, released));
+                }
+                MidiEvent::NoteOff {
+                    channel,
+                    note,
+                    velocity,
+                } => {
+                    let index = channel.as_index() as usize * 128 + note as usize;
+                    ordinary_note_update = Some((index, true));
+                    write_note_off_event(&mut vst_event, channel, note, velocity);
+                }
+                MidiEvent::ControlChange {
+                    channel,
+                    controller,
+                    value,
+                } => {
+                    return self.queue_mapped_midi_controller(
+                        channel,
+                        controller as u16,
+                        value as f64 / 127.0,
+                        sample_offset,
+                    );
+                }
+                MidiEvent::PitchBend { channel, value } => {
+                    return self.queue_mapped_midi_controller(
+                        channel,
+                        ControllerNumbers_::kPitchBend as u16,
+                        value as f64 / 16_383.0,
+                        sample_offset,
+                    );
+                }
+                MidiEvent::ChannelAftertouch { channel, pressure } => {
+                    return self.queue_mapped_midi_controller(
+                        channel,
+                        ControllerNumbers_::kAfterTouch as u16,
+                        pressure as f64 / 127.0,
+                        sample_offset,
+                    );
+                }
+                MidiEvent::PolyAftertouch {
+                    channel,
+                    note,
+                    pressure,
+                } => {
+                    // Per-note pressure maps to a first-class VST3 poly-pressure event.
+                    vst_event.r#type = kPolyPressureEvent as u16;
+                    vst_event.__field0.polyPressure.channel = channel.as_index() as i16;
+                    vst_event.__field0.polyPressure.pitch = note as i16;
+                    vst_event.__field0.polyPressure.pressure = pressure as f32 / 127.0;
+                    vst_event.__field0.polyPressure.noteId = -1;
+                }
+                MidiEvent::ProgramChange { program, .. } => {
+                    // VST3 has no MIDI program-change event; a program change is routed to the
+                    // root unit's (id 0) program-change parameter via IUnitInfo. The MIDI
+                    // channel does not map cleanly to a VST3 unit, so we target the root unit
+                    // regardless of channel. select_program drives the controller + processor
+                    // queue itself, so we return directly rather than falling through to the
+                    // event-list add below.
+                    if !self.realtime_owned {
+                        self.service_control_thread_caches();
+                    }
+                    if let Some(mapping) = self.cached_program_change(0) {
+                        let index = program as i32;
+                        if index < mapping.program_count {
+                            let value = if mapping.program_count > 1 {
+                                index as f64 / (mapping.program_count - 1) as f64
+                            } else {
+                                0.0
+                            };
+                            self.queue_processor_parameter_at(
+                                mapping.param_id,
+                                value,
+                                sample_offset,
+                            )?;
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+
+            if matches!(ordinary_note_update, Some((_, false)))
+                && tracked_note_capacity_remaining(
+                    self.active_notes.len(),
+                    self.ordinary_active_notes,
+                ) == 0
+            {
+                return Err(Error::RealtimeCapacityExceeded);
+            }
+            if !self.input_events.add_raw_event(&vst_event) {
+                return Err(Error::RealtimeCapacityExceeded);
+            }
+            if let Some((index, released)) = ordinary_note_update {
+                if released {
+                    if self.ordinary_note_counts[index] != 0 {
+                        self.ordinary_note_counts[index] -= 1;
+                        self.ordinary_active_notes = self.ordinary_active_notes.saturating_sub(1);
+                    }
+                } else {
+                    self.ordinary_note_counts[index] += 1;
+                    self.ordinary_active_notes += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Translate a MIDI controller through the prebuilt IMidiMapping table and queue the
     /// resulting processor automation (which also mirrors the value to the controller, so a
     /// plugin's editor follows CC-driven changes). Unmapped controllers are intentionally
@@ -5668,7 +5709,7 @@ mod output_midi_tests {
     #[test]
     fn velocity_zero_note_on_is_written_as_a_note_off() {
         let mut e = blank_event();
-        let released = write_midi_note_on(&mut e, MidiChannel::Ch1, 60, 0);
+        let released = write_midi_note_on(&mut e, MidiChannel::Ch1, 60, 0, 0.0);
         assert!(released);
         assert_eq!(
             event_to_midi(&e),
@@ -5683,7 +5724,7 @@ mod output_midi_tests {
     #[test]
     fn ordinary_note_on_is_written_as_a_note_on() {
         let mut e = blank_event();
-        let released = write_midi_note_on(&mut e, MidiChannel::Ch2, 64, 127);
+        let released = write_midi_note_on(&mut e, MidiChannel::Ch2, 64, 127, 0.0);
         assert!(!released);
         assert_eq!(
             event_to_midi(&e),
@@ -5691,6 +5732,24 @@ mod output_midi_tests {
                 channel: MidiChannel::Ch2,
                 note: 64,
                 velocity: 127
+            })
+        );
+    }
+
+    #[test]
+    fn a_tuned_note_on_carries_its_cents_in_the_event_and_is_released_by_its_key() {
+        let mut e = blank_event();
+        let released = write_midi_note_on(&mut e, MidiChannel::Ch1, 60, 100, 38.7);
+        assert!(!released, "a sounding note is tracked like any other");
+        // SAFETY: `write_midi_note_on` filled the note-on arm of the union.
+        let tuning = unsafe { e.__field0.noteOn.tuning };
+        assert_eq!(tuning, 38.7);
+        assert_eq!(
+            event_to_midi(&e),
+            Some(MidiEvent::NoteOn {
+                channel: MidiChannel::Ch1,
+                note: 60,
+                velocity: 100
             })
         );
     }

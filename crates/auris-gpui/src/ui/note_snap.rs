@@ -208,7 +208,7 @@ impl AurisApp {
     ) -> NoteSnap {
         let signature = self.project().signatures.signature_at(tick);
         let mut grid = grid_step(
-            &self.timeline,
+            &self.roll_timeline,
             signature,
             self.settings.piano_roll_grid,
             self.project().grid,

@@ -612,6 +612,19 @@ pub enum MenuCommand {
         /// Where the first bar of it goes.
         at: Ticks,
     },
+    /// Open the list of tunings.
+    ShowTuningMenu {
+        /// Where to put the menu.
+        anchor: Point<Pixels>,
+    },
+    /// Make a preset the document's tuning.
+    SetTuningPreset(TuningPreset),
+    /// Type the frequency the tuning is pinned to.
+    PromptTuningReference,
+    /// Read a Scala scale file into the document's tuning.
+    ImportScala,
+    /// Place the document's tuning on the keyboard as a Scala keyboard map says.
+    ImportKeyboardMap,
     /// Type the key that takes effect at a position.
     SetKeyAt(Ticks),
     /// Remove the key change at a position.
@@ -1508,6 +1521,17 @@ impl AurisApp {
                 let menu = self.progression_picker_menu(anchor, at);
                 self.open_menu(menu);
             }
+            MenuCommand::ShowTuningMenu { anchor } => {
+                let menu = self.tuning_menu(anchor);
+                self.open_menu(menu);
+            }
+            MenuCommand::SetTuningPreset(preset) => match self.session.set_tuning_preset(preset) {
+                Ok(()) => self.announce_tuning(),
+                Err(error) => self.set_failed_status(self.failure(Key::TuningTitle, &error)),
+            },
+            MenuCommand::PromptTuningReference => self.prompt_for_tuning_reference(),
+            MenuCommand::ImportScala => self.import_scala(false, cx),
+            MenuCommand::ImportKeyboardMap => self.import_scala(true, cx),
             MenuCommand::StampProgression { name, at } => {
                 let bars =
                     progression_target(self.project().loop_region, at, &self.project().signatures)

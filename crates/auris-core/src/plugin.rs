@@ -256,11 +256,21 @@ impl ProcessContext {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum NoteEvent {
     /// Start a note.
+    ///
+    /// A note has two numbers because a tuning separates them. `key` is *which* note — what the
+    /// matching [`NoteEvent::NoteOff`] names, and what a drum kit picks its sound by — and `pitch`
+    /// is *where* it sounds. In the standard tuning `pitch` is `key` as a float; in any other it is
+    /// whatever the [`Tuning`](crate::tuning::Tuning) says, and two keys may sound within a
+    /// semitone of each other. So an instrument releases by `key` and sounds by `pitch`, and a
+    /// sampler choosing among recordings chooses by `pitch` rounded, never by `key`.
     NoteOn {
         /// Offset within the block.
         frame: u32,
-        /// MIDI note number, 0..=127. 69 is A440.
-        pitch: u8,
+        /// Which key, 0..=127.
+        key: u8,
+        /// Where the note sounds, in semitones on the MIDI scale: 69.0 is A440, and a fraction
+        /// lies between two equal-tempered keys.
+        pitch: f32,
         /// Attack strength, 0..=1.
         velocity: f32,
     },
@@ -268,8 +278,8 @@ pub enum NoteEvent {
     NoteOff {
         /// Offset within the block.
         frame: u32,
-        /// MIDI note number to release.
-        pitch: u8,
+        /// The key of the note to release.
+        key: u8,
     },
     /// Release every sounding note, letting them decay naturally.
     AllNotesOff {
@@ -306,6 +316,42 @@ pub enum NoteEvent {
 }
 
 impl NoteEvent {
+    /// A note-on sounding `key` where the standard tuning has it.
+    ///
+    /// What every caller outside the render graph wants: an analysis probe, a test, a preview. The
+    /// graph retunes it on the way to the instrument with [`Self::retuned`].
+    pub fn note_on(frame: u32, key: u8, velocity: f32) -> Self {
+        NoteEvent::NoteOn {
+            frame,
+            key,
+            pitch: f32::from(key),
+            velocity,
+        }
+    }
+
+    /// This event with a note-on's pitch moved by `offsets[key]` semitones; anything else, and a
+    /// key past the end of the table, unchanged.
+    ///
+    /// `offsets` is [`Tuning::pitch_offsets`](crate::tuning::Tuning::pitch_offsets), built off the
+    /// audio thread. Adding rather than replacing keeps whatever the pitch already carried — a
+    /// note bent off its key on its own account is still bent once the scale is applied.
+    pub fn retuned(self, offsets: &[f32]) -> Self {
+        match self {
+            NoteEvent::NoteOn {
+                frame,
+                key,
+                pitch,
+                velocity,
+            } => NoteEvent::NoteOn {
+                frame,
+                key,
+                pitch: pitch + offsets.get(usize::from(key)).copied().unwrap_or(0.0),
+                velocity,
+            },
+            other => other,
+        }
+    }
+
     /// Offset of this event within its block.
     pub fn frame(&self) -> u32 {
         match *self {
@@ -725,12 +771,38 @@ mod tests {
 
     #[test]
     fn events_report_and_move_their_frame() {
-        let event = NoteEvent::NoteOn {
-            frame: 10,
-            pitch: 60,
-            velocity: 1.0,
-        };
+        let event = NoteEvent::note_on(10, 60, 1.0);
         assert_eq!(event.frame(), 10);
         assert_eq!(event.with_frame(3).frame(), 3);
+    }
+
+    #[test]
+    fn retuning_moves_a_note_on_by_its_key_and_leaves_the_rest() {
+        let mut offsets = [0.0; 128];
+        offsets[60] = 0.5;
+        offsets[61] = -0.25;
+        let NoteEvent::NoteOn { key, pitch, .. } = NoteEvent::note_on(0, 60, 1.0).retuned(&offsets)
+        else {
+            panic!("a note-on stays a note-on");
+        };
+        assert_eq!((key, pitch), (60, 60.5));
+        // Added to what the pitch already held, not written over it.
+        let bent = NoteEvent::NoteOn {
+            frame: 0,
+            key: 61,
+            pitch: 61.1,
+            velocity: 1.0,
+        };
+        let NoteEvent::NoteOn { pitch, .. } = bent.retuned(&offsets) else {
+            unreachable!()
+        };
+        assert!((pitch - 60.85).abs() < 1e-5);
+        let off = NoteEvent::NoteOff { frame: 0, key: 60 };
+        assert_eq!(off.retuned(&offsets), off);
+        // A table too short for the key leaves it where it was.
+        assert_eq!(
+            NoteEvent::note_on(0, 100, 1.0).retuned(&offsets[..10]),
+            NoteEvent::note_on(0, 100, 1.0)
+        );
     }
 }

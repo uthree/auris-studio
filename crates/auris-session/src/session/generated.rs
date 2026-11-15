@@ -219,9 +219,12 @@ impl Session {
                 recipe.centre = Some(centre.round() as u8);
             } else {
                 // A writer folds its line into its own register, so an octave asked for is not the
-                // same as one heard: write each and keep the one whose middle lands nearest.
+                // same as one heard: write each and keep the one whose middle lands nearest. A
+                // refused phrase misses everywhere; the write below refuses it out loud.
                 let miss = |recipe: &ClipRecipe| {
-                    middle_of(&self.phrase(start, length, recipe))
+                    self.phrase(start, length, recipe)
+                        .ok()
+                        .and_then(|notes| middle_of(&notes))
                         .map_or(f64::MAX, |m| (m - centre).abs())
                 };
                 recipe.octave = (-2..=2)
@@ -233,7 +236,7 @@ impl Session {
                     .map_or(0, |best| best.octave);
             }
         }
-        let notes = self.phrase(start, length, &recipe);
+        let notes = self.phrase(start, length, &recipe)?;
         recipe.text_digest = auris_core::notes_digest(&notes);
 
         let mut candidate = MidiClip::new(ClipId(0), recipe.preset.name(), start, length);
@@ -370,7 +373,7 @@ impl Session {
             .project
             .midi_clip(clip)
             .ok_or(SessionError::UnknownClip(clip.0))?;
-        let mut written = self.phrase(midi.start, midi.length, &writer);
+        let mut written = self.phrase(midi.start, midi.length, &writer)?;
         for note in &mut written {
             note.drum_voice = voice.to_string();
         }
@@ -525,7 +528,7 @@ impl Session {
             });
         }
         let (start, length) = (midi.start, midi.length);
-        let notes = self.phrase_excluding(start, length, &recipe, Some(clip));
+        let notes = self.phrase_excluding(start, length, &recipe, Some(clip))?;
         recipe.text_digest = auris_core::notes_digest(&notes);
         let written = notes.len();
         let mut transforms = if midi
@@ -567,7 +570,12 @@ impl Session {
     /// The section under the clip's start travels along as the composer's hint: two clips
     /// written into stretches with the same label draw the same figures, which is what makes
     /// the second サビ recognisably the first.
-    pub(super) fn phrase(&self, start: Ticks, length: Ticks, recipe: &ClipRecipe) -> Vec<Note> {
+    pub(super) fn phrase(
+        &self,
+        start: Ticks,
+        length: Ticks,
+        recipe: &ClipRecipe,
+    ) -> Result<Vec<Note>, SessionError> {
         self.phrase_excluding(start, length, recipe, None)
     }
 
@@ -578,7 +586,7 @@ impl Session {
         length: Ticks,
         recipe: &ClipRecipe,
         excluded: Option<ClipId>,
-    ) -> Vec<Note> {
+    ) -> Result<Vec<Note>, SessionError> {
         project_phrase(&self.project, start, length, recipe, excluded)
     }
 }
@@ -590,20 +598,28 @@ pub(super) fn project_phrase(
     length: Ticks,
     recipe: &ClipRecipe,
     excluded: Option<ClipId>,
-) -> Vec<Note> {
-    let mut notes = unarranged_project_phrase(project, start, length, recipe);
+) -> Result<Vec<Note>, SessionError> {
+    let mut notes = unarranged_project_phrase(project, start, length, recipe)?;
     super::lyrics::arrange_generated_backing(project, start, length, recipe, excluded, &mut notes);
-    notes
+    Ok(notes)
 }
 
 /// Writes the recipe before choosing its foreground; callers apply one arrangement pass.
+///
+/// The one door every melodic writer goes through, and so the one place a tuning of other than
+/// twelve notes is refused: the composer writes keys as semitones of a twelve-note scale, and in
+/// 31-tone equal temperament key 64 is a major second above middle C, not a third. A drum part
+/// names drums by key and is written in any tuning.
 pub(super) fn unarranged_project_phrase(
     project: &auris_core::Project,
     start: Ticks,
     length: Ticks,
     recipe: &ClipRecipe,
-) -> Vec<Note> {
-    auris_compose::write_phrase(
+) -> Result<Vec<Note>, SessionError> {
+    if !recipe.preset.is_drums() {
+        super::tuning::require_twelve_tone(project)?;
+    }
+    Ok(auris_compose::write_phrase(
         &project.harmony,
         start,
         length,
@@ -615,7 +631,7 @@ pub(super) fn unarranged_project_phrase(
         // renderer hands it the tempo actually in force at playback.
         recipe,
         project.sections.section_at(start),
-    )
+    ))
 }
 
 /// The whole octaves that bring the middle of `notes` nearest the middle of `range`.

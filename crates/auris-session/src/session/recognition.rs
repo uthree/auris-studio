@@ -211,6 +211,8 @@ impl Session {
         to: Ticks,
         options: ChordOptions,
     ) -> Result<ChordAnalysisJob, SessionError> {
+        // A chord is a set of pitch classes, and the result is written into the harmony lane.
+        super::tuning::require_twelve_tone(&self.project)?;
         if from.raw() < 0
             || to <= from
             || options.window.raw() <= 0
@@ -388,6 +390,9 @@ impl Session {
 
     /// Prepares a trimmed audio clip for offline CPU analysis, sharing its source samples.
     pub fn audio_analysis_job(&self, clip: ClipId) -> Result<AudioAnalysisJob, SessionError> {
+        // The recogniser hears semitones and would write them as keys this tuning reads
+        // otherwise.
+        super::tuning::require_twelve_tone(&self.project)?;
         let clip = self
             .project
             .tracks
@@ -473,6 +478,8 @@ impl Session {
         start: Ticks,
         name: &str,
     ) -> Result<(TrackId, ClipId), SessionError> {
+        // A transcription's pitches are MIDI semitones, which are keys only in twelve notes.
+        super::tuning::require_twelve_tone(&self.project)?;
         draft.validate().map_err(failure)?;
         self.import_transcribed_notes(&draft.notes, start, name)
     }

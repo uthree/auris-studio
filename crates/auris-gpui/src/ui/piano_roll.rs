@@ -659,11 +659,15 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::AnyElement {
+        self.reveal_clip_in_roll();
         let theme = self.theme.clone();
         let pitch_view = self.pitch.clone();
-        let view = self.timeline.clone();
+        let view = self.roll_timeline.clone();
         let signatures = self.project().signatures.spans();
         let playhead = self.playhead_ticks();
+        // How each row is drawn, under the tuning the clip is heard in. Shared by the keyboard
+        // and the grid, so the two cannot disagree about which rows are dark.
+        let faces = std::rc::Rc::new(crate::ui::key_face::key_faces(&self.roll_tuning()));
 
         let Some(clip) = self.selected_midi_clip() else {
             return div()
@@ -922,7 +926,11 @@ impl AurisApp {
                             Self::opens_menu(cx, |this, at| this.curve_lane_menu(at)),
                         ))
                     })
-                    .child(self.zoom_slider("roll-zoom", cx)),
+                    .child(self.zoom_slider(
+                        "roll-zoom",
+                        crate::ui::timeline::TimeSurface::Editor,
+                        cx,
+                    )),
             )
             .child(
                 // The event list down the left, beside everything that scrolls with time.
@@ -948,6 +956,7 @@ impl AurisApp {
                                         .child({
                                             let theme = theme.clone();
                                             let pitch_view = pitch_view.clone();
+                                            let faces = std::rc::Rc::clone(&faces);
                                             let mut sounding = self.session.midi_sounding();
                                             sounding
                                                 .extend(self.session.typing_keyboard().sounding());
@@ -960,6 +969,7 @@ impl AurisApp {
                                                             cx,
                                                             bounds,
                                                             &pitch_view,
+                                                            &faces,
                                                             &sounding,
                                                             &theme,
                                                         );
@@ -1005,6 +1015,7 @@ impl AurisApp {
                                             let theme = theme.clone();
                                             let view = view.clone();
                                             let pitch_view = pitch_view.clone();
+                                            let faces = std::rc::Rc::clone(&faces);
                                             let recorded = self.canvas.roll.clone();
                                             canvas(
                                     move |bounds, window, _| {
@@ -1034,7 +1045,13 @@ impl AurisApp {
                                         }
                                         paint::clipped(window, bounds, |window| {
                                             paint::rect(window, bounds, theme.surface_sunken);
-                                            paint::pitch_rows(window, bounds, &pitch_view, &theme);
+                                            paint::pitch_rows(
+                                                window,
+                                                bounds,
+                                                &pitch_view,
+                                                &faces,
+                                                &theme,
+                                            );
                                             paint::time_grid_using(
                                                 window,
                                                 bounds,
@@ -1233,7 +1250,7 @@ impl AurisApp {
     /// stay up there, where the regions are made.
     fn render_roll_ruler(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
         let theme = self.theme.clone();
-        let view = self.timeline.clone();
+        let view = self.roll_timeline.clone();
         let signatures = self.project().signatures.spans();
         let playhead = self.playhead_ticks();
         let tempo: Vec<TempoPoint> = match self.panels.lanes.tempo {
@@ -1307,7 +1324,7 @@ impl AurisApp {
     /// A press on the roll's ruler: move the playhead there and keep scrubbing while held.
     fn begin_roll_ruler_drag(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
         let x = event.position.x - self.roll_origin().x;
-        let tick = self.snap(self.timeline.x_to_tick(x));
+        let tick = self.snap(self.roll_timeline.x_to_tick(x));
         self.seek(tick);
         self.begin_drag(Drag::RollPlayhead);
         cx.notify();
@@ -1330,7 +1347,7 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> gpui::AnyElement {
         let theme = self.theme.clone();
-        let view = self.timeline.clone();
+        let view = self.roll_timeline.clone();
         let playhead = self.playhead_ticks();
         let editable = self.editable_score();
         let Some(clip) = self.selected_midi_clip() else {
@@ -1561,7 +1578,7 @@ impl AurisApp {
             return;
         }
         let origin = self.roll_origin();
-        let tick = self.timeline.x_to_tick(event.position.x - origin.x);
+        let tick = self.roll_timeline.x_to_tick(event.position.x - origin.x);
         // Below MIDI 0 the grid is unpainted, so a click there must not act on pitch 0.
         let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
             return;
@@ -1678,8 +1695,8 @@ impl AurisApp {
                 else {
                     return;
                 };
-                let start_x = self.timeline.tick_to_x(clip_start + note.start);
-                let end_x = self.timeline.tick_to_x(clip_start + note.end());
+                let start_x = self.roll_timeline.tick_to_x(clip_start + note.start);
+                let end_x = self.roll_timeline.tick_to_x(clip_start + note.end());
                 let resizing = f32::from(end_x - (event.position.x - origin.x)).abs()
                     <= resize_grab(end_x - start_x);
                 if !event.modifiers.shift {
@@ -1875,7 +1892,8 @@ impl AurisApp {
         let per_bar = signature.ticks_per_bar().raw().max(1);
         let per_beat = signature.ticks_per_beat().raw().max(1);
         let length = note.length.raw();
-        let pitch = crate::ui::timeline::pitch_name(note.pitch);
+        // Where the note sounds, which in a tuning is not what its key would say.
+        let pitch = crate::ui::key_face::sounding_name(&self.roll_tuning(), note.pitch);
         let title = if copying {
             messages::note_copy_title(self.language(), &pitch, self.selected_notes.len())
         } else {
@@ -2054,7 +2072,7 @@ impl AurisApp {
             );
             for (_, to) in layout.iter().take(layout.len().saturating_sub(1)) {
                 let tick = tempo.seconds_to_ticks(Seconds(start + to));
-                let x = self.timeline.tick_to_x(tick);
+                let x = self.roll_timeline.tick_to_x(tick);
                 zones.push(Bounds {
                     origin: point(
                         x - px(PHONEME_GRAB_HALF),
@@ -2097,7 +2115,7 @@ impl AurisApp {
                 + self.pitch.row_height / 2.0;
             for (handle, t, semis) in ornament_handles(note, end - start) {
                 let x = self
-                    .timeline
+                    .roll_timeline
                     .tick_to_x(tempo.seconds_to_ticks(Seconds(start + t)));
                 let y = centre - semis * self.pitch.row_height;
                 if within_ornament_handle(f32::from(position.x - x), f32::from(position.y) - y) {
@@ -2123,9 +2141,9 @@ impl AurisApp {
         let tempo = &self.project().tempo_map;
         let start = tempo.ticks_to_seconds(clip_start + note.start).0;
         let end = tempo.ticks_to_seconds(clip_start + note.end()).0;
-        let at = tempo.ticks_to_seconds(self.timeline.x_to_tick(x)).0;
+        let at = tempo.ticks_to_seconds(self.roll_timeline.x_to_tick(x)).0;
         let slack = (tempo
-            .ticks_to_seconds(self.timeline.x_to_tick(x + px(PHONEME_GRAB_HALF)))
+            .ticks_to_seconds(self.roll_timeline.x_to_tick(x + px(PHONEME_GRAB_HALF)))
             .0
             - at)
             .abs();
@@ -2142,8 +2160,8 @@ impl AurisApp {
         notes
             .iter()
             .filter_map(|note| {
-                let start_x = self.timeline.tick_to_x(clip_start + note.start);
-                let end_x = self.timeline.tick_to_x(clip_start + note.end());
+                let start_x = self.roll_timeline.tick_to_x(clip_start + note.start);
+                let end_x = self.roll_timeline.tick_to_x(clip_start + note.end());
                 let (x, width) = note_end_span(start_x, end_x)?;
                 // The rows the note is drawn in, not the row it is binned into: a pixel inside at
                 // the top and bottom, which is where the note the eye sees actually is.
@@ -2155,12 +2173,26 @@ impl AurisApp {
             .collect()
     }
 
+    /// The tuning the clip in the roll is heard in: the document's, except on a drum track, which
+    /// is never retuned because its keys name drums.
+    pub(crate) fn roll_tuning(&self) -> Tuning {
+        let drum = self
+            .selected_clip
+            .and_then(|editing| self.project().track_of_clip(editing))
+            .and_then(|track| self.project().track(track))
+            .is_some_and(|track| track.kind.is_drum());
+        match drum {
+            true => Tuning::standard(),
+            false => self.project().tuning.clone(),
+        }
+    }
+
     /// Every note clip on the track of the clip in the roll, as id, start and end.
     ///
     /// Gathered from the document rather than remembered, because a neighbour can be moved,
     /// trimmed or written to from the arrangement while the roll is open, and a cached copy would
     /// show — and write into — where a phrase used to be.
-    fn roll_track_spans(&self) -> Vec<(ClipId, Ticks, Ticks)> {
+    pub(crate) fn roll_track_spans(&self) -> Vec<(ClipId, Ticks, Ticks)> {
         let Some(track) = self
             .selected_clip
             .and_then(|editing| self.project().track_of_clip(editing))
@@ -2180,7 +2212,7 @@ impl AurisApp {
     }
 
     /// The other clips on the track with any part on screen: each one's start, end and notes.
-    fn neighbouring_notes(&self) -> Vec<(Ticks, Ticks, Vec<Note>)> {
+    pub(crate) fn neighbouring_notes(&self) -> Vec<(Ticks, Ticks, Vec<Note>)> {
         let Some(editing) = self.selected_clip else {
             return Vec::new();
         };
@@ -2194,8 +2226,8 @@ impl AurisApp {
             .map(|bounds| bounds.size.width)
             .unwrap_or(px(4096.0));
         let view = (
-            self.timeline.x_to_tick(px(0.0)),
-            self.timeline.x_to_tick(width),
+            self.roll_timeline.x_to_tick(px(0.0)),
+            self.roll_timeline.x_to_tick(width),
         );
         let spans = self.roll_track_spans();
         ghosted(&spans, editing, view)
@@ -2215,6 +2247,19 @@ impl AurisApp {
     /// note selection, whose indices belong to the clip that was in hand. The view stays where
     /// it is: the press is aimed at something already on screen.
     fn retarget_roll_press(&mut self, tick: Ticks, pitch: u8) -> Option<ClipId> {
+        self.retarget_track_press(tick, |this, id, clip| {
+            this.note_at(id, tick - clip.start, pitch).is_some()
+        })
+    }
+
+    /// [`Self::retarget_roll_press`] with the question "is one of this clip's notes under the
+    /// pointer?" left to the editor asking, since the piano roll and the drum editor draw a
+    /// note differently: a bar as long as the note, or a hit of fixed width at its start.
+    pub(crate) fn retarget_track_press(
+        &mut self,
+        tick: Ticks,
+        struck_by: impl Fn(&Self, ClipId, &MidiClip) -> bool,
+    ) -> Option<ClipId> {
         let editing = self.selected_clip?;
         let spans = self.roll_track_spans();
         let struck: Vec<ClipId> = std::iter::once(editing)
@@ -2227,7 +2272,7 @@ impl AurisApp {
             .filter(|id| {
                 self.session
                     .midi_clip(*id)
-                    .is_some_and(|clip| self.note_at(*id, tick - clip.start, pitch).is_some())
+                    .is_some_and(|clip| struck_by(self, *id, clip))
             })
             .collect();
         let target = press_target(&spans, editing, tick, &struck);
@@ -2359,7 +2404,7 @@ impl AurisApp {
             return;
         }
         let origin = self.roll_origin();
-        let tick = self.timeline.x_to_tick(event.position.x - origin.x);
+        let tick = self.roll_timeline.x_to_tick(event.position.x - origin.x);
         let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
             return;
         };
@@ -2394,29 +2439,35 @@ impl AurisApp {
         cx.notify();
     }
 
-    /// Wheel handling: plain scrolls pitch, shift scrolls time, alt zooms time,
-    /// control zooms the pitch axis.
+    /// Wheel handling, read by [`crate::gestures::roll_wheel_action`]: plain scrolls pitch,
+    /// shift scrolls time, control or alt zooms time — the arrangement's gestures, on the
+    /// editor's own axis — and either of those with shift zooms the pitch axis.
     fn scroll_roll(&mut self, event: &gpui::ScrollWheelEvent, cx: &mut gpui::Context<Self>) {
         let delta = event.delta.pixel_delta(px(24.0));
-        if event.modifiers.control {
-            let anchor = event.position.y - self.roll_origin().y;
-            if let Some(factor) = crate::gestures::wheel_zoom_factor(delta.y) {
-                self.pitch.zoom_by(factor, anchor);
+        match crate::gestures::roll_wheel_action(event.modifiers) {
+            crate::gestures::RollWheel::ZoomPitch => {
+                let anchor = event.position.y - self.roll_origin().y;
+                if let Some(factor) = crate::gestures::wheel_zoom_factor(delta.y) {
+                    self.pitch.zoom_by(factor, anchor);
+                }
             }
-        } else if event.modifiers.alt {
-            // The same origin the vertical branch above uses, and the same one the painter does.
-            // `KEYBOARD_WIDTH` is only half of it — the roll starts after the panel's own padding
-            // as well — so the anchor was a constant off, and the notes slid sideways on every
-            // zoom notch instead of staying put under the pointer.
-            let anchor = event.position.x - self.roll_origin().x;
-            if let Some(factor) = crate::gestures::wheel_zoom_factor(delta.y) {
-                self.timeline.zoom_by(factor, anchor);
+            crate::gestures::RollWheel::ZoomTime => {
+                // The same origin the painter uses. `KEYBOARD_WIDTH` is only half of it — the
+                // roll starts after the panel's own padding as well — so the anchor was a
+                // constant off, and the notes slid sideways on every zoom notch instead of
+                // staying put under the pointer.
+                let anchor = event.position.x - self.roll_origin().x;
+                if let Some(factor) = crate::gestures::wheel_zoom_factor(delta.y) {
+                    self.roll_timeline.zoom_by(factor, anchor);
+                }
             }
-        } else if event.modifiers.shift {
-            self.timeline.scroll_by(-delta.y - delta.x);
-        } else {
-            self.pitch.scroll_by(-delta.y);
-            self.timeline.scroll_by(-delta.x);
+            crate::gestures::RollWheel::AlongTheSong => {
+                self.roll_timeline.scroll_by(-delta.y - delta.x);
+            }
+            crate::gestures::RollWheel::AcrossThePitches => {
+                self.pitch.scroll_by(-delta.y);
+                self.roll_timeline.scroll_by(-delta.x);
+            }
         }
         cx.notify();
     }
@@ -2432,17 +2483,6 @@ impl AurisApp {
     }
 }
 
-pub(super) fn paint_clip_extent(
-    window: &mut Window,
-    bounds: Bounds<Pixels>,
-    view: &TimelineView,
-    clip_start: Ticks,
-    clip_length: Ticks,
-    theme: &Theme,
-) {
-    paint_track_extent(window, bounds, view, (clip_start, clip_length), &[], theme);
-}
-
 /// How dark the stretch outside every clip is: notes there exist but are never played.
 const GAP_SHADE: f32 = 0.45;
 
@@ -2451,7 +2491,7 @@ const NEIGHBOUR_SHADE: f32 = 0.18;
 
 /// Shades the grid outside the clip in hand, lightly over the clips beside it and heavily over
 /// the bare track, and marks where each clip begins and ends.
-fn paint_track_extent(
+pub(super) fn paint_track_extent(
     window: &mut Window,
     bounds: Bounds<Pixels>,
     view: &TimelineView,
@@ -2492,7 +2532,7 @@ fn paint_track_extent(
 ///
 /// In their own velocity colour, because they are notes a press takes hold of, and a step back
 /// from the clip in hand so which clip a selection belongs to still reads at a glance.
-const NEIGHBOUR_ALPHA: f32 = 0.6;
+pub(super) const NEIGHBOUR_ALPHA: f32 = 0.6;
 
 /// How solid the performed score is over its editable source.
 ///
@@ -3208,13 +3248,15 @@ impl AurisApp {
         };
         let (clip_start, clip_length, points) =
             (held.start, held.length, held.curve(which).to_vec());
-        let raw = self.timeline.x_to_tick(event.position.x - bounds.origin.x);
+        let raw = self
+            .roll_timeline
+            .x_to_tick(event.position.x - bounds.origin.x);
         let at = (self.snap_unless_held(raw, event.modifiers) - clip_start).max_zero();
         let grabbed = curve_point_at(
             &points,
             clip_length,
             (raw - clip_start).max_zero(),
-            curve_grab_radius(&self.timeline),
+            curve_grab_radius(&self.roll_timeline),
         );
 
         if let Some(existing) = grabbed
@@ -3261,7 +3303,8 @@ impl AurisApp {
         let bounds = self.canvas.curve(which).get()?;
         let clip_start = self.session.midi_clip(clip)?.start;
         let to = (self.snap_unless_held(
-            self.timeline.x_to_tick(event.position.x - bounds.origin.x),
+            self.roll_timeline
+                .x_to_tick(event.position.x - bounds.origin.x),
             event.modifiers,
         ) - clip_start)
             .max_zero();
@@ -3286,7 +3329,7 @@ mod backend_window_tests {
             note.phoneme_seconds = vec![0.1, 0.0];
             this.session.add_note(clip, note.clone()).unwrap();
             let cut = this.project().tempo_map.seconds_to_ticks(Seconds(0.1));
-            let x = this.timeline.tick_to_x(cut);
+            let x = this.roll_timeline.tick_to_x(cut);
             assert!(
                 !this
                     .phoneme_divider_zones(Ticks::ZERO, &[note.clone()])
@@ -4415,7 +4458,7 @@ mod window_tests {
         let on_the_ruler = app.read_with(cx, |this, _| {
             let roll = this.canvas.roll.get().expect("the roll is painted");
             gpui::point(
-                roll.origin.x + this.timeline.tick_to_x(BEAT * 4),
+                roll.origin.x + this.roll_timeline.tick_to_x(BEAT * 4),
                 roll.origin.y - crate::theme::Metrics::RULER_HEIGHT / 2.0,
             )
         });
@@ -4586,7 +4629,7 @@ mod window_tests {
                 .add_note(clip, Note::new(MIDDLE_C, BEAT, BEAT * 2 + Ticks(7)))
                 .unwrap();
             this.open_clip_in_editor(clip);
-            this.timeline.scroll_ticks = BEAT * 8;
+            this.roll_timeline.scroll_ticks = BEAT * 8;
             clip
         });
         paint(&app, cx);
@@ -5082,6 +5125,89 @@ mod window_tests {
         next
     }
 
+    fn zoom_wheel(cx: &mut gpui::VisualTestContext, at: gpui::Point<gpui::Pixels>, shift: bool) {
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: at,
+            delta: gpui::ScrollDelta::Lines(gpui::point(0.0, 3.0)),
+            modifiers: gpui::Modifiers {
+                control: true,
+                shift,
+                ..gpui::Modifiers::default()
+            },
+            ..Default::default()
+        });
+    }
+
+    /// Ctrl and the wheel zoom the time axis of whichever view the pointer is over, and only
+    /// that one: the roll and the arrangement are zoomed apart.
+    #[gpui::test]
+    fn control_wheel_zooms_the_view_under_the_pointer(cx: &mut TestAppContext) {
+        let (app, cx, _) = with_the_roll_open(cx);
+        let (lanes, roll, song, phrase, rows) = app.read_with(cx, |this, _| {
+            (
+                this.canvas.lanes.get().unwrap().center(),
+                this.canvas.roll.get().unwrap().center(),
+                this.timeline.pixels_per_beat,
+                this.roll_timeline.pixels_per_beat,
+                this.pitch.row_height,
+            )
+        });
+
+        zoom_wheel(cx, roll, false);
+        let zoomed = app.read_with(cx, |this, _| {
+            assert!(
+                this.roll_timeline.pixels_per_beat > phrase,
+                "the roll zooms in"
+            );
+            assert_eq!(this.timeline.pixels_per_beat, song, "the arrangement stays");
+            assert_eq!(this.pitch.row_height, rows, "the pitch axis stays");
+            this.roll_timeline.pixels_per_beat
+        });
+
+        zoom_wheel(cx, lanes, false);
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.timeline.pixels_per_beat > song,
+                "the arrangement zooms in"
+            );
+            assert_eq!(this.roll_timeline.pixels_per_beat, zoomed, "the roll stays");
+        });
+
+        // Shift added zooms the roll's pitch axis instead, which the arrangement has no
+        // equivalent of.
+        zoom_wheel(cx, roll, true);
+        app.read_with(cx, |this, _| {
+            assert!(this.pitch.row_height > rows);
+            assert_eq!(this.roll_timeline.pixels_per_beat, zoomed);
+        });
+    }
+
+    /// A clip chosen in the arrangement somewhere the roll is not looking is brought into view,
+    /// and one already on screen leaves the roll where it was.
+    #[gpui::test]
+    fn a_clip_off_the_rolls_screen_is_scrolled_to_once(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_the_roll_open(cx);
+        let far = app.update(cx, |this, _| {
+            let track = this.project().track_of_clip(clip).unwrap();
+            let far = this
+                .session
+                .add_midi_clip(track, "Far", BEAT * 400, CLIP_LENGTH)
+                .unwrap();
+            this.select_clip(Some(far));
+            far
+        });
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.selected_clip, Some(far));
+            assert_eq!(this.roll_timeline.scroll_ticks, BEAT * 400);
+            assert_eq!(
+                this.timeline.scroll_ticks,
+                Ticks::ZERO,
+                "the arrangement stays"
+            );
+        });
+    }
+
     /// Writing over the next clip's stretch writes into the next clip, at its own position.
     #[gpui::test]
     fn a_note_drawn_over_the_next_clip_lands_in_it(cx: &mut TestAppContext) {
@@ -5224,7 +5350,7 @@ mod window_tests {
             let origin = this.roll_origin();
             // One row past pitch 0, which `pitch_at` answers `None` for.
             gpui::point(
-                origin.x + this.timeline.tick_to_x(BEAT),
+                origin.x + this.roll_timeline.tick_to_x(BEAT),
                 origin.y + this.pitch.pitch_to_y(0) + gpui::px(this.pitch.row_height * 1.5),
             )
         });
@@ -5346,7 +5472,7 @@ mod window_tests {
             let x_at = |seconds: f64| {
                 origin.x
                     + this
-                        .timeline
+                        .roll_timeline
                         .tick_to_x(tempo.seconds_to_ticks(Seconds(seconds)))
             };
             (

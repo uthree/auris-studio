@@ -145,6 +145,8 @@ pub enum PromptTarget {
     SignatureFrom(Ticks),
     /// An audio clip's own gain, in decibels.
     ClipGain(ClipId),
+    /// The frequency the document's tuning pins its reference key to, in hertz.
+    TuningReference,
     /// A parameter, in whatever units its descriptor is written in.
     ///
     /// The drag is for finding a value by ear and the fine drag for the last of it. This is for
@@ -233,6 +235,8 @@ pub enum Notation {
     Tempo,
     /// A level in decibels.
     Gain,
+    /// A frequency in hertz.
+    Frequency,
     /// A whole MIDI note address from 0 to 127.
     MidiNote,
     /// A place in the song, as bar, beat and hundredth.
@@ -257,6 +261,7 @@ impl PromptTarget {
             | PromptTarget::TempoFrom(_)
             | PromptTarget::ClipSourceTempo(_) => Notation::Tempo,
             PromptTarget::ClipGain(_) => Notation::Gain,
+            PromptTarget::TuningReference => Notation::Frequency,
             PromptTarget::DrumAssignment { .. }
             | PromptTarget::NewDrumLane(_)
             | PromptTarget::DrumLaneNote { .. } => Notation::MidiNote,
@@ -320,6 +325,7 @@ impl Notation {
             Notation::Seed => Key::HintSeed,
             Notation::Tempo => Key::HintTempo,
             Notation::Gain => Key::HintClipGain,
+            Notation::Frequency => Key::HintFrequency,
             Notation::MidiNote => Key::HintMidiNote,
             Notation::Position => Key::HintPosition,
         }
@@ -340,6 +346,7 @@ impl Notation {
             Notation::Seed
             | Notation::Tempo
             | Notation::Gain
+            | Notation::Frequency
             | Notation::MidiNote
             | Notation::Position => &[],
         }
@@ -1258,6 +1265,22 @@ impl AurisApp {
                 }
                 _ => {
                     self.reject_prompt(messages::not_a_tempo(self.language(), &text));
+                    return;
+                }
+            },
+            // The session refuses what is not a positive, finite frequency; anything that is not
+            // a number at all is turned away here, with the notation's own wording.
+            PromptTarget::TuningReference => match text.trim().parse::<f64>() {
+                Ok(hz) if hz.is_finite() && hz > 0.0 => {
+                    let key = self.project().tuning.reference_key();
+                    let result = self.session.set_tuning_reference(key, hz);
+                    if result.is_ok() {
+                        self.announce_tuning();
+                    }
+                    result
+                }
+                _ => {
+                    self.reject_prompt(messages::not_a_frequency(self.language(), &text));
                     return;
                 }
             },
@@ -2696,6 +2719,7 @@ mod tests {
             PromptTarget::Signature(AT),
             PromptTarget::SignatureFrom(AT),
             PromptTarget::ClipGain(ClipId(1)),
+            PromptTarget::TuningReference,
             PromptTarget::Param(ParamTarget::MasterGain),
             PromptTarget::DrumAssignment {
                 track: TrackId(1),
@@ -2747,6 +2771,7 @@ mod tests {
                 | PromptTarget::Signature(_)
                 | PromptTarget::SignatureFrom(_)
                 | PromptTarget::ClipGain(_)
+                | PromptTarget::TuningReference
                 | PromptTarget::Param(_)
                 | PromptTarget::DrumAssignment { .. }
                 | PromptTarget::NewDrumLane(_)

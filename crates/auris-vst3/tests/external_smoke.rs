@@ -122,16 +122,8 @@ fn smoke_instrument(plugin: &Vst3Plugin) {
     for block in 0..64 {
         // Duplicate voices at one pitch require one tracked release each.
         let note_on = [
-            NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 60,
-                velocity: 0.8,
-            },
-            NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 60,
-                velocity: 0.5,
-            },
+            NoteEvent::note_on(0, 60, 0.8),
+            NoteEvent::note_on(0, 60, 0.5),
         ];
         let events = if block == 0 { &note_on[..] } else { &[] };
         let context = ProcessContext {
@@ -176,15 +168,7 @@ fn smoke_instrument(plugin: &Vst3Plugin) {
         "reset and its zero-frame release flush must fit the realtime queues"
     );
 
-    instrument.process(
-        &[NoteEvent::NoteOn {
-            frame: 0,
-            pitch: 64,
-            velocity: 0.8,
-        }],
-        &mut buffer,
-        &context,
-    );
+    instrument.process(&[NoteEvent::note_on(0, 64, 0.8)], &mut buffer, &context);
     instrument.process(
         &[NoteEvent::AllNotesOff { frame: 0 }],
         &mut buffer,
