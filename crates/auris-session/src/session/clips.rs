@@ -627,7 +627,8 @@ impl Session {
             // undo step the drag opened rather than in two.
             let notes = recipe
                 .as_ref()
-                .map(|recipe| self.phrase(start, length, recipe));
+                .map(|recipe| self.phrase(start, length, recipe))
+                .transpose()?;
             candidate.length = length;
             // The length is now the user's, so nothing grows it back. A clip dragged shorter to
             // hide a tail used to reappear at full length on the next note edit.
@@ -749,7 +750,7 @@ impl Session {
                 recipe.trim_drum_accents(by);
             }
             let notes = match &recipe {
-                Some(recipe) => self.phrase(now, length, recipe),
+                Some(recipe) => self.phrase(now, length, recipe)?,
                 None => self
                     .project
                     .midi_clip(clip)

@@ -651,7 +651,7 @@ impl Engine for Bowed {
     fn start(&mut self, index: usize, note: &Note, quality: Quality) {
         let (rate, settings) = (self.rate, self.settings);
         let width = self.performance.width;
-        let key = f32::from(note.pitch);
+        let key = note.pitch;
         let position = match note.touch {
             Some(at) => touch_position(at).clamp(0.03, 0.4),
             None => settings.position,
@@ -721,7 +721,7 @@ impl Engine for Bowed {
         if !voice.sounding {
             return false;
         }
-        voice.key = f32::from(note.pitch);
+        voice.key = note.pitch;
         voice.velocity = note.velocity;
         voice.held = true;
         let (body, sounding) = (voice.body, hertz(voice.key).max(LOWEST_HZ));

@@ -76,8 +76,8 @@ fn main() {
         let mut score = None;
         for velocity in VELOCITIES {
             let track = track(&moras, *velocity, length, model.info().hop_seconds());
-            let notes = render_score(&track, &tempo);
-            let frames = render_expression_frames(&track, &tempo);
+            let notes = render_score(&track, &tempo, &auris_core::Tuning::standard());
+            let frames = render_expression_frames(&track, &tempo, &auris_core::Tuning::standard());
             let auris = model.sing_score(&frames, &notes, 0, 0).unwrap();
             write_wav(&out.join(format!("{stem}-auris{velocity:.1}.wav")), &auris);
             score = Some(notes);

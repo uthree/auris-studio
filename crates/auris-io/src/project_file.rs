@@ -342,12 +342,12 @@ pub fn stage_file_bytes(path: &Path, bytes: &[u8]) -> Result<StagedFile> {
 ///
 /// Every version bump must decide whether the version it replaces joins this range. Version 32
 /// forgot to, and a project saved the day before would not open at all.
-const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=36;
+const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=37;
 
 /// Reads a project from `path`.
 ///
 /// The format version must match this build, or be one of the older versions it still reads:
-/// 36 and earlier with comments pinned to effects (see `move_effect_comments_to_strips`), 35 and
+/// 37, which opens in the standard tuning, 36 and earlier with comments pinned to effects (see `move_effect_comments_to_strips`), 35 and
 /// earlier with sends beside the outputs (see `fold_sends_into_outputs`), 31 with each
 /// track's single output, 30 without the latest extended chords, 29 without eleventh chords, 28
 /// without named drum lanes, or 27, whose volume contour is defaulted.

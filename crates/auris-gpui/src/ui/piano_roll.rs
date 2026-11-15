@@ -665,6 +665,9 @@ impl AurisApp {
         let view = self.roll_timeline.clone();
         let signatures = self.project().signatures.spans();
         let playhead = self.playhead_ticks();
+        // How each row is drawn, under the tuning the clip is heard in. Shared by the keyboard
+        // and the grid, so the two cannot disagree about which rows are dark.
+        let faces = std::rc::Rc::new(crate::ui::key_face::key_faces(&self.roll_tuning()));
 
         let Some(clip) = self.selected_midi_clip() else {
             return div()
@@ -953,6 +956,7 @@ impl AurisApp {
                                         .child({
                                             let theme = theme.clone();
                                             let pitch_view = pitch_view.clone();
+                                            let faces = std::rc::Rc::clone(&faces);
                                             let mut sounding = self.session.midi_sounding();
                                             sounding
                                                 .extend(self.session.typing_keyboard().sounding());
@@ -965,6 +969,7 @@ impl AurisApp {
                                                             cx,
                                                             bounds,
                                                             &pitch_view,
+                                                            &faces,
                                                             &sounding,
                                                             &theme,
                                                         );
@@ -1010,6 +1015,7 @@ impl AurisApp {
                                             let theme = theme.clone();
                                             let view = view.clone();
                                             let pitch_view = pitch_view.clone();
+                                            let faces = std::rc::Rc::clone(&faces);
                                             let recorded = self.canvas.roll.clone();
                                             canvas(
                                     move |bounds, window, _| {
@@ -1039,7 +1045,13 @@ impl AurisApp {
                                         }
                                         paint::clipped(window, bounds, |window| {
                                             paint::rect(window, bounds, theme.surface_sunken);
-                                            paint::pitch_rows(window, bounds, &pitch_view, &theme);
+                                            paint::pitch_rows(
+                                                window,
+                                                bounds,
+                                                &pitch_view,
+                                                &faces,
+                                                &theme,
+                                            );
                                             paint::time_grid_using(
                                                 window,
                                                 bounds,
@@ -1880,7 +1892,8 @@ impl AurisApp {
         let per_bar = signature.ticks_per_bar().raw().max(1);
         let per_beat = signature.ticks_per_beat().raw().max(1);
         let length = note.length.raw();
-        let pitch = crate::ui::timeline::pitch_name(note.pitch);
+        // Where the note sounds, which in a tuning is not what its key would say.
+        let pitch = crate::ui::key_face::sounding_name(&self.roll_tuning(), note.pitch);
         let title = if copying {
             messages::note_copy_title(self.language(), &pitch, self.selected_notes.len())
         } else {
@@ -2158,6 +2171,20 @@ impl AurisApp {
                 })
             })
             .collect()
+    }
+
+    /// The tuning the clip in the roll is heard in: the document's, except on a drum track, which
+    /// is never retuned because its keys name drums.
+    pub(crate) fn roll_tuning(&self) -> Tuning {
+        let drum = self
+            .selected_clip
+            .and_then(|editing| self.project().track_of_clip(editing))
+            .and_then(|track| self.project().track(track))
+            .is_some_and(|track| track.kind.is_drum());
+        match drum {
+            true => Tuning::standard(),
+            false => self.project().tuning.clone(),
+        }
     }
 
     /// Every note clip on the track of the clip in the roll, as id, start and end.

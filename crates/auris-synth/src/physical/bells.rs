@@ -315,7 +315,7 @@ impl Engine for Bells {
         let (rate, settings) = (self.rate, self.settings);
         let bell = settings.bell;
         let table = bell.partials();
-        let pitch = f32::from(note.pitch);
+        let pitch = note.pitch;
         let strike = hertz(pitch);
         let contact = note.touch.unwrap_or(settings.position).clamp(0.0, 1.0);
         // A harder clapper and a harder blow both shorten the contact; a bigger bell holds
@@ -365,7 +365,13 @@ impl Engine for Bells {
                 break;
             }
             // Every casting is out of round in its own way, the same way every time.
-            let apart = split * (0.6 + 0.8 * seeded(0xBE11 + note.pitch as u32, number as u32));
+            let apart = split
+                * (0.6
+                    + 0.8
+                        * seeded(
+                            0xBE11 + super::nearest_key(note.pitch) as u32,
+                            number as u32,
+                        ));
             voice.hz[0][number] = centre * (1.0 - apart * 0.5);
             voice.hz[1][number] = centre * (1.0 + apart * 0.5);
             // A pair's two shapes are the same pattern turned by half a lobe, so where round

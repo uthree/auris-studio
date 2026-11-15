@@ -2532,7 +2532,11 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         for bpm in [60.0, 90.0, 120.0, 150.0, 180.0, 240.0] {
-            let score = auris_vocal::render_score(&track, &TempoMap::constant(bpm));
+            let score = auris_vocal::render_score(
+                &track,
+                &TempoMap::constant(bpm),
+                &auris_core::Tuning::standard(),
+            );
             let outgoing = padded_score(&score, 94).unwrap();
             let expected = onsets(&score)
                 .into_iter()

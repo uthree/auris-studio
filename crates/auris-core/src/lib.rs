@@ -16,6 +16,8 @@
 //!   tempo.
 //! * [`structure`] — the song's sections laid out the same way: イントロ, Aメロ, サビ, and where
 //!   each begins.
+//! * [`tuning`] — which frequency each key sounds, so a note's key can stand for a step of any
+//!   scale rather than an equal-tempered semitone.
 //!
 //! The last three are here rather than in the composer because the document holds a key, a chord
 //! progression and a structure of its own, and the document model may not depend on anything
@@ -40,6 +42,7 @@ pub mod style;
 pub mod synthesis;
 pub mod theory;
 pub mod time;
+pub mod tuning;
 
 pub use asset::AssetPath;
 pub use automation::{Automation, AutomationCurve, AutomationLane, AutomationPoint};
@@ -74,6 +77,7 @@ pub use time::{
     Samples, Seconds, SignatureMap, SignaturePoint, SignatureSpan, TICKS_PER_QUARTER, TempoMap,
     Ticks, TimeSignature,
 };
+pub use tuning::{Tuning, TuningError, TuningPreset};
 
 /// Convenience import for code that implements plugins.
 pub mod prelude {

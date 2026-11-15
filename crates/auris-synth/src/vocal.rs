@@ -164,16 +164,16 @@ impl Vocal {
         }
     }
 
-    fn note_on(&mut self, pitch: u8, velocity: f32) {
+    fn note_on(&mut self, key: u8, pitch: f32, velocity: f32) {
         let velocity = finite_or(velocity, 1.0).clamp(0.0, 1.0);
-        let Some(assignment) = self.allocator.note_on(pitch, velocity) else {
+        let Some(assignment) = self.allocator.note_on(key, velocity) else {
             return;
         };
         let stolen = assignment.stolen;
         let Some(voice) = self.voices.get_mut(assignment.index) else {
             return;
         };
-        voice.pitch = f32::from(pitch);
+        voice.pitch = crate::params::sounding_pitch(key, pitch);
         voice.velocity = velocity;
         if !stolen {
             voice.third_mix = 0.0;
@@ -242,9 +242,12 @@ impl SegmentRenderer for Vocal {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
-            } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { pitch, .. } => self.note_off(pitch),
+                key,
+                pitch,
+                velocity,
+                ..
+            } => self.note_on(key, pitch, velocity),
+            NoteEvent::NoteOff { key, .. } => self.note_off(key),
             NoteEvent::AllNotesOff { .. } => {
                 for index in self.allocator.release_all() {
                     if let Some(voice) = self.voices.get_mut(index) {
@@ -423,11 +426,7 @@ mod tests {
     }
 
     fn note_on(pitch: u8, velocity: f32) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame: 0,
-            pitch,
-            velocity,
-        }
+        NoteEvent::note_on(0, pitch, velocity)
     }
 
     #[test]
@@ -454,10 +453,7 @@ mod tests {
         let mut rig = rig();
         let sounding = rig.render(4_800, &[note_on(60, 1.0)]);
         assert!(peak(&sounding) > 0.01, "the note should be audible");
-        let off = NoteEvent::NoteOff {
-            frame: 0,
-            pitch: 60,
-        };
+        let off = NoteEvent::NoteOff { frame: 0, key: 60 };
         rig.render(4_800, &[off]);
         let tail = rig.render(4_800, &[]);
         assert!(

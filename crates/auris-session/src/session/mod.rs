@@ -120,6 +120,7 @@ mod step_input;
 mod timbre;
 mod tracks;
 mod transport;
+pub(crate) mod tuning;
 mod typing;
 mod typing_calibration;
 mod visualizer;

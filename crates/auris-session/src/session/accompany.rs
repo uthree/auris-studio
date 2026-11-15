@@ -82,6 +82,8 @@ impl Session {
         parts: &[ClipPreset],
         seed: u64,
     ) -> Result<AccompanyReport, SessionError> {
+        // Reading a key and chords off a melody is reading pitch classes.
+        super::tuning::require_twelve_tone(&self.project)?;
         let Some((track, midi)) = self.project.midi_clip(clip) else {
             return Err(SessionError::UnknownClip(clip.0));
         };

@@ -53,6 +53,9 @@ pub(crate) struct Voice {
     exclusive_class: i32,
     channel: i32,
     key: i32,
+    // Added by the Auris fork: where the voice sounds, in semitones on the MIDI scale. The key's
+    // own number for an ordinary note-on; anything `Synthesizer::note_on_at` was asked for.
+    pitch: f32,
     velocity: i32,
     // Added by the Auris fork: identifies the note-on, including its other sample layers.
     pub(crate) note_id: u64,
@@ -108,6 +111,7 @@ impl Voice {
             exclusive_class: 0,
             channel: 0,
             key: 0,
+            pitch: 0_f32,
             velocity: 0,
             note_id: 0,
             note_gain: 0_f32,
@@ -131,11 +135,24 @@ impl Voice {
         }
     }
 
-    pub(crate) fn start(&mut self, region: &RegionPair, channel: i32, key: i32, velocity: i32) {
+    // Changed by the Auris fork: `key` is the note's identity, which a note-off names, and
+    // `pitch` is where it sounds. Everything the font says about a key — which region, how its
+    // envelopes and filter track the keyboard — is read at the key nearest the pitch, so a
+    // retuned note takes the sample and the shaping of the key it sounds at.
+    pub(crate) fn start(
+        &mut self,
+        region: &RegionPair,
+        channel: i32,
+        key: i32,
+        pitch: f32,
+        velocity: i32,
+    ) {
         self.exclusive_class = region.get_exclusive_class();
         self.channel = channel;
         self.key = key;
+        self.pitch = pitch;
         self.velocity = velocity;
+        let key = sounding_key(pitch);
 
         if velocity > 0 {
             // According to the Polyphone's implementation, the initial attenuation should be reduced to 40%.
@@ -233,7 +250,7 @@ impl Voice {
         let mod_pitch_change = self.mod_lfo_to_pitch * self.mod_lfo.get_value()
             + self.mod_env_to_pitch * self.mod_env.get_value();
         let channel_pitch_change = channel_info.get_tune() + channel_info.get_pitch_bend();
-        let pitch = self.key as f32 + vib_pitch_change + mod_pitch_change + channel_pitch_change;
+        let pitch = self.pitch + vib_pitch_change + mod_pitch_change + channel_pitch_change;
         if !self.oscillator.process(data, &mut self.block[..], pitch) {
             return false;
         }
@@ -345,5 +362,16 @@ impl Voice {
         } else {
             self.vol_env.get_priority()
         }
+    }
+}
+
+// Added by the Auris fork: the key a pitch sounds nearest, which is the key a font's regions and
+// key-tracking are read at. An ordinary note-on's pitch is its own key, so this is the identity
+// there.
+pub(crate) fn sounding_key(pitch: f32) -> i32 {
+    if pitch.is_finite() {
+        pitch.round().clamp(0_f32, 127_f32) as i32
+    } else {
+        0
     }
 }

@@ -120,6 +120,13 @@ pub struct RenderTrack {
     pub(crate) block_events: Vec<NoteEvent>,
     /// Notes triggered from the UI, consumed at the start of the next block.
     pub(crate) audition: Vec<NoteEvent>,
+    /// Semitones each key's note-on is moved by before the instrument hears it, or `None` when
+    /// the track plays the standard tuning.
+    ///
+    /// Applied in one place, to the block's events as a whole, so the song, the chase after a
+    /// seek, a note clicked in the piano roll and a key played on a MIDI keyboard are all retuned
+    /// alike. Built with the graph, so the audio thread only reads it.
+    pub(crate) pitch_offsets: Option<Box<[f32; auris_core::tuning::KEY_COUNT]>>,
     /// A pre-rendered voice playing once, mixed over the source whatever the transport does.
     pub(crate) one_shot: Option<OneShot>,
     /// Frame the previous rendered block ended on. A mismatch with the next block's start means
@@ -210,16 +217,15 @@ impl RenderTrack {
     ///
     /// Dropped when the queue is full, because growing it would allocate on the audio thread.
     pub fn note_on(&mut self, pitch: u8, velocity: f32) {
-        self.push_audition(NoteEvent::NoteOn {
-            frame: 0,
-            pitch,
-            velocity: velocity.clamp(0.0, 1.0),
-        });
+        self.push_audition(NoteEvent::note_on(0, pitch, velocity.clamp(0.0, 1.0)));
     }
 
     /// Queues a note release for the start of the next block.
     pub fn note_off(&mut self, pitch: u8) {
-        self.push_audition(NoteEvent::NoteOff { frame: 0, pitch });
+        self.push_audition(NoteEvent::NoteOff {
+            frame: 0,
+            key: pitch,
+        });
     }
 
     /// Queues a bend of the whole instrument for the start of the next block.

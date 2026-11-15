@@ -63,7 +63,7 @@ struct ChiptuneVoice {
     presence: crate::presence::Presence,
     /// The vibrato, restarted at every note on so a chord wobbles together.
     vibrato: Lfo,
-    /// MIDI note the voice was started with, before octave, detune and bend.
+    /// Pitch the note-on asked for, on the MIDI scale, before octave, detune and bend.
     pitch: f32,
     /// Frequency the voice is sounding at right now; chases `target` when glide is on.
     frequency: f32,
@@ -294,12 +294,13 @@ impl Chiptune {
         pitch_to_hz(pitch + self.pitch_offset)
     }
 
-    fn note_on(&mut self, pitch: u8, velocity: f32) {
+    fn note_on(&mut self, key: u8, pitch: f32, velocity: f32) {
         let velocity = finite_or(velocity, 1.0).clamp(0.0, 1.0);
-        let Some(assignment) = self.allocator.note_on(pitch, velocity) else {
+        let pitch = crate::params::sounding_pitch(key, pitch);
+        let Some(assignment) = self.allocator.note_on(key, velocity) else {
             return;
         };
-        let target = self.frequency_for(f32::from(pitch));
+        let target = self.frequency_for(pitch);
         let start = if self.glide_coeff >= 1.0 {
             target
         } else {
@@ -311,7 +312,7 @@ impl Chiptune {
         let Some(voice) = self.voices.get_mut(assignment.index) else {
             return;
         };
-        voice.pitch = f32::from(pitch);
+        voice.pitch = pitch;
         voice.velocity = velocity;
         voice.target = target;
         voice.frequency = start;
@@ -414,9 +415,12 @@ impl SegmentRenderer for Chiptune {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
             NoteEvent::NoteOn {
-                pitch, velocity, ..
-            } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { pitch, .. } => self.note_off(pitch),
+                key,
+                pitch,
+                velocity,
+                ..
+            } => self.note_on(key, pitch, velocity),
+            NoteEvent::NoteOff { key, .. } => self.note_off(key),
             NoteEvent::AllNotesOff { .. } => {
                 for index in self.allocator.release_all() {
                     if let Some(voice) = self.voices.get_mut(index) {
@@ -613,11 +617,7 @@ mod tests {
     }
 
     fn note_on(frame: u32, pitch: u8) -> NoteEvent {
-        NoteEvent::NoteOn {
-            frame,
-            pitch,
-            velocity: 1.0,
-        }
+        NoteEvent::note_on(frame, pitch, 1.0)
     }
 
     #[test]
@@ -661,9 +661,9 @@ mod tests {
         synth.prepare(&PrepareContext::new(SAMPLE_RATE, 2_400, 2));
         let mut out = AudioBuffer::stereo(2_400, SAMPLE_RATE);
 
-        synth.note_on(48, 1.0);
+        synth.note_on(48, 48.0, 1.0);
         synth.render_segment(&mut out, 0, 2_400);
-        synth.note_on(84, 1.0);
+        synth.note_on(84, 84.0, 1.0);
         synth.render_segment(&mut out, 0, 2_400);
 
         let previous = synth.last_voice.expect("the second note has a voice");
@@ -671,7 +671,7 @@ mod tests {
         let unsounded_target = synth.voices[previous].target;
         assert!((live_frequency - unsounded_target).abs() > 100.0);
 
-        synth.note_on(60, 1.0);
+        synth.note_on(60, 60.0, 1.0);
         let newest = synth.last_voice.expect("the third note has a voice");
         assert_eq!(synth.voices[newest].frequency, live_frequency);
     }
@@ -749,6 +749,47 @@ mod tests {
             highest > 465.0 && lowest < 415.0,
             "no wobble without a wheel: {swung:?}"
         );
+    }
+
+    #[test]
+    fn a_note_sounds_at_its_pitch_between_the_keys() {
+        // A quarter-tone above A4, as 24-tone equal temperament puts key 70: 452.9 Hz.
+        let mut rig = sine_rig();
+        let rendered = rig.render(
+            24_000,
+            &[NoteEvent::NoteOn {
+                frame: 0,
+                key: 70,
+                pitch: 69.5,
+                velocity: 1.0,
+            }],
+        );
+        let measured = zero_crossing_hz(&rendered[2_048..], SAMPLE_RATE);
+        let wanted = 440.0 * 2f64.powf(0.5 / 12.0);
+        assert!(
+            (measured / wanted - 1.0).abs() < 0.002,
+            "measured {measured:.2} Hz, wanted {wanted:.2}"
+        );
+    }
+
+    #[test]
+    fn a_retuned_note_is_released_by_its_key_and_not_by_its_pitch() {
+        let mut rig = sine_rig();
+        rig.set_param("release", 0.001);
+        let retuned = NoteEvent::NoteOn {
+            frame: 0,
+            key: 70,
+            pitch: 69.5,
+            velocity: 1.0,
+        };
+        rig.render(4_800, &[retuned]);
+        // The keys around where it sounds name other notes.
+        rig.render(4_800, &[NoteEvent::NoteOff { frame: 0, key: 69 }]);
+        assert_eq!(rig.instrument.active_voices(), 1);
+        rig.render(4_800, &[NoteEvent::NoteOff { frame: 0, key: 70 }]);
+        let after = rig.render(4_800, &[]);
+        assert_eq!(rig.instrument.active_voices(), 0);
+        assert!(peak(&after) < 1e-4);
     }
 
     #[test]
@@ -860,7 +901,7 @@ mod tests {
             note_on(0, 69),
             NoteEvent::NoteOff {
                 frame: 4_800,
-                pitch: 69,
+                key: 69,
             },
         ];
         // 100 ms of note, then 200 ms of release, then look at what is left.
@@ -879,13 +920,7 @@ mod tests {
         let mut rig = sine_rig();
         rig.render(64, &[note_on(0, 60), note_on(0, 64), note_on(0, 67)]);
         assert_eq!(rig.instrument.active_voices(), 3);
-        rig.render(
-            64,
-            &[NoteEvent::NoteOff {
-                frame: 0,
-                pitch: 64,
-            }],
-        );
+        rig.render(64, &[NoteEvent::NoteOff { frame: 0, key: 64 }]);
         // Still sounding out its release.
         assert_eq!(rig.instrument.active_voices(), 3);
         rig.render(48_000, &[]);
@@ -902,13 +937,7 @@ mod tests {
         rig.render(512, &[note_on(0, 60)]);
         assert_eq!(rig.instrument.active_voices(), 2);
 
-        rig.render(
-            512,
-            &[NoteEvent::NoteOff {
-                frame: 0,
-                pitch: 60,
-            }],
-        );
+        rig.render(512, &[NoteEvent::NoteOff { frame: 0, key: 60 }]);
         // Half a second is ten times the 50 ms release, so the voice that was let go has retired
         // and anything still audible belongs to the note that was not.
         let remaining = rig.render(24_000, &[]);
@@ -920,13 +949,7 @@ mod tests {
         );
 
         // The second off ends it, and a third has nothing left to pair with.
-        rig.render(
-            512,
-            &[NoteEvent::NoteOff {
-                frame: 0,
-                pitch: 60,
-            }],
-        );
+        rig.render(512, &[NoteEvent::NoteOff { frame: 0, key: 60 }]);
         rig.render(24_000, &[]);
         assert_eq!(rig.instrument.active_voices(), 0);
     }
@@ -1069,13 +1092,7 @@ mod tests {
         rig.render(4_800, &[note_on(0, 69)]);
         rig.render(
             480,
-            &[
-                NoteEvent::NoteOff {
-                    frame: 0,
-                    pitch: 69,
-                },
-                note_on(1, 81),
-            ],
+            &[NoteEvent::NoteOff { frame: 0, key: 69 }, note_on(1, 81)],
         );
         // An octave up over a second: 10 to 30 ms in, the new note is still near 440 Hz and
         // nowhere near the 880 Hz it was asked for.
@@ -1117,7 +1134,7 @@ mod tests {
                     },
                     NoteEvent::NoteOff {
                         frame: 400,
-                        pitch: 69,
+                        key: 69,
                     },
                 ];
                 let rendered = rig.render(8_192, &events);
@@ -1168,11 +1185,7 @@ mod tests {
             synth.set_param(ParamId(P_UNISON), unison as f32);
 
             let mut out = AudioBuffer::new(1, 48_000, 48_000.0);
-            let events = [NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 69,
-                velocity: 1.0,
-            }];
+            let events = [NoteEvent::note_on(0, 69, 1.0)];
             synth.process(
                 &events,
                 &mut out,

@@ -181,11 +181,7 @@ fn play(plugin: &mut ClapPlugin) {
     for block in 0..40 {
         let mut buffer = AudioBuffer::stereo(BLOCK, SAMPLE_RATE);
         let events: &[auris_core::plugin::NoteEvent] = match block {
-            0 => &[auris_core::plugin::NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 60,
-                velocity: 0.8,
-            }],
+            0 => &[auris_core::plugin::NoteEvent::note_on(0, 60, 0.8)],
             _ => &[],
         };
         instrument.process(events, &mut buffer, &ctx);

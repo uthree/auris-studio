@@ -216,6 +216,24 @@ impl Synthesizer {
     /// * `key` - The key of the note.
     /// * `velocity` - The velocity of the note.
     pub fn note_on(&mut self, channel: i32, key: i32, velocity: i32) {
+        self.note_on_at(channel, key, velocity, key as f32);
+    }
+
+    /// Starts a note that sounds somewhere other than its key.
+    ///
+    /// Added by the Auris fork, for tunings. `key` is what the note is called — the key a later
+    /// [`Self::note_off`] names — and `pitch` is where it sounds, in semitones on the MIDI scale,
+    /// a fraction lying between two keys. The sample, and everything the font tracks across the
+    /// keyboard, is chosen at the key nearest `pitch`, and the sample is then played at `pitch`
+    /// exactly. A pitch that is not a number sounds at the key.
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - The channel of the note.
+    /// * `key` - The key of the note.
+    /// * `velocity` - The velocity of the note.
+    /// * `pitch` - Where the note sounds.
+    pub fn note_on_at(&mut self, channel: i32, key: i32, velocity: i32, pitch: f32) {
         if velocity == 0 {
             self.note_off(channel, key);
             return;
@@ -224,6 +242,9 @@ impl Synthesizer {
         if !(0 <= channel && channel < self.channels.len() as i32) {
             return;
         }
+
+        let pitch = if pitch.is_finite() { pitch } else { key as f32 };
+        let sounding = crate::voice::sounding_key(pitch);
 
         let note_id = self.next_note_id;
         self.next_note_id = self.next_note_id.wrapping_add(1);
@@ -253,14 +274,14 @@ impl Synthesizer {
 
         let preset = &self.sound_font.presets[preset];
         for preset_region in preset.regions.iter() {
-            if preset_region.contains(key, velocity) {
+            if preset_region.contains(sounding, velocity) {
                 let instrument = &self.sound_font.instruments[preset_region.instrument];
                 for instrument_region in instrument.regions.iter() {
-                    if instrument_region.contains(key, velocity) {
+                    if instrument_region.contains(sounding, velocity) {
                         let region_pair = RegionPair::new(preset_region, instrument_region);
 
                         if let Some(value) = self.voices.request_new(instrument_region, channel) {
-                            value.start(&region_pair, channel, key, velocity);
+                            value.start(&region_pair, channel, key, pitch, velocity);
                             value.note_id = note_id;
                         }
                     }

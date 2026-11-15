@@ -180,14 +180,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 instrument.prepare(&PrepareContext::new(RATE, BLOCK, 2));
                 let hold = if model.is_sustained() { 72_000 } else { 96_000 };
                 let events = [
-                    NoteEvent::NoteOn {
-                        frame: 0,
-                        pitch: *pitch,
-                        velocity,
-                    },
+                    NoteEvent::note_on(0, *pitch, velocity),
                     NoteEvent::NoteOff {
                         frame: hold,
-                        pitch: *pitch,
+                        key: *pitch,
                     },
                 ];
                 let channels = render(&mut instrument, 144_000, &events);

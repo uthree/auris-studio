@@ -604,6 +604,12 @@ pub(super) struct Struck {
     stretch: [f32; 128],
     tuned_for: f32,
     pan_step: f32,
+    /// The string each key last struck, so its release lowers the damper it raised.
+    ///
+    /// A key's own string in the standard tuning. A tuning can send a key to sound anywhere,
+    /// and the string that sounds is the one nearest the pitch — its damper is the one the key
+    /// lifts, and the one the key's release must let fall.
+    raised: [u8; 128],
 }
 
 impl Struck {
@@ -620,6 +626,7 @@ impl Struck {
             stretch: [0.0; 128],
             tuned_for: f32::NAN,
             pan_step: 1.0,
+            raised: std::array::from_fn(|key| key as u8),
         }
     }
 
@@ -1029,8 +1036,11 @@ impl Engine for Struck {
 
     fn start(&mut self, index: usize, note: &Note, quality: Quality) {
         let (rate, settings) = (self.rate, self.settings);
-        let key = f32::from(note.pitch);
-        let fundamental = hertz(key + self.stretch[usize::from(note.pitch.min(127))] / 100.0);
+        let key = note.pitch;
+        // The string that sounds: the nearest to the pitch, which is the key's own unless a
+        // tuning moved it.
+        let string = super::nearest_key(note.pitch);
+        let fundamental = hertz(key + self.stretch[usize::from(string)] / 100.0);
         let stiffness = self.inharmonicity(key);
         let strings = self.stringing(fundamental, 1.0).strings;
         let struck = self.struck_strings(fundamental);
@@ -1098,7 +1108,7 @@ impl Engine for Struck {
         };
         voice.rotors.clear();
         voice.mute.open();
-        voice.key = note.pitch;
+        voice.key = string;
         voice.fundamental = fundamental;
         voice.stiffness = stiffness;
         voice.contact = contact;
@@ -1156,7 +1166,10 @@ impl Engine for Struck {
         if let Some(key) = Sympathetic::key(previous_key).filter(|_| was_sounding) {
             self.sympathetic.busy[key] = self.sympathetic.busy[key].saturating_sub(1);
         }
-        if let Some(key) = Sympathetic::key(note.pitch) {
+        if let Some(raised) = self.raised.get_mut(usize::from(note.key)) {
+            *raised = string;
+        }
+        if let Some(key) = Sympathetic::key(string) {
             self.sympathetic.down[key] = true;
             if piano && note.velocity < SILENT {
                 // The key is down and its damper up, and that is all: the voice the shell
@@ -1196,7 +1209,12 @@ impl Engine for Struck {
     }
 
     fn lift(&mut self, pitch: u8) {
-        if let Some(key) = Sympathetic::key(pitch).filter(|key| self.sympathetic.down[*key]) {
+        let string = self
+            .raised
+            .get(usize::from(pitch))
+            .copied()
+            .unwrap_or(pitch);
+        if let Some(key) = Sympathetic::key(string).filter(|key| self.sympathetic.down[*key]) {
             self.sympathetic.down[key] = false;
             self.update_sympathetic();
         }

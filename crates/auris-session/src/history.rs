@@ -44,6 +44,8 @@ pub enum Edit {
     SetTempoPoint,
     /// The song's genre or usage was chosen.
     SetStyle,
+    /// The document's tuning was replaced.
+    SetTuning,
     /// A tempo change was removed, letting the tempo before it run through.
     RemoveTempoPoint,
     /// The time signature of one stretch of the timeline was changed.

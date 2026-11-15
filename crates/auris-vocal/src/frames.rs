@@ -48,7 +48,7 @@ use auris_core::plugin::{CC_EXPRESSION, pitch_to_hz};
 use auris_core::project::{ClipCurve, CurvePoint, curve_at};
 use auris_core::time::{Seconds, TempoMap, Ticks};
 use auris_core::{
-    ConsonantLevels, ConsonantWidths, Fall, NoteTransform, Scoop, SingerTrack, Vibrato,
+    ConsonantLevels, ConsonantWidths, Fall, NoteTransform, Scoop, SingerTrack, Tuning, Vibrato,
     default_frame_hop, loop_passes, swing_position,
 };
 
@@ -127,7 +127,11 @@ pub struct SingerFrames {
 /// One contiguous note or rest on a singing backend's frame clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SingerNote {
-    /// MIDI key for a sung note, or `None` for a rest.
+    /// The equal-tempered key nearest where a sung note sounds, or `None` for a rest.
+    ///
+    /// Nearest because a score-based backend takes whole MIDI keys: in a tuning that puts a
+    /// note between two of them, the score can only say which one it is closest to. The
+    /// frames' `f0_hz` carries the exact pitch for a backend that reads it.
     pub key: Option<u8>,
     /// Number of feature frames occupied by this note or rest.
     pub frame_length: u32,
@@ -180,7 +184,7 @@ struct TimedNote<'a> {
     start: f64,
     /// Seconds where it ends — possibly cut short by the next note.
     end: f64,
-    /// MIDI pitch.
+    /// Where the note sounds on the MIDI scale, the document's tuning applied.
     pitch: f32,
     /// A readable lyric, using saved pronunciation for non-kana and continuation notes.
     lyric: String,
@@ -211,8 +215,8 @@ struct TimedNote<'a> {
 }
 
 /// Samples a singer track into the frames its voice model is fed.
-pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames {
-    render_frames_with_sources(track, tempo_map, CurveSources::default())
+pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap, tuning: &Tuning) -> SingerFrames {
+    render_frames_with_sources(track, tempo_map, tuning, CurveSources::default())
 }
 
 /// Samples musical controls for an engine that predicts its own articulation.
@@ -220,10 +224,15 @@ pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames 
 /// Pitch contains the written note, bend and ornaments, without the automatic glide.
 /// Energy is velocity times expression, without phoneme levels or attack/release:
 /// these controls modulate the engine's predictions rather than replacing them.
-pub fn render_expression_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames {
+pub fn render_expression_frames(
+    track: &SingerTrack,
+    tempo_map: &TempoMap,
+    tuning: &Tuning,
+) -> SingerFrames {
     render_frames_with_sources(
         track,
         tempo_map,
+        tuning,
         CurveSources {
             pitch: CurveSource::Backend,
             energy: CurveSource::Backend,
@@ -239,6 +248,7 @@ pub fn render_expression_frames(track: &SingerTrack, tempo_map: &TempoMap) -> Si
 pub fn render_frames_with_sources(
     track: &SingerTrack,
     tempo_map: &TempoMap,
+    tuning: &Tuning,
     sources: CurveSources,
 ) -> SingerFrames {
     let hop = match track.frame_hop.is_finite() {
@@ -246,7 +256,7 @@ pub fn render_frames_with_sources(
         false => default_frame_hop(),
     };
 
-    let notes = timed_notes(track, tempo_map);
+    let notes = timed_notes(track, tempo_map, tuning);
     let mut inventory: Vec<String> = vec![SILENCE.to_string()];
     let mut phonemes = Vec::new();
     let mut f0_hz = Vec::new();
@@ -346,8 +356,8 @@ pub fn render_frames_with_sources(
 ///
 /// The first frame is always a rest. VOICEVOX requires that opening boundary, and keeping it
 /// in the common score avoids shifting the rest of the song in an individual adapter.
-pub fn render_score(track: &SingerTrack, tempo_map: &TempoMap) -> SingerScore {
-    render_score_with_origins(track, tempo_map).0
+pub fn render_score(track: &SingerTrack, tempo_map: &TempoMap, tuning: &Tuning) -> SingerScore {
+    render_score_with_origins(track, tempo_map, tuning).0
 }
 
 /// The editable clip and note index that produced a score event.
@@ -358,12 +368,13 @@ pub type ScoreNoteOrigin = (auris_core::ClipId, usize);
 pub fn render_score_with_origins(
     track: &SingerTrack,
     tempo_map: &TempoMap,
+    tuning: &Tuning,
 ) -> (SingerScore, Vec<Option<ScoreNoteOrigin>>) {
     let hop = match track.frame_hop.is_finite() {
         true => track.frame_hop.clamp(MIN_FRAME_HOP, MAX_FRAME_HOP),
         false => default_frame_hop(),
     };
-    let (notes, origins) = timed_notes_with_origins(track, tempo_map);
+    let (notes, origins) = timed_notes_with_origins(track, tempo_map, tuning);
     let Some(end) = notes.last().map(|note| note.end) else {
         return (SingerScore::default(), Vec::new());
     };
@@ -439,13 +450,18 @@ fn score_lyric(lyric: &str, phonemes: &[String]) -> String {
 }
 
 /// Every note of every unmuted clip, repeats included, flattened, sorted and made monophonic.
-fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNote<'a>> {
-    timed_notes_with_origins(track, tempo_map).0
+fn timed_notes<'a>(
+    track: &'a SingerTrack,
+    tempo_map: &TempoMap,
+    tuning: &Tuning,
+) -> Vec<TimedNote<'a>> {
+    timed_notes_with_origins(track, tempo_map, tuning).0
 }
 
 fn timed_notes_with_origins<'a>(
     track: &'a SingerTrack,
     tempo_map: &TempoMap,
+    tuning: &Tuning,
 ) -> (Vec<TimedNote<'a>>, Vec<ScoreNoteOrigin>) {
     let widths = track
         .voice
@@ -492,7 +508,7 @@ fn timed_notes_with_origins<'a>(
                     TimedNote {
                         start: 0.0,
                         end: 0.0,
-                        pitch: f32::from(note.pitch),
+                        pitch: tuning.sounding_pitch(note.pitch) as f32,
                         lyric: score_lyric(&note.lyric, &note.phonemes),
                         velocity: note.velocity.clamp(0.0, 1.0),
                         phonemes,
@@ -774,7 +790,7 @@ mod tests {
         let mut third = sung(64, 2.0, 1.0, &["ɾ", "i"]);
         third.lyric = "+".into();
         let track = track(vec![first, second, third]);
-        let score = render_score(&track, &map());
+        let score = render_score(&track, &map(), &Tuning::standard());
         assert_eq!(
             score
                 .notes
@@ -800,7 +816,7 @@ mod tests {
             percent: 67,
             subdivision: auris_core::Subdivision::Eighth,
         }];
-        let timed = timed_notes(&track, &map());
+        let timed = timed_notes(&track, &map(), &Tuning::standard());
         let seconds = |ticks: i64| ticks as f64 / 960.0 * 0.5;
         // The offbeat lands at 643 ticks, and the note before it holds until it does.
         assert!((timed[1].start - seconds(643)).abs() < 1e-9);
@@ -808,7 +824,9 @@ mod tests {
         assert!((timed[2].start - seconds(960)).abs() < 1e-9);
         // Without the transform the voice sits on the straight grid.
         track.clips[0].transforms.clear();
-        assert!((timed_notes(&track, &map())[1].start - seconds(480)).abs() < 1e-9);
+        assert!(
+            (timed_notes(&track, &map(), &Tuning::standard())[1].start - seconds(480)).abs() < 1e-9
+        );
     }
 
     #[test]
@@ -828,7 +846,7 @@ mod tests {
             let mut second = sung(62, 1.0, 1.0, &["k", "ɯ"]);
             second.lyric = "+".into();
             let track = track(vec![first, second]);
-            let score = render_score(&track, &map());
+            let score = render_score(&track, &map(), &Tuning::standard());
             let lyrics: Vec<_> = score
                 .notes
                 .iter()
@@ -854,7 +872,7 @@ mod tests {
         let mut track = track(vec![outside, later, shorter, longer]);
         track.clips[0].length = Ticks::from_beats(2.0);
         track.clips[0].loop_end = Ticks::from_beats(4.0);
-        let (score, origins) = render_score_with_origins(&track, &map());
+        let (score, origins) = render_score_with_origins(&track, &map(), &Tuning::standard());
         assert_eq!(score.notes.len(), origins.len());
         assert_eq!(
             origins
@@ -870,7 +888,7 @@ mod tests {
     fn unreadable_lyrics_without_a_saved_pronunciation_are_not_replaced() {
         let mut note = sung(60, 0.0, 1.0, &[]);
         note.lyric = "🙂".into();
-        let score = render_score(&track(vec![note]), &map());
+        let score = render_score(&track(vec![note]), &map(), &Tuning::standard());
         assert_eq!(
             score
                 .notes
@@ -884,7 +902,7 @@ mod tests {
 
     #[test]
     fn an_empty_track_is_an_empty_answer() {
-        let frames = render_frames(&track(Vec::new()), &map());
+        let frames = render_frames(&track(Vec::new()), &map(), &Tuning::standard());
         assert!(frames.is_empty());
         assert_eq!(frames.inventory, [SILENCE]);
         assert_eq!(frames.hop_seconds, default_frame_hop());
@@ -897,7 +915,7 @@ mod tests {
         let mut second = sung(60, 0.5, 0.5, &["a"]);
         second.lyric = "ラ".into();
         let singer = track(vec![first, second]);
-        let score = render_score(&singer, &map());
+        let score = render_score(&singer, &map(), &Tuning::standard());
         assert_eq!(
             score.notes[0].key, None,
             "VOICEVOX requires an opening rest"
@@ -909,7 +927,7 @@ mod tests {
             .collect();
         assert_eq!(sung.len(), 2, "two attacks remain two score notes");
         assert!(sung.iter().all(|note| note.lyric == "ラ"));
-        let frames = render_frames(&singer, &map());
+        let frames = render_frames(&singer, &map(), &Tuning::standard());
         assert_eq!(
             score
                 .notes
@@ -938,16 +956,16 @@ mod tests {
             singer.frame_hop = expected.frame_hop;
             let original = singer.clone();
             assert_eq!(
-                render_score(&singer, &map()),
-                render_score(&expected, &map())
+                render_score(&singer, &map(), &Tuning::standard()),
+                render_score(&expected, &map(), &Tuning::standard())
             );
             assert_eq!(
-                render_frames(&singer, &map()),
-                render_frames(&expected, &map())
+                render_frames(&singer, &map(), &Tuning::standard()),
+                render_frames(&expected, &map(), &Tuning::standard())
             );
             assert_eq!(
-                render_expression_frames(&singer, &map()),
-                render_expression_frames(&expected, &map())
+                render_expression_frames(&singer, &map(), &Tuning::standard()),
+                render_expression_frames(&expected, &map(), &Tuning::standard())
             );
             assert_eq!(
                 singer, original,
@@ -968,11 +986,11 @@ mod tests {
         later.start = Ticks::from_beats(2.0);
         let singer = track(vec![short, other.clone(), long.clone(), later.clone()]);
         let expected = track(vec![other, long, later]);
-        let score = render_score(&singer, &map());
-        assert_eq!(score, render_score(&expected, &map()));
+        let score = render_score(&singer, &map(), &Tuning::standard());
+        assert_eq!(score, render_score(&expected, &map(), &Tuning::standard()));
         assert_eq!(
-            render_frames(&singer, &map()),
-            render_frames(&expected, &map())
+            render_frames(&singer, &map(), &Tuning::standard()),
+            render_frames(&expected, &map(), &Tuning::standard())
         );
         assert_eq!(
             score
@@ -998,7 +1016,7 @@ mod tests {
         for variant in [quiet, pinned] {
             let singer = track(vec![variant, long.clone()]);
             assert_eq!(
-                render_score(&singer, &map())
+                render_score(&singer, &map(), &Tuning::standard())
                     .notes
                     .iter()
                     .filter(|note| note.key.is_some())
@@ -1013,12 +1031,12 @@ mod tests {
     fn a_frame_hop_loaded_from_a_project_is_bounded_before_rendering() {
         let mut singer = track(vec![sung(69, 0.0, 1.0, &["a"])]);
         singer.frame_hop = 1e-9;
-        let frames = render_frames(&singer, &map());
+        let frames = render_frames(&singer, &map(), &Tuning::standard());
         assert_eq!(frames.hop_seconds, MIN_FRAME_HOP);
         assert_eq!(frames.len(), 501);
 
         singer.frame_hop = 99.0;
-        let frames = render_frames(&singer, &map());
+        let frames = render_frames(&singer, &map(), &Tuning::standard());
         assert_eq!(frames.hop_seconds, MAX_FRAME_HOP);
         assert_eq!(frames.len(), 6);
     }
@@ -1029,12 +1047,16 @@ mod tests {
             sung(69, 1.0, 2.0, &["k", "a"]),
             sung(81, 3.0, 2.0, &["a"]),
         ]);
-        let host = render_frames(&singer, &map());
-        let edits = render_expression_frames(&singer, &map());
+        let host = render_frames(&singer, &map(), &Tuning::standard());
+        let edits = render_expression_frames(&singer, &map(), &Tuning::standard());
         for pitch in [CurveSource::Host, CurveSource::Backend] {
             for energy in [CurveSource::Host, CurveSource::Backend] {
-                let frames =
-                    render_frames_with_sources(&singer, &map(), CurveSources { pitch, energy });
+                let frames = render_frames_with_sources(
+                    &singer,
+                    &map(),
+                    &Tuning::standard(),
+                    CurveSources { pitch, energy },
+                );
                 assert_eq!(
                     frames.f0_hz,
                     if pitch == CurveSource::Host {
@@ -1065,8 +1087,8 @@ mod tests {
             sung(69, 1.0, 2.0, &["k", "a"]),
             sung(81, 3.0, 2.0, &["a"]),
         ]);
-        let controls = render_expression_frames(&singer, &map());
-        let acoustic = render_frames(&singer, &map());
+        let controls = render_expression_frames(&singer, &map(), &Tuning::standard());
+        let acoustic = render_frames(&singer, &map(), &Tuning::standard());
         assert_eq!(controls.len(), acoustic.len());
         assert_eq!(controls.energy[0], 0.0);
         for frame in [50, 51, 149, 150, 249] {
@@ -1088,7 +1110,7 @@ mod tests {
                 value: 0.5,
             }],
         );
-        let edited = render_expression_frames(&edited, &map());
+        let edited = render_expression_frames(&edited, &map(), &Tuning::standard());
         assert!((edited.f0_hz[100] - 880.0).abs() < 1e-3);
         assert!((edited.energy[100] - 0.4).abs() < 1e-6);
     }
@@ -1096,7 +1118,11 @@ mod tests {
     #[test]
     fn a_held_note_reads_as_its_pitch_its_vowel_and_its_velocity() {
         // A4 for two beats — one second — starting half a second in.
-        let frames = render_frames(&track(vec![sung(69, 1.0, 2.0, &["a"])]), &map());
+        let frames = render_frames(
+            &track(vec![sung(69, 1.0, 2.0, &["a"])]),
+            &map(),
+            &Tuning::standard(),
+        );
 
         // 1.5 seconds of material at 10 ms plus the closing frame.
         assert_eq!(frames.len(), 151);
@@ -1124,7 +1150,11 @@ mod tests {
     #[test]
     fn a_consonant_takes_its_sixty_milliseconds_and_the_vowel_takes_the_rest() {
         // か — [k a] — for one beat from the start.
-        let frames = render_frames(&track(vec![sung(60, 0.0, 1.0, &["k", "a"])]), &map());
+        let frames = render_frames(
+            &track(vec![sung(60, 0.0, 1.0, &["k", "a"])]),
+            &map(),
+            &Tuning::standard(),
+        );
         assert_eq!(frames.inventory, [SILENCE, "k", "a"]);
         // 60 ms at a 10 ms hop: frames 0..=5 are the k, frame 6 is the vowel.
         for (frame, &phoneme) in frames.phonemes.iter().take(6).enumerate() {
@@ -1136,10 +1166,40 @@ mod tests {
     }
 
     #[test]
+    fn a_tuning_moves_what_is_sung_and_the_score_names_the_nearest_key() {
+        // In 31-tone equal temperament key 61 is one step, 38.7 cents, above middle C — and
+        // key 91 is the octave above it, nowhere near MIDI 91.
+        let tuning = Tuning::edo(31).unwrap();
+        let singer = track(vec![sung(61, 0.0, 1.0, &["a"]), sung(91, 1.0, 1.0, &["a"])]);
+        let frames = render_frames(&singer, &map(), &tuning);
+        let step = tuning.hz(61) as f32;
+        assert!(
+            (frames.f0_hz[10] - step).abs() < 1e-2,
+            "{}",
+            frames.f0_hz[10]
+        );
+        let octave = tuning.hz(91) as f32;
+        assert!(
+            (frames.f0_hz[60] - octave).abs() < 1e-2,
+            "{}",
+            frames.f0_hz[60]
+        );
+        assert!((octave / (2.0 * tuning.hz(60) as f32) - 1.0).abs() < 1e-5);
+
+        let score = render_score(&singer, &map(), &tuning);
+        let keys: Vec<u8> = score.notes.iter().filter_map(|note| note.key).collect();
+        assert_eq!(keys, [60, 72], "the nearest equal-tempered keys");
+    }
+
+    #[test]
     fn consonants_scale_down_rather_than_swallow_a_short_note() {
         // A 100 ms note singing [k a]: a full 60 ms k would leave the vowel 40 ms; the rule
         // caps the consonant at half the note.
-        let frames = render_frames(&track(vec![sung(60, 0.0, 0.2, &["k", "a"])]), &map());
+        let frames = render_frames(
+            &track(vec![sung(60, 0.0, 0.2, &["k", "a"])]),
+            &map(),
+            &Tuning::standard(),
+        );
         let k_frames = frames.phonemes.iter().filter(|id| **id == 1).count();
         let a_frames = frames.phonemes.iter().filter(|id| **id == 2).count();
         assert_eq!(k_frames, 5, "50 ms of k — half the note, not sixty");
@@ -1151,7 +1211,7 @@ mod tests {
         // か for one beat, with the k pinned to 120 ms — twice what the rule would give it.
         let mut note = sung(60, 0.0, 1.0, &["k", "a"]);
         note.phoneme_seconds = vec![0.120, 0.0];
-        let frames = render_frames(&track(vec![note]), &map());
+        let frames = render_frames(&track(vec![note]), &map(), &Tuning::standard());
         let k_frames = frames.phonemes.iter().filter(|id| **id == 1).count();
         assert_eq!(k_frames, 12, "120 ms of k at a 10 ms hop");
         assert_eq!(
@@ -1164,7 +1224,7 @@ mod tests {
     fn a_trailing_consonant_held_past_its_pin_is_not_forever_in_release() {
         let mut note = sung(60, 0.0, 4.0, &["a", "s"]);
         note.phoneme_seconds = vec![0.010, 0.010];
-        let plain = render_frames(&track(vec![note.clone()]), &map());
+        let plain = render_frames(&track(vec![note.clone()]), &map(), &Tuning::standard());
 
         let mut levelled = track(vec![note]);
         levelled.voice = Some(auris_core::SingerVoice {
@@ -1177,7 +1237,7 @@ mod tests {
             }),
             speaker: None,
         });
-        let levelled = render_frames(&levelled, &map());
+        let levelled = render_frames(&levelled, &map(), &Tuning::standard());
         let late = 100;
         let token = plain.inventory[plain.phonemes[late] as usize].as_str();
         assert_eq!(token, "s", "the final phoneme is held over the unused tail");
@@ -1193,7 +1253,7 @@ mod tests {
         // proportion, so both phonemes still sound and the note still ends on time.
         let mut note = sung(60, 0.0, 0.4, &["k", "a"]);
         note.phoneme_seconds = vec![1.0, 1.0];
-        let frames = render_frames(&track(vec![note]), &map());
+        let frames = render_frames(&track(vec![note]), &map(), &Tuning::standard());
         let k_frames = frames.phonemes.iter().filter(|id| **id == 1).count();
         let a_frames = frames.phonemes.iter().filter(|id| **id == 2).count();
         assert_eq!(k_frames, 10, "equal pins squeeze to equal halves");
@@ -1206,7 +1266,7 @@ mod tests {
         // segment, and holding the final phoneme is what a held note means.
         let mut note = sung(60, 0.0, 2.0, &["k", "a"]);
         note.phoneme_seconds = vec![0.0, 0.100];
-        let frames = render_frames(&track(vec![note]), &map());
+        let frames = render_frames(&track(vec![note]), &map(), &Tuning::standard());
         assert_eq!(frames.phonemes[50], 2, "half a second in, the vowel holds");
     }
 
@@ -1274,7 +1334,7 @@ mod tests {
         // The same [ts a] note, sung twice: once voiceless, once by a voice whose export
         // measured its consonants. The frames move without any caller passing a table.
         let note = sung(60, 0.0, 1.0, &["ts", "a"]);
-        let plain = render_frames(&track(vec![note.clone()]), &map());
+        let plain = render_frames(&track(vec![note.clone()]), &map(), &Tuning::standard());
         let mut voiced = track(vec![note]);
         voiced.voice = Some(auris_core::SingerVoice {
             levels: None,
@@ -1283,7 +1343,7 @@ mod tests {
             consonants: Some(measured()),
             speaker: None,
         });
-        let voiced = render_frames(&voiced, &map());
+        let voiced = render_frames(&voiced, &map(), &Tuning::standard());
 
         let ts = |frames: &SingerFrames| frames.phonemes.iter().filter(|id| **id == 1).count();
         assert_eq!(ts(&plain), 6, "60 ms at a 10 ms hop, the fallback");
@@ -1304,7 +1364,7 @@ mod tests {
                 value: 2.0,
             },
         ];
-        let frames = render_frames(&singer, &map());
+        let frames = render_frames(&singer, &map(), &Tuning::standard());
         let expected = pitch_to_hz(71.0);
         assert!(
             (frames.f0_hz[50] - expected).abs() < 1e-2,
@@ -1321,7 +1381,7 @@ mod tests {
             depth: 1.0,
             seconds: 0.100,
         });
-        let frames = render_frames(&track(vec![note]), &map());
+        let frames = render_frames(&track(vec![note]), &map(), &Tuning::standard());
         // The first frame starts the full semitone under, and by the rise's end the note
         // stands at its own pitch.
         assert!((frames.f0_hz[0] - pitch_to_hz(68.0)).abs() < 1e-2);
@@ -1338,6 +1398,7 @@ mod tests {
         let frames = render_frames(
             &track(vec![sung(60, 0.0, 2.0, &["a"]), sung(64, 1.0, 1.0, &["i"])]),
             &map(),
+            &Tuning::standard(),
         );
         // Frame 45: 0.45 s, still the first note. Frame 55: 0.55 s, the second.
         assert!((frames.f0_hz[45] - pitch_to_hz(60.0)).abs() < 1e-3);
@@ -1351,6 +1412,7 @@ mod tests {
         let frames = render_frames(
             &track(vec![sung(60, 0.0, 2.0, &["a"]), sung(64, 2.0, 2.0, &["i"])]),
             &map(),
+            &Tuning::standard(),
         );
         // Forty milliseconds either side is the glide; outside it each note holds its pitch.
         assert!((frames.f0_hz[95] - pitch_to_hz(60.0)).abs() < 1e-3);
@@ -1373,6 +1435,7 @@ mod tests {
                 sung(64, 2.0, 2.0, &["i"]),
             ]),
             &map(),
+            &Tuning::standard(),
         );
         assert!((frames.f0_hz[86] - pitch_to_hz(60.0)).abs() < 1e-3);
         assert!((frames.f0_hz[100] - pitch_to_hz(64.0)).abs() < 1e-3);
@@ -1383,7 +1446,7 @@ mod tests {
             depth: 2.0,
             seconds: 0.1,
         });
-        let frames = render_frames(&singer, &map());
+        let frames = render_frames(&singer, &map(), &Tuning::standard());
         assert!((frames.f0_hz[99] - pitch_to_hz(60.0)).abs() < 1e-3);
         assert!((frames.f0_hz[100] - pitch_to_hz(62.0)).abs() < 1e-2);
     }
@@ -1398,6 +1461,7 @@ mod tests {
                 sung(60, 0.5, 0.25, &["a"]),
             ]),
             &map(),
+            &Tuning::standard(),
         );
         // 0.19 s is 60 ms into the middle note, past its entry and before its exit.
         assert!((frames.f0_hz[19] - pitch_to_hz(64.0)).abs() < 1e-3);
@@ -1409,7 +1473,11 @@ mod tests {
 
     #[test]
     fn a_note_with_no_phonemes_sings_an_open_vowel() {
-        let frames = render_frames(&track(vec![sung(60, 0.0, 1.0, &[])]), &map());
+        let frames = render_frames(
+            &track(vec![sung(60, 0.0, 1.0, &[])]),
+            &map(),
+            &Tuning::standard(),
+        );
         assert_eq!(frames.inventory, [SILENCE, "a"]);
         assert_eq!(frames.phonemes[25], 1);
     }
@@ -1430,7 +1498,7 @@ mod tests {
                 },
             ],
         );
-        let frames = render_frames(&singer, &map());
+        let frames = render_frames(&singer, &map(), &Tuning::standard());
         assert!((frames.energy[50] - 0.8 * 0.5).abs() < 1e-6);
     }
 
@@ -1440,7 +1508,7 @@ mod tests {
         singer.clips[0].length = Ticks::from_beats(1.0);
         singer.clips[0].length_is_explicit = true;
         singer.clips[0].loop_end = Ticks::from_beats(2.0);
-        let frames = render_frames(&singer, &map());
+        let frames = render_frames(&singer, &map(), &Tuning::standard());
         // The second pass sings the same note over 0.5..1.0 s.
         assert!((frames.f0_hz[75] - pitch_to_hz(60.0)).abs() < 1e-3);
         // 1.0 s of material and the closing frame.
@@ -1449,7 +1517,11 @@ mod tests {
 
     #[test]
     fn frames_survive_a_round_trip_through_json() {
-        let frames = render_frames(&track(vec![sung(69, 0.0, 1.0, &["ɾ", "a"])]), &map());
+        let frames = render_frames(
+            &track(vec![sung(69, 0.0, 1.0, &["ɾ", "a"])]),
+            &map(),
+            &Tuning::standard(),
+        );
         let text = serde_json::to_string(&frames).unwrap();
         let back: SingerFrames = serde_json::from_str(&text).unwrap();
         assert_eq!(back, frames);
@@ -1460,7 +1532,7 @@ mod tests {
         // か on one long note at velocity 0.8: once on no voice, once on a voice whose export
         // measured its /k/ at −20 dB. The frames move without any caller passing a table.
         let note = sung(60, 0.0, 4.0, &["k", "a"]);
-        let plain = render_frames(&track(vec![note.clone()]), &map());
+        let plain = render_frames(&track(vec![note.clone()]), &map(), &Tuning::standard());
         let mut levelled = track(vec![note]);
         levelled.voice = Some(auris_core::SingerVoice {
             path: auris_core::AssetPath::external("/nowhere/voice.onnx"),
@@ -1472,7 +1544,7 @@ mod tests {
             }),
             speaker: None,
         });
-        let levelled = render_frames(&levelled, &map());
+        let levelled = render_frames(&levelled, &map(), &Tuning::standard());
         let token = |frames: &SingerFrames, at: usize| {
             frames.inventory[frames.phonemes[at] as usize].clone()
         };

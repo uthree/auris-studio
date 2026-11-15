@@ -547,8 +547,16 @@ fn render_source(
         audition,
         one_shot,
         continued_from,
+        pitch_offsets,
         ..
     } = track;
+    let retune = |events: &mut Vec<NoteEvent>| {
+        if let Some(offsets) = pitch_offsets.as_deref() {
+            for event in events.iter_mut() {
+                *event = event.retuned(offsets);
+            }
+        }
+    };
 
     match source {
         RenderSource::Instrument { instrument, events } => {
@@ -586,6 +594,7 @@ fn render_source(
                     block_events.push(scheduled.event.with_frame(offset));
                 }
             }
+            retune(block_events);
             instrument.process(block_events, scratch, ctx);
         }
         RenderSource::Audio { clips } => {
@@ -603,6 +612,7 @@ fn render_source(
             for event in audition.drain(..) {
                 block_events.push(event);
             }
+            retune(block_events);
             instrument.process(block_events, scratch, ctx);
             if transport.rolling() {
                 for clip in clips.iter() {
@@ -653,22 +663,16 @@ fn chase_notes(events: &[ScheduledEvent], position: u64, out: &mut Vec<NoteEvent
     let upto = events.partition_point(|scheduled| scheduled.frame < position);
     for scheduled in &events[..upto] {
         match scheduled.event {
-            NoteEvent::NoteOn {
-                pitch,
-                velocity: struck,
-                ..
-            } => {
-                if (pitch as usize) < PITCH_COUNT && out.len() + 1 < out.capacity() {
-                    out.push(NoteEvent::NoteOn {
-                        frame: 0,
-                        pitch,
-                        velocity: struck,
-                    });
+            // The note-on itself is kept, pitch and all, so a chased note sounds where it was
+            // written rather than where its key would put it.
+            NoteEvent::NoteOn { key, .. } => {
+                if (key as usize) < PITCH_COUNT && out.len() + 1 < out.capacity() {
+                    out.push(scheduled.event.with_frame(0));
                 }
             }
-            NoteEvent::NoteOff { pitch, .. } => {
+            NoteEvent::NoteOff { key, .. } => {
                 if let Some(index) = out.iter().position(
-                    |event| matches!(event, NoteEvent::NoteOn { pitch: held, .. } if *held == pitch),
+                    |event| matches!(event, NoteEvent::NoteOn { key: held, .. } if *held == key),
                 ) {
                     out.remove(index);
                 }
@@ -1609,6 +1613,59 @@ mod tests {
         assert_eq!(looping.channel(0), plain.channel(0));
     }
 
+    /// The pitch the probe instrument on a one-track project was last told to sound, after one
+    /// block — `scheduled` plays a note at key 61 from the timeline, otherwise it is auditioned.
+    fn probed_pitch(drum: bool, tuning: &auris_core::Tuning, scheduled: bool) -> f32 {
+        let mut project = Project::new("Tuned", SAMPLE_RATE);
+        let track = match drum {
+            true => project.add_drum_track("Kit", testkit::PITCH_ID),
+            false => project.add_instrument_track("Lead", testkit::PITCH_ID),
+        };
+        if scheduled {
+            let clip = project
+                .add_midi_clip(track, "Clip", Ticks::ZERO, Ticks::from_beats(4.0))
+                .unwrap();
+            project.midi_clip_mut(clip).unwrap().notes.push(Note::new(
+                61,
+                Ticks::ZERO,
+                Ticks::QUARTER,
+            ));
+        }
+        project.tuning = tuning.clone();
+        let mut graph = build(&project, 512);
+        let mut transport = match scheduled {
+            true => Transport::playing_from(0),
+            false => {
+                graph.note_on(0, 61, 1.0);
+                Transport::new()
+            }
+        };
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        render_block(&mut graph, &mut transport, &mut out, false);
+        out.channel(0)[511] * testkit::PITCH_PROBE_SCALE
+    }
+
+    #[test]
+    fn a_tuning_reaches_the_instrument_on_pitched_tracks_and_never_on_drums() {
+        let tuning = auris_core::Tuning::edo(31).unwrap();
+        let tuned = tuning.sounding_pitch(61) as f32;
+        assert!((tuned - 60.387).abs() < 1e-3, "{tuned}");
+        for scheduled in [false, true] {
+            let pitched = probed_pitch(false, &tuning, scheduled);
+            assert!(
+                (pitched - tuned).abs() < 1e-4,
+                "scheduled {scheduled}: {pitched}"
+            );
+            let drum = probed_pitch(true, &tuning, scheduled);
+            assert!((drum - 61.0).abs() < 1e-4, "scheduled {scheduled}: {drum}");
+            let standard = probed_pitch(false, &auris_core::Tuning::standard(), scheduled);
+            assert!(
+                (standard - 61.0).abs() < 1e-4,
+                "scheduled {scheduled}: {standard}"
+            );
+        }
+    }
+
     #[test]
     fn a_stopped_transport_still_plays_auditioned_notes() {
         let project = one_note_project(Ticks::from_beats(100.0), Ticks::QUARTER);
@@ -2204,19 +2261,11 @@ mod tests {
         let events = [
             ScheduledEvent {
                 frame: 10,
-                event: NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch: 60,
-                    velocity: 0.25,
-                },
+                event: NoteEvent::note_on(0, 60, 0.25),
             },
             ScheduledEvent {
                 frame: 20,
-                event: NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch: 60,
-                    velocity: 0.75,
-                },
+                event: NoteEvent::note_on(0, 60, 0.75),
             },
         ];
         let mut chased = Vec::with_capacity(4);
@@ -2225,16 +2274,8 @@ mod tests {
             chased,
             [
                 NoteEvent::AllNotesOff { frame: 0 },
-                NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch: 60,
-                    velocity: 0.25,
-                },
-                NoteEvent::NoteOn {
-                    frame: 0,
-                    pitch: 60,
-                    velocity: 0.75,
-                },
+                NoteEvent::note_on(0, 60, 0.25),
+                NoteEvent::note_on(0, 60, 0.75),
             ]
         );
     }

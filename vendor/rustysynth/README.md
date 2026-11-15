@@ -37,6 +37,15 @@ position advances likewise prevent extreme pitch metadata from overflowing fixed
 Overlapping notes now release in note-on order, preserving later notes at the same pitch.
 See [note release](doc/note-release.md) for the implementation and regression tests.
 
+**A note can sound somewhere other than its key.** `Synthesizer::note_on_at` takes a pitch beside
+the key, for Auris's tunings: the key stays the note's name, which `note_off` matches, and the
+pitch is where it sounds, a fraction lying between two keys. Upstream can only move a whole
+channel — coarse and fine tune, the pitch wheel — so a chord could not have one note in it
+retuned. The region, and everything a font tracks across the keyboard, is read at the key nearest
+the pitch, and the voice's oscillator is driven at the pitch itself. `note_on` is `note_on_at` at
+the key's own pitch and behaves exactly as before. The change is `synthesizer.rs` and `voice.rs`;
+the tests are the workspace sampler's, as for note release.
+
 ## What it does not do
 
 * **Only the two filter destinations are read through modulators** — `initialFilterFc` and

@@ -71,6 +71,12 @@ pub(crate) fn finite_or(value: f32, fallback: f32) -> f32 {
     if value.is_finite() { value } else { fallback }
 }
 
+/// Where a note-on asks to sound, or its key's equal-tempered pitch when what it asks is not a
+/// number — the same distrust [`finite_or`] has of a velocity, for the same reason.
+pub(crate) fn sounding_pitch(key: u8, pitch: f32) -> f32 {
+    finite_or(pitch, f32::from(key))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

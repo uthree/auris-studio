@@ -1556,11 +1556,46 @@ pub mod plugins {
     //! consumed by the note, not held as channel state: a pointer poking at a string never moves
     //! where the song's own notes are played, and nothing reaches the document.
     //!
-    //! # A note-off names a pitch, not a note
+    //! # A key is which note; a pitch is where it sounds
     //!
-    //! [`NoteEvent::NoteOff`](auris_core::plugin::NoteEvent) carries a pitch and a frame, and that
+    //! A note-on carries both, because the document's [`Tuning`](auris_core::Tuning) separates
+    //! them. The key is what the document stores and what a note-off names; the pitch is a float
+    //! on the MIDI scale, 69.0 being A440, and in 31-tone equal temperament key 61 sounds at
+    //! 60.39. An instrument **releases by key and sounds by pitch**, and a sampler choosing among
+    //! recordings chooses by the pitch rounded — the key of a retuned note may be a long way from
+    //! the recording that suits it.
+    //!
+    //! Everything about a sound follows the pitch, its random seeds included, so a note sounds
+    //! the same whichever key a tuning has playing it; `auris_synth`'s pack tests hold every
+    //! pitched built-in to that sample for sample. What stays with the key is what names a note
+    //! or a sound: the voice a release finds, a kit's pad, an unpitched sampler's map, and the
+    //! damper a piano key lifts — which is the damper of the string nearest the pitch, so the
+    //! key's release lets that same one fall.
+    //!
+    //! A hosted plugin is sent the key nearest the pitch, so one that understands nothing more
+    //! still plays the nearest semitone, with the rest as a tuning of that note alone: a CLAP note
+    //! expression aimed at the note's own id, or the VST3 note-on's tuning field. That makes the
+    //! translation stateful — the note-off must name the key and id the note went out with, and a
+    //! CLAP bend, sent to every note at once, would erase each note's own offset unless the offsets
+    //! go again on top of it — which is `auris_clap`'s `NoteMap`. A CLAP plugin that speaks only
+    //! MIDI 1.0 cannot be told about anything between two keys;
+    //! [`Session::tracks_playing_untuned`](crate::Session::tracks_playing_untuned) names the tracks
+    //! that are losing it, for as long as they are.
+    //!
+    //! The retuning happens in one place: the render graph adds the tuning's offset for the key to
+    //! every note-on just before the block reaches the instrument
+    //! ([`NoteEvent::retuned`](auris_core::plugin::NoteEvent::retuned)). The song, the chase after
+    //! a seek, a note clicked in the piano roll and a MIDI keyboard all pass through it, so none of
+    //! them has to know a tuning exists, and an instrument outside the graph — an analysis probe, a
+    //! test — sounds the standard tuning by building its notes with
+    //! [`NoteEvent::note_on`](auris_core::plugin::NoteEvent::note_on). A drum track is never
+    //! retuned: its keys name sounds, not pitches.
+    //!
+    //! # A note-off names a key, not a note
+    //!
+    //! [`NoteEvent::NoteOff`](auris_core::plugin::NoteEvent) carries a key and a frame, and that
     //! is all it can carry — nothing in MIDI, in CLAP or here gives a release the identity of the
-    //! strike it answers. So an instrument that finds *two* notes of that pitch still sounding has
+    //! strike it answers. So an instrument that finds *two* notes of that key still sounding has
     //! to choose which of them it ends, and there is one right answer:
     //!
     //! **Release the one that started first.** Then the next off ends the next one, each note
