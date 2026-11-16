@@ -14,7 +14,10 @@ use super::{
     visualizer::waveform_thumbnail,
     widgets::{ButtonStyle, button},
 };
-use crate::{app::AurisApp, theme::Metrics};
+use crate::{
+    app::{AurisApp, Pane},
+    theme::Metrics,
+};
 
 #[derive(Default)]
 pub(crate) struct TrackGrid {
@@ -107,6 +110,22 @@ impl AurisApp {
             .p_2()
             .border_b_1()
             .border_color(theme.border_subtle)
+            .child(button(
+                "track-grid-close",
+                self.t(Key::TrackGridClose),
+                ButtonStyle::Normal,
+                false,
+                theme.accent,
+                &theme,
+                // The grid replaces the arrangement in place, so without a way out on the grid
+                // itself the only road back is the View menu — and "Freeze", the one button here,
+                // reads as if it were that road and only stops the tiles moving.
+                cx.listener(|this, _, window, cx| {
+                    this.set_track_grid(false);
+                    this.focus_pane(Pane::Arrangement, window);
+                    cx.notify();
+                }),
+            ))
             .child(button(
                 "track-grid-freeze",
                 self.t(Key::VisualizerFreeze),
@@ -429,6 +448,26 @@ mod tests {
             toggle_grid_from_palette(cx);
             app.read_with(cx, |app, _| assert!(!app.track_grid.open));
         }
+    }
+
+    #[gpui::test]
+    fn the_grid_has_its_own_way_back_and_freezing_does_not_take_it(cx: &mut TestAppContext) {
+        let (app, cx) = harness::open(cx);
+        paint(&app, cx);
+        toggle_grid_from_palette(cx);
+        paint(&app, cx);
+        click("track-grid-freeze", cx);
+        paint(&app, cx);
+        app.read_with(cx, |app, _| {
+            assert!(app.track_grid.open, "freezing the tiles closed the grid");
+            assert!(app.track_grid.frozen);
+        });
+        click("track-grid-close", cx);
+        paint(&app, cx);
+        app.read_with(cx, |app, _| {
+            assert!(!app.track_grid.open);
+            assert!(!app.track_grid.frozen, "a frozen grid would reopen frozen");
+        });
     }
 
     #[test]
