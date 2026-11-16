@@ -211,7 +211,30 @@ pub(crate) struct NoteGroup {
     pub(crate) rest_after: bool,
 }
 
+/// A grouped reading with every space between two kana of one group made a cut as well.
+///
+/// [`grouped_reading`] writes a space only straight after a '|', where it marks a word. A space
+/// *inside* a group is therefore never one it wrote: composers put one between lines or words
+/// and leave the '|' out (`…|で き|…`), meaning two notes. Reading that as two moras on one
+/// note refused thirty such calls in a week; it is read as the cut it was meant to be, with
+/// the space kept so the word still starts there.
+fn separate_spaced_notes(reading: &str) -> String {
+    reading
+        .split(NOTE_SEPARATOR)
+        .map(|piece| {
+            let inner = piece.trim();
+            let lead = &piece[..piece.len() - piece.trim_start().len()];
+            let tail = &piece[piece.trim_end().len()..];
+            let words: Vec<&str> = inner.split_whitespace().collect();
+            format!("{lead}{}{tail}", words.join(&format!("{NOTE_SEPARATOR} ")))
+        })
+        .collect::<Vec<_>>()
+        .join(&NOTE_SEPARATOR.to_string())
+}
+
 /// Reads a reading containing [`NOTE_SEPARATOR`] into one group per note.
+///
+/// A space between two kana of one group is a cut too (see `separate_spaced_notes`).
 ///
 /// The phrase is read whole — ー needs the vowel before it and は needs its words — and then
 /// cut where the separators are. Only a held long vowel or a final っ may share a note, so a
@@ -221,13 +244,17 @@ pub(crate) fn read_note_groups(
     reading: &str,
     dictionary: Option<&JapaneseDictionary>,
 ) -> Result<Vec<NoteGroup>, String> {
-    let pieces: Vec<&str> = reading.split(NOTE_SEPARATOR).collect();
-    if let Some(at) = pieces.iter().position(|piece| piece.trim().is_empty()) {
+    if let Some(at) = reading
+        .split(NOTE_SEPARATOR)
+        .position(|piece| piece.trim().is_empty())
+    {
         return Err(format!(
             "Note group {} of the reading is empty; put kana between every '|'",
             at + 1
         ));
     }
+    let spaced = separate_spaced_notes(reading);
+    let pieces: Vec<&str> = spaced.split(NOTE_SEPARATOR).collect();
     let whole: String = pieces.concat();
     let moras = spoken_reading(text, whole.trim(), dictionary)
         .filter(|moras| !moras.is_empty())
@@ -444,6 +471,27 @@ mod tests {
         assert_eq!(groups[1].phonemes, ["t", "a", "i"]);
         // One tucked mora only: a third sung mora still needs a note of its own.
         assert!(read_note_groups("", "さんい|く", None).is_err());
+    }
+
+    #[test]
+    fn a_space_inside_a_group_cuts_it_like_a_bar() {
+        // The shape composers wrote: lines run together with a space and no '|'.
+        let texts = |reading: &str| -> Vec<String> {
+            read_note_groups("", reading, None)
+                .unwrap()
+                .into_iter()
+                .map(|group| group.text)
+                .collect()
+        };
+        assert_eq!(
+            texts("そ|こ|で き|え|て"),
+            ["そ", "こ", "で", "き", "え", "て"]
+        );
+        // A space straight after a bar marks a word and changes nothing.
+        assert_eq!(texts("さあ| いっ|しょ|に"), ["さあ", "いっ", "しょ", "に"]);
+        // A held vowel still shares its note across the new cut.
+        assert_eq!(texts("こー ひー|を"), ["こー", "ひー", "を"]);
+        assert_eq!(separate_spaced_notes("で き| よ"), "で| き| よ");
     }
 
     #[test]

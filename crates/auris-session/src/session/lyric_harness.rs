@@ -28,7 +28,8 @@ pub struct PhraseReading {
     /// breaks and sentence punctuation.
     #[schemars(range(min = 1))]
     pub phrase: usize,
-    /// Kana pronunciation; does not replace the original text or persist to a project.
+    /// Kana pronunciation of this one phrase; does not replace the original text or persist to
+    /// a project. '|' between notes, as write_lyrics takes it, is accepted and ignored.
     pub kana: String,
 }
 
@@ -374,21 +375,28 @@ impl Session {
         let mut overrides = std::collections::BTreeMap::new();
         for (index, reading) in readings.iter().enumerate() {
             phrase_number("readings", index, reading.phrase, phrases_found)?;
-            if overrides
-                .insert(reading.phrase, reading.kana.as_str())
-                .is_some()
-            {
+            // A reading copied from note_reading, or the one write_lyrics took, carries '|'
+            // between notes. The analysis is of the phrase, not of a grouping, so the cuts are
+            // dropped rather than refused: refusing them sent one composer round the same
+            // call forty-nine times.
+            let kana = reading.kana.replace(NOTE_SEPARATOR, "");
+            if reading.kana.len() > MAX_TEXT_BYTES {
+                return Err(format!("readings[{index}].kana is longer than 65536 bytes"));
+            }
+            if let Some(found) = kana.chars().find(|c| delimiter(*c)) {
+                return Err(format!(
+                    "readings[{index}].kana contains {found:?}; a reading covers one phrase, so give each line or sentence its own entry"
+                ));
+            }
+            if split_kana_lyric(&kana).is_none_or(|m| m.is_empty()) {
+                return Err(format!(
+                    "readings[{index}].kana must be nonempty hiragana or katakana (spaces and '|' are allowed)"
+                ));
+            }
+            if overrides.insert(reading.phrase, kana).is_some() {
                 return Err(format!(
                     "readings[{index}] names phrase {} a second time",
                     reading.phrase
-                ));
-            }
-            if reading.kana.len() > MAX_TEXT_BYTES
-                || reading.kana.chars().any(delimiter)
-                || split_kana_lyric(&reading.kana).is_none_or(|m| m.is_empty())
-            {
-                return Err(format!(
-                    "readings[{index}] needs nonempty kana without line breaks or sentence punctuation"
                 ));
             }
         }

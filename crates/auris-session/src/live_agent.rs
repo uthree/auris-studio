@@ -509,7 +509,7 @@ pub enum Command {
         /// Original nonempty written phrase, e.g. 桜咲いた. Never replace it with its reading.
         #[schemars(length(min = 1, max = 16384))]
         text: String,
-        /// Optional nonempty kana pronunciation, e.g. さくらさいた; leaves the written text intact. Without '|' each mora takes one note. With '|' between notes (analyze_lyrics note_reading, e.g. さあ| いっ|しょ|に) a group may hold a long vowel or end in っ, which is sung as a rest: the next note must start at least a thirty-second note after that note ends.
+        /// Optional nonempty kana pronunciation, e.g. さくらさいた; leaves the written text intact. Without '|' each mora takes one note. With '|' between notes (analyze_lyrics note_reading, e.g. さあ|いっ|しょ|に; a space between two kana also starts a new note) a group may hold a long vowel or end in っ, which is sung as a rest: the next note must start at least a thirty-second note after that note ends.
         #[schemars(length(min = 1, max = 16384))]
         reading: Option<String>,
         /// Zero-based storage index from read_notes; notes from this position in time order receive lyrics.
