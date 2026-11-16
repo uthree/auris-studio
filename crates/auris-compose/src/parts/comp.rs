@@ -18,7 +18,8 @@ use crate::theory::pitch::{OCTAVE, PitchClass};
 
 use super::voicing::voiced;
 use super::writer::{
-    band_pushes, bar_onsets, bar_stream, density, lift_before, part_grid, phrase_shape, velocity,
+    band_pushes, bar_onsets, bar_stream, breath_before, density, lift_before, part_grid,
+    phrase_shape, velocity,
 };
 use super::{Draft, ScoreSettings};
 
@@ -50,14 +51,16 @@ pub(super) enum CompFigure {
     Rolled,
 }
 
-/// How many takes of a comp let go before a syncopated strike; the rest hold every chord into
-/// the next. See `lift_before`.
+/// How many takes of a comp let a chord go before the next strike; the rest hold every chord
+/// into the next. See `lift_before` and `breath_before`.
 ///
-/// Half, which is the bass's number and has nothing of the comp's own behind it: no score in
-/// the corpus carries a keyboard comp apart from the tune it accompanies, so there is nothing
-/// to count. What is known is that every comp held every chord into the next, on every figure,
-/// and that is one way of playing them.
-const LIFT: f32 = 0.5;
+/// Read off the chordal parts of a pop and rock score corpus: the keyboard and guitar tracks
+/// that strike two and a half notes at a time or more, 269 sixteen-bar windows. Fifty-nine of
+/// them never rest, 22 in a hundred, and the rest do: a strike is followed by a rest 38 times
+/// in a hundred and a part sounds for 80 hundredths of the time. It was half the takes, the
+/// bass's number borrowed, with a rest only before a syncopated strike, and a comp sounded 94
+/// hundredths of the time.
+const LIFT: f32 = 0.78;
 
 /// How often the last bar of a planned phrase departs from the figure the section chose.
 ///
@@ -338,9 +341,7 @@ pub(super) fn comp(
         // beat early is a stumble, not a push.
         let pushing = section.events[..event_index]
             .last()
-            .is_some_and(|previous| {
-                band_pushes(&previous.chord, &event.chord, settings.mood.syncopation)
-            });
+            .is_some_and(|previous| band_pushes(previous, event, settings.mood.syncopation));
         let push = pushing
             && !section.continues_chord(event_index)
             && !pad
@@ -450,14 +451,17 @@ pub(super) fn comp(
             };
             let mut length = (next - at).min(event.end() - at).max(Ticks(1));
             // Let go on the beat before a syncopated strike, so the strike is a push and not a
-            // slur — unless that beat is less than half a beat away, because a chord shorter
+            // slur, or half a beat before a backbeat, so the snare has its attack to itself —
+            // unless that is less than half a beat away, because a chord shorter
             // than that is a click, and one let go anywhere else leaves no beat free. Only
             // inside the chord: the strike that opens the next one is on its line, or is the
             // section's own push, which lets this one go itself.
             if lifting && position < last {
                 let here = grid.step_of(at);
                 let half = (grid.steps_per_beat() / 2).max(1);
-                if let Some(boundary) = lift_before(grid, here, grid.step_of(next))
+                let there = grid.step_of(next);
+                if let Some(boundary) =
+                    lift_before(grid, here, there).or_else(|| breath_before(grid, here, there))
                     && boundary >= here + half
                 {
                     length = (grid.tick_of(boundary) - at).max(Ticks(1));
@@ -603,7 +607,7 @@ mod tests {
     }
 
     #[test]
-    fn a_comp_that_lifts_lets_go_on_the_beat_before_a_syncopated_strike() {
+    fn a_comp_that_lifts_lets_go_before_a_syncopated_strike_or_a_backbeat() {
         let mut lifting = 0;
         for seed in 0..64u64 {
             let (frame, parts) = chords("@axis", 8, seed, 0.0).draft();
@@ -623,18 +627,24 @@ mod tests {
                     continue;
                 }
                 rested = true;
-                // It lets go on a beat, having sounded for half of one at least, and what it
-                // makes room for is a strike off the beat.
-                assert_eq!(
-                    end.raw() % beat.raw(),
-                    0,
-                    "seed {seed}: let go off the beat"
-                );
+                // It lets go on the beat before a strike off the beat, or half a beat before a
+                // strike on a backbeat, and has sounded for half a beat at least by then.
+                let arriving = grid.weight(grid.step_of(*next));
+                if arriving <= 1 {
+                    assert_eq!(
+                        end.raw() % beat.raw(),
+                        0,
+                        "seed {seed}: let go off the beat before a syncopated strike"
+                    );
+                } else {
+                    assert_eq!(arriving, 2, "seed {seed}: let go before a strong beat");
+                    assert_eq!(
+                        (*next - end).raw() * 2,
+                        beat.raw(),
+                        "seed {seed}: the breath before a backbeat is half a beat"
+                    );
+                }
                 assert!(note.length.raw() * 2 >= beat.raw(), "seed {seed}: a click");
-                assert!(
-                    grid.weight(grid.step_of(*next)) <= 1,
-                    "seed {seed}: before a beat"
-                );
                 // And never across a bar line: the chord that follows is struck on its line.
                 assert_eq!(
                     note.start.raw() / grid.bar_ticks().raw(),
@@ -643,9 +653,9 @@ mod tests {
             }
             lifting += usize::from(rested);
         }
-        // Half the takes lift, and a lift only shows on a figure with a syncopated strike in
-        // it, so fewer than half of them do.
-        assert!((10..=32).contains(&lifting), "{lifting} of 64 takes let go");
+        // Nearly eight takes in ten lift, and a lift shows wherever the figure has a strike
+        // off the beat or on a backbeat, which a held chord has not.
+        assert!((32..=56).contains(&lifting), "{lifting} of 64 takes let go");
 
         // A pad has nothing to lift for, and a rhythm somebody wrote says where its rests are.
         for seed in 0..16u64 {
@@ -719,15 +729,26 @@ mod tests {
 
     #[test]
     fn a_syncopated_comp_pushes_the_change_and_a_straight_one_never_does() {
-        let take = |syncopation: f32, seed: u64| chords("@axis", 8, seed, syncopation).draft();
+        // Which changes are pushed is read off the changes, so it is the charts that are
+        // varied here and not the seeds: a quarter of all changes at the top of the dial.
+        const CHARTS: [&str; 6] = [
+            "@axis",
+            "@royal-road",
+            "@marusa",
+            "@koakuma",
+            "@canon",
+            "@komuro",
+        ];
+        let take =
+            |chart: &str, syncopation: f32, seed: u64| chords(chart, 8, seed, syncopation).draft();
 
-        // At the top of the dial, some section pushes: a strike half a beat before a chord
+        // At the top of the dial, some change is pushed: a strike half a beat before a chord
         // change whose pitch the outgoing chord does not own and the arriving one does. It rings
         // over the line, nothing of the old chord sounds under or beside it, and the line itself
         // is not struck again — an anticipation restruck on the line is a stutter.
         let mut pushed_anywhere = false;
-        for seed in 1..=8u64 {
-            let (frame, parts) = take(1.0, seed);
+        for (seed, chart) in (1..=12u64).zip(CHARTS.iter().cycle()) {
+            let (frame, parts) = take(chart, 1.0, seed);
             let chords = part(&parts, "chords");
             let section = &frame.sections[0];
             let half = frame.grid.step_ticks() * 2;
@@ -771,13 +792,13 @@ mod tests {
         }
         assert!(
             pushed_anywhere,
-            "no seed in eight pushed at full syncopation"
+            "no change in six charts was pushed at full syncopation"
         );
 
         // And square playing never anticipates: every strike belongs to the chord sounding
         // where it starts.
-        for seed in 1..=8u64 {
-            let (frame, parts) = take(0.0, seed);
+        for (seed, chart) in (1..=12u64).zip(CHARTS.iter().cycle()) {
+            let (frame, parts) = take(chart, 0.0, seed);
             let chords = part(&parts, "chords");
             let section = &frame.sections[0];
             for note in &chords.notes {
@@ -797,9 +818,17 @@ mod tests {
 
     #[test]
     fn a_dense_chart_keeps_each_chord_audible_when_the_next_one_pushes() {
+        // The change into the third chord has to be one the band pushes, and which those
+        // are is read off the two chords: so the second and third are varied, not the seed.
+        const DEGREES: [&str; 6] = ["I", "ii", "iii", "IV", "V", "vi"];
         let mut exercised = false;
-        for seed in 1..=8u64 {
-            let (frame, parts) = chords("| I ii iii IV V vi vii I bII |", 1, seed, 1.0).draft();
+        let dense = DEGREES
+            .iter()
+            .flat_map(|second| DEGREES.iter().map(move |third| (second, third)))
+            .filter(|(second, third)| second != third)
+            .map(|(second, third)| format!("| I {second} {third} IV V vi vii I bII |"));
+        for (seed, chart) in (1u64..).zip(dense) {
+            let (frame, parts) = chords(&chart, 1, seed, 1.0).draft();
             let section = &frame.sections[0];
             let chords = part(&parts, "chords");
             let [first, second, third, ..] = section.events.as_slice() else {
@@ -826,10 +855,7 @@ mod tests {
                 first.start.raw()
             );
         }
-        assert!(
-            exercised,
-            "none of the deterministic seeds pushed the dense chart"
-        );
+        assert!(exercised, "no dense chart had its third chord pushed");
     }
 
     #[test]

@@ -99,8 +99,9 @@ clip takes the groove of the generated kit most of it lies under, and keeps it i
 It draws one figure for the section and holds it, and plays mostly the root. A root-and-fifth
 line is played on the kick, on the beats, or on the two halves of the bar. Every second bar
 turns the figure its own way — a pickup into the next bar, the last note dropped, or the last
-note moved onto the pickup — and the bar that closes a phrase runs up the scale into the next.
-Half the takes let a note go before a syncopated one, or just before a backbeat.
+note moved onto the pickup — and the bar that closes a phrase may run up the scale into the
+next. Most takes let a note go before a syncopated one, or just before a backbeat. A chord's root
+is played from A1 to G♯2 unless the octave is moved.
 
 An arpeggio breaks each chord in closed position, led from the chord before it the way the chords
 part is, so the figure stays under the hand while the harmony moves. It runs in one of six
@@ -123,10 +124,11 @@ subdivision entirely, since a groove is written in sixteenths and read by index.
 
 A chord part picks its figure once for the section and restates it, the way a keyboard player picks
 a feel and keeps it; only the closing bar of a planned phrase can turn it over, and only
-sometimes. Half the takes let a chord go on the beat before a syncopated strike and half hold
-every chord into the next. A chord change may be *pushed*: struck half a beat
-early and held over the line. Which changes are is read off the two chords and the
-**Syncopation** dial, not off the seed. So the chords and the bass push the same changes however
+sometimes. Nearly eight takes in ten let a chord go before a syncopated strike or just before
+a backbeat, and the rest hold every chord into the next. A chord change may be *pushed*: struck half a beat
+early and held over the line. Which changes are is read off the two chords, as degrees of the
+key, and the **Syncopation** dial — one change in thirteen at its default, one in four at its top
+— and not off the seed. So the chords and the bass push the same changes however
 their clips are cut, a progression pushes the same change each time it comes round, and another
 take of either part does not change it; turning the dial down stops it. Above 75% density, chords keep their figure and fill in the steps
 round it.
