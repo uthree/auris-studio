@@ -137,6 +137,7 @@ impl Session {
                 start_bar,
                 bars,
                 track,
+                bands,
             } => {
                 let selection = crate::modulation::Selection {
                     section,
@@ -144,6 +145,7 @@ impl Session {
                     start_bar,
                     bars,
                     each_section,
+                    bands,
                 };
                 self.modulation_job(&selection, track)
                     .map(|job| AgentJob::Modulation(Box::new(job)))

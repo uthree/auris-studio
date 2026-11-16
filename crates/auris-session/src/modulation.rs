@@ -15,7 +15,7 @@
 
 use crate::{RenderJob, Session, prelude::*};
 use auris_dsp::modulation::{
-    BAND_CENTRES, ENVELOPE_RATE, ModulationSpectrum, band_envelopes, modulation_spectrum,
+    BandResolution, ENVELOPE_RATE, ModulationSpectrum, band_envelopes, modulation_spectrum,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -42,6 +42,28 @@ pub fn column_rate(column: usize) -> f64 {
     LOWEST_RATE * 2.0_f64.powf((column as f64 + 0.5) / COLUMNS_PER_OCTAVE)
 }
 
+/// How finely the spectrum is divided into bands.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Bands {
+    /// Ten octave bands, 31 Hz to 16 kHz: coarse, for a quick look at the registers.
+    Octave,
+    /// Thirty third-octave bands, 20 Hz to 16 kHz: kick apart from bass, hats apart from cymbals.
+    #[default]
+    ThirdOctave,
+}
+
+impl From<Bands> for BandResolution {
+    fn from(bands: Bands) -> Self {
+        match bands {
+            Bands::Octave => Self::Octave,
+            Bands::ThirdOctave => Self::ThirdOctave,
+        }
+    }
+}
+
 /// Which stretch of the song to measure. At most one of the three ways may be used; none
 /// means the whole song.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -56,12 +78,14 @@ pub struct Selection {
     pub bars: Option<u32>,
     /// Measure every named section of the song, each as its own region.
     pub each_section: bool,
+    /// How finely to divide the spectrum.
+    pub bands: Bands,
 }
 
 /// A named band's peaks and rhythm grid within one region.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BandModulation {
-    /// Octave band centre in hertz.
+    /// Band centre in hertz.
     pub centre_hz: f64,
     /// Mean band power in dB (power reference 1); `None` when the band is silent.
     pub level_db: Option<f64>,
@@ -131,6 +155,8 @@ pub struct ModulationReport {
     pub revision: u64,
     /// Soloed track, or `None` for the mix.
     pub track: Option<u64>,
+    /// How finely the spectrum was divided.
+    pub bands: Bands,
     /// Every region measured, in song order.
     pub regions: Vec<RegionModulation>,
     /// Sections the selection skipped because the call's bounds were reached.
@@ -180,6 +206,7 @@ pub struct ModulationJob {
     render: RenderJob,
     revision: u64,
     track: Option<TrackId>,
+    bands: Bands,
     regions: Vec<Region>,
     omitted: usize,
 }
@@ -310,6 +337,7 @@ impl Session {
             revision: self.revision(),
             render: self.render_job_at(Some(48_000.0)),
             track: track.map(TrackId),
+            bands: selection.bands,
             regions,
             omitted,
         })
@@ -372,11 +400,12 @@ impl ModulationJob {
                 rate,
             )
             .map_err(|e| e.to_string())?;
-            regions.push(measure(&project, region, &slice, cancel)?);
+            regions.push(measure(&project, region, &slice, self.bands, cancel)?);
         }
         Ok(ModulationReport {
             revision: self.revision,
             track: self.track.map(|id| id.0),
+            bands: self.bands,
             regions,
             omitted_regions: self.omitted,
         })
@@ -410,14 +439,15 @@ fn measure(
     project: &Project,
     region: &Region,
     audio: &AudioBuffer,
+    bands: Bands,
     cancel: &AtomicBool,
 ) -> Result<RegionModulation, String> {
     let signature = project.signatures.signature_at(region.start);
     let beat_ticks = signature.beat_ticks().raw().max(1);
     let beats_per_bar = signature.felt_beats();
     let step = beat_ticks as f64 / SAMPLES_PER_BEAT;
-    let envelopes =
-        band_envelopes(audio, cancel).ok_or("Modulation analysis cancelled or unusable audio")?;
+    let envelopes = band_envelopes(audio, bands.into(), cancel)
+        .ok_or("Modulation analysis cancelled or unusable audio")?;
     let rates = rhythm_rates(beats_per_bar);
     let label = |rate: f64| {
         rates
@@ -429,10 +459,11 @@ fn measure(
         let scale = 10.0_f64.powi(places);
         (value * scale).round() / scale
     };
-    let mut bands = Vec::with_capacity(BAND_CENTRES.len());
-    let mut depth = Vec::with_capacity(BAND_CENTRES.len() * COLUMNS);
+    let centres = envelopes.centres.clone();
+    let mut bands = Vec::with_capacity(centres.len());
+    let mut depth = Vec::with_capacity(centres.len() * COLUMNS);
     let mut lowest = 0.0_f64;
-    for (band, centre) in BAND_CENTRES.iter().enumerate() {
+    for (band, centre) in centres.iter().enumerate() {
         let grid = beat_grid(project, region, step, &envelopes.amplitude[band]);
         let silent = envelopes.level_db[band].is_none();
         let spectrum = if silent {
@@ -469,7 +500,11 @@ fn measure(
             })
             .collect();
         bands.push(BandModulation {
-            centre_hz: *centre,
+            // Three significant figures: 19.7, 63, 1260.
+            centre_hz: {
+                let scale = 10.0_f64.powi(2 - centre.log10().floor() as i32);
+                (centre * scale).round() / scale
+            },
             level_db: envelopes.level_db[band].map(|db| round(f64::from(db), 1)),
             peaks,
             rhythm,
@@ -573,7 +608,8 @@ mod tests {
         let region = &report.regions[0];
         assert_eq!(region.beats, 32.0);
         assert_eq!(region.beat_ticks, 960);
-        assert_eq!(region.depth.len(), BAND_CENTRES.len() * COLUMNS);
+        assert_eq!(region.bands.len(), 30);
+        assert_eq!(region.depth.len(), 30 * COLUMNS);
         strongest(region).clone()
     }
 

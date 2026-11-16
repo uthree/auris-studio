@@ -16,10 +16,55 @@ use auris_core::AudioBuffer;
 use realfft::RealFftPlanner;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Centres of the octave bands [`band_envelopes`] measures, low to high, in hertz.
-pub const BAND_CENTRES: [f64; 10] = [
-    31.5, 63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
-];
+/// How finely [`band_envelopes`] divides the spectrum.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BandResolution {
+    /// Ten octave bands, 31.25 Hz to 16 kHz, with Linkwitz–Riley fourth-order edges.
+    Octave,
+    /// Thirty third-octave bands, 19.7 Hz to 16 kHz, with Linkwitz–Riley eighth-order edges: a
+    /// tone at the neighbouring band's centre reads about 11 dB down, two bands away 35 dB.
+    #[default]
+    ThirdOctave,
+}
+
+/// Butterworth fourth-order section Qs; each edge of a third-octave band is two of these.
+const BUTTERWORTH_4: [f32; 2] = [0.541_196_1, 1.306_563];
+
+impl BandResolution {
+    /// Band centres, low to high, in hertz, on the base-two series through 1 kHz.
+    pub fn centres(self) -> Vec<f64> {
+        match self {
+            Self::Octave => (-5..=4).map(|k| 1000.0 * 2.0_f64.powi(k)).collect(),
+            Self::ThirdOctave => (-17..=12)
+                .map(|k| 1000.0 * 2.0_f64.powf(f64::from(k) / 3.0))
+                .collect(),
+        }
+    }
+
+    /// Ratio from a band's centre to each of its edges.
+    fn half_width(self) -> f64 {
+        match self {
+            Self::Octave => std::f64::consts::SQRT_2,
+            Self::ThirdOctave => 2.0_f64.powf(1.0 / 6.0),
+        }
+    }
+
+    /// The Q of each second-order section at one edge; an edge is -6 dB.
+    fn edge_sections(self) -> &'static [f32] {
+        match self {
+            Self::Octave => &[
+                std::f32::consts::FRAC_1_SQRT_2,
+                std::f32::consts::FRAC_1_SQRT_2,
+            ],
+            Self::ThirdOctave => &[
+                BUTTERWORTH_4[0],
+                BUTTERWORTH_4[1],
+                BUTTERWORTH_4[0],
+                BUTTERWORTH_4[1],
+            ],
+        }
+    }
+}
 
 /// Envelope frames per second that [`band_envelopes`] produces.
 pub const ENVELOPE_RATE: f64 = 200.0;
@@ -27,69 +72,99 @@ pub const ENVELOPE_RATE: f64 = 200.0;
 /// Power at or below this (about -100 dBFS) counts as silence, never as a deep modulation.
 const SILENT_POWER: f64 = 1.0e-10;
 
-/// Amplitude envelopes of the octave bands, all sampled at [`ENVELOPE_RATE`].
+/// Amplitude envelopes of the bands, all sampled at [`ENVELOPE_RATE`].
 pub struct BandEnvelopes {
-    /// One amplitude series per entry of [`BAND_CENTRES`]: the root of the band's mean
-    /// power over each frame, averaged across channels.
+    /// Band centres in hertz, low to high, as [`BandResolution::centres`] gives them.
+    pub centres: Vec<f64>,
+    /// One amplitude series per band: the root of the band's mean power over each frame,
+    /// averaged across channels.
     pub amplitude: Vec<Vec<f32>>,
     /// Each band's mean power over the whole buffer in dB (power reference 1, so a full-scale
-    /// sine is -3 dB), `None` for a silent band. The band edges take about 3.9 dB from a tone at
-    /// a band's centre; the levels compare bands and regions, not absolute loudness.
+    /// sine is -3 dB), `None` for a silent band. The edges take about 3.9 dB (octave) or 5.8 dB
+    /// (third octave) from a tone at a band's centre; the levels compare bands and regions, not
+    /// absolute loudness.
     pub level_db: Vec<Option<f32>>,
 }
 
-/// Measure every octave band's amplitude envelope.
+/// Halve the rate of `signal` after a fourth-order low-pass at 0.2 of the old rate.
+fn decimate(signal: &mut Vec<f32>, rate: f64) {
+    for q in BUTTERWORTH_4 {
+        Biquad::new(BiquadCoefficients::lowpass(rate, (rate * 0.2) as f32, q))
+            .process_block(signal);
+    }
+    let kept: Vec<f32> = signal.iter().step_by(2).copied().collect();
+    *signal = kept;
+}
+
+/// Measure every band's amplitude envelope.
 ///
-/// Each band is a fourth-order band-pass with Linkwitz–Riley edges (two Butterworth high-passes
-/// at the lower edge, two low-passes at the upper one, each -6 dB at its edge), so a band's skirt
-/// does not leak much of a neighbour's pulse. Channel
-/// powers are averaged, as in [`crate::mel`], so opposite-phase stereo does not cancel. A
-/// three-tap smoothing across frames keeps a band's own carrier out of the envelope's rate.
+/// Each band is a band-pass with Linkwitz–Riley edges (Butterworth high-passes at the lower edge
+/// and low-passes at the upper one, each edge -6 dB), so a band's skirt does not leak much of a
+/// neighbour's pulse. Bands are filtered from the top down, and the signal is halved in rate
+/// whenever the next band's upper edge is below an eighth of it — a third-octave analysis of four
+/// minutes then costs a few seconds rather than tens. Channel powers are averaged, as in
+/// [`crate::mel`], so opposite-phase stereo does not cancel. A three-tap smoothing across frames
+/// keeps a band's own carrier out of the envelope's rate.
 /// Returns `None` on cancellation or for empty, non-finite or unusably slow audio.
-pub fn band_envelopes(audio: &AudioBuffer, cancel: &AtomicBool) -> Option<BandEnvelopes> {
+pub fn band_envelopes(
+    audio: &AudioBuffer,
+    resolution: BandResolution,
+    cancel: &AtomicBool,
+) -> Option<BandEnvelopes> {
     let rate = audio.sample_rate();
     let frames = audio.frame_count();
     let channels = audio.channel_count();
     if frames == 0 || channels == 0 || !rate.is_finite() || rate < 4.0 * ENVELOPE_RATE {
         return None;
     }
+    if audio
+        .iter_channels()
+        .any(|channel| channel.iter().any(|sample| !sample.is_finite()))
+    {
+        return None;
+    }
+    let centres = resolution.centres();
     let hops = ((frames as f64 * ENVELOPE_RATE / rate).ceil() as usize).max(1);
-    let boundary = |hop: usize| ((hop as f64 * rate / ENVELOPE_RATE).round() as usize).min(frames);
-    let nyquist_guard = rate * 0.45;
-    let mut amplitude = Vec::with_capacity(BAND_CENTRES.len());
-    let mut level_db = Vec::with_capacity(BAND_CENTRES.len());
-    let mut filtered = vec![0.0_f32; frames];
-    for centre in BAND_CENTRES {
-        let low = centre / std::f64::consts::SQRT_2;
-        let high = (centre * std::f64::consts::SQRT_2).min(nyquist_guard);
-        let mut power = vec![0.0_f64; hops];
-        if low < high {
-            for channel in audio.iter_channels() {
-                if cancel.load(Ordering::Relaxed) {
-                    return None;
-                }
-                filtered.copy_from_slice(channel);
-                if filtered.iter().any(|sample| !sample.is_finite()) {
-                    return None;
-                }
-                let q = std::f32::consts::FRAC_1_SQRT_2;
-                for coefficients in [
-                    BiquadCoefficients::highpass(rate, low as f32, q),
-                    BiquadCoefficients::highpass(rate, low as f32, q),
-                    BiquadCoefficients::lowpass(rate, high as f32, q),
-                    BiquadCoefficients::lowpass(rate, high as f32, q),
-                ] {
-                    Biquad::new(coefficients).process_block(&mut filtered);
-                }
-                for (hop, slot) in power.iter_mut().enumerate() {
-                    let block = &filtered[boundary(hop)..boundary(hop + 1)];
-                    if !block.is_empty() {
-                        let energy: f64 = block.iter().map(|&s| f64::from(s) * f64::from(s)).sum();
-                        *slot += energy / block.len() as f64 / channels as f64;
-                    }
+    let mut power = vec![vec![0.0_f64; hops]; centres.len()];
+    for channel in audio.iter_channels() {
+        let mut signal = channel.to_vec();
+        let mut current = rate;
+        for (band, centre) in centres.iter().enumerate().rev() {
+            if cancel.load(Ordering::Relaxed) {
+                return None;
+            }
+            let low = centre / resolution.half_width();
+            let wanted = centre * resolution.half_width();
+            while current / 2.0 >= (4.0 * wanted).max(4.0 * ENVELOPE_RATE) {
+                decimate(&mut signal, current);
+                current /= 2.0;
+            }
+            let high = wanted.min(current * 0.45);
+            if low >= high {
+                continue;
+            }
+            let mut filtered = signal.clone();
+            for &q in resolution.edge_sections() {
+                Biquad::new(BiquadCoefficients::highpass(current, low as f32, q))
+                    .process_block(&mut filtered);
+                Biquad::new(BiquadCoefficients::lowpass(current, high as f32, q))
+                    .process_block(&mut filtered);
+            }
+            let length = filtered.len();
+            let boundary =
+                |hop: usize| ((hop as f64 * current / ENVELOPE_RATE).round() as usize).min(length);
+            for (hop, slot) in power[band].iter_mut().enumerate() {
+                let block = &filtered[boundary(hop)..boundary(hop + 1)];
+                if !block.is_empty() {
+                    let energy: f64 = block.iter().map(|&s| f64::from(s) * f64::from(s)).sum();
+                    *slot += energy / block.len() as f64 / channels as f64;
                 }
             }
         }
+    }
+    let mut amplitude = Vec::with_capacity(centres.len());
+    let mut level_db = Vec::with_capacity(centres.len());
+    for power in &power {
         let mean = power.iter().sum::<f64>() / hops as f64;
         level_db.push((mean > SILENT_POWER).then(|| (10.0 * mean.log10()) as f32));
         let smoothed = (0..hops).map(|hop| {
@@ -100,6 +175,7 @@ pub fn band_envelopes(audio: &AudioBuffer, cancel: &AtomicBool) -> Option<BandEn
         amplitude.push(smoothed.collect());
     }
     Some(BandEnvelopes {
+        centres,
         amplitude,
         level_db,
     })
@@ -316,8 +392,9 @@ mod tests {
                 if (t * 2.0).fract() < 0.5 { 0.5 } else { 0.05 }
             },
         );
-        let envelopes = band_envelopes(&audio, &AtomicBool::new(false)).unwrap();
-        assert_eq!(envelopes.amplitude.len(), BAND_CENTRES.len());
+        let envelopes =
+            band_envelopes(&audio, BandResolution::Octave, &AtomicBool::new(false)).unwrap();
+        assert_eq!(envelopes.amplitude.len(), 10);
         let frames = (8.0 * ENVELOPE_RATE) as usize;
         assert!(envelopes.amplitude.iter().all(|band| band.len() == frames));
         let level = envelopes.level_db[1].unwrap();
@@ -336,10 +413,64 @@ mod tests {
     }
 
     #[test]
+    fn third_octaves_tell_apart_two_tones_a_third_of_an_octave_apart() {
+        // 1 kHz pulsing at 4 Hz under a steady tone a third of an octave higher.
+        let rate = 48_000.0;
+        let samples: Vec<f32> = (0..(4.0 * rate) as usize)
+            .map(|i| {
+                let t = i as f64 / rate;
+                let gate = if (t * 4.0).fract() < 0.5 { 0.4 } else { 0.0 };
+                let pulsing = gate * (2.0 * std::f64::consts::PI * 1000.0 * t).sin();
+                let steady = 0.4 * (2.0 * std::f64::consts::PI * 1259.9 * t).sin();
+                (pulsing + steady) as f32
+            })
+            .collect();
+        let audio = AudioBuffer::from_planar(vec![samples], rate).unwrap();
+        let envelopes =
+            band_envelopes(&audio, BandResolution::ThirdOctave, &AtomicBool::new(false)).unwrap();
+        assert_eq!(envelopes.centres.len(), 30);
+        let index = |hz: f64| {
+            envelopes
+                .centres
+                .iter()
+                .position(|centre| (centre / hz - 1.0).abs() < 0.01)
+                .unwrap()
+        };
+        let depth = |band: usize| {
+            modulation_spectrum(&envelopes.amplitude[band], ENVELOPE_RATE).depth_near(4.0, 0.03)
+        };
+        let (pulsing, steady) = (depth(index(1000.0)), depth(index(1259.9)));
+        // The steady neighbour leaks in about 11 dB down and fills the gate's gaps a little.
+        assert!(pulsing > 0.5, "{pulsing}");
+        assert!(steady < 0.25, "{steady}");
+        // The steady tone: -11 dB, less the edges' 5.8 dB, plus the gated 1 kHz leaking in.
+        let level = |hz| envelopes.level_db[index(hz)].unwrap();
+        assert!((level(1259.9) + 15.0).abs() < 0.7, "{}", level(1259.9));
+        // Decimated low bands stay calibrated: nothing sounds down there.
+        assert!(envelopes.level_db[index(62.996)].is_none_or(|db| db < -60.0));
+    }
+
+    #[test]
+    fn decimated_low_bands_read_the_same_level_as_full_rate_ones() {
+        let audio = tone(50.0, 2.0, |_| 0.5);
+        let envelopes =
+            band_envelopes(&audio, BandResolution::ThirdOctave, &AtomicBool::new(false)).unwrap();
+        let band = envelopes
+            .centres
+            .iter()
+            .position(|centre| (centre / 49.6 - 1.0).abs() < 0.01)
+            .unwrap();
+        // A 0.5 sine is -9 dB; the band's edges take 5.8 dB at its centre.
+        let level = envelopes.level_db[band].unwrap();
+        assert!((level + 14.8).abs() < 0.6, "{level}");
+    }
+
+    #[test]
     fn cancellation_and_unusable_audio_return_nothing() {
         let audio = tone(440.0, 0.5, |_| 0.5);
-        assert!(band_envelopes(&audio, &AtomicBool::new(true)).is_none());
+        let resolution = BandResolution::ThirdOctave;
+        assert!(band_envelopes(&audio, resolution, &AtomicBool::new(true)).is_none());
         let empty = AudioBuffer::stereo(0, 48_000.0);
-        assert!(band_envelopes(&empty, &AtomicBool::new(false)).is_none());
+        assert!(band_envelopes(&empty, resolution, &AtomicBool::new(false)).is_none());
     }
 }

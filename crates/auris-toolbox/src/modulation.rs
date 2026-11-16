@@ -1,6 +1,6 @@
 //! The modulation spectrogram as a model reads it: one picture and the numbers behind it.
 use crate::audio_inspection::Presentation;
-use auris_session::modulation::{COLUMNS, ModulationReport, beat_label, column_rate};
+use auris_session::modulation::{Bands, COLUMNS, ModulationReport, beat_label, column_rate};
 use base64::Engine;
 use image::{ImageEncoder, Rgb, RgbImage};
 
@@ -11,29 +11,6 @@ const FULL_SCALE: f32 = 1.2;
 /// Rows between two regions' panels.
 const GAP: u32 = 4;
 
-/// A fixed colour ramp, black at no modulation through purple and orange to pale yellow.
-fn colour(depth: f32) -> Rgb<u8> {
-    const STOPS: [(f32, [f32; 3]); 5] = [
-        (0.0, [0.0, 0.0, 0.0]),
-        (0.2, [80.0, 20.0, 120.0]),
-        (0.45, [200.0, 60.0, 70.0]),
-        (0.75, [250.0, 160.0, 40.0]),
-        (1.0, [255.0, 250.0, 190.0]),
-    ];
-    let value = (depth / FULL_SCALE).clamp(0.0, 1.0);
-    let upper = STOPS
-        .iter()
-        .position(|(at, _)| *at >= value)
-        .unwrap_or(4)
-        .max(1);
-    let (a, from) = STOPS[upper - 1];
-    let (b, to) = STOPS[upper];
-    let t = (value - a) / (b - a).max(f32::EPSILON);
-    Rgb(std::array::from_fn(|i| {
-        (from[i] + (to[i] - from[i]) * t).round() as u8
-    }))
-}
-
 /// The x position of `rate` cycles per beat.
 fn x_of(rate: f64) -> Option<u32> {
     let lowest = column_rate(0) / 2.0_f64.powf(1.0 / 32.0);
@@ -41,7 +18,15 @@ fn x_of(rate: f64) -> Option<u32> {
     (x.is_finite() && x >= 0.0 && x < f64::from(WIDTH)).then_some(x as u32)
 }
 
-/// Paint every region as a panel of octave bands and summarise the peaks in text.
+fn rhythm_line(rhythm: &std::collections::BTreeMap<String, f64>) -> String {
+    rhythm
+        .iter()
+        .map(|(name, depth)| format!("{name} {depth:.2}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Paint every region as a panel of frequency bands and summarise the peaks in text.
 pub fn present(report: &ModulationReport) -> Result<Presentation, String> {
     let regions = report.regions.len();
     if regions == 0 || regions > 16 {
@@ -56,7 +41,7 @@ pub fn present(report: &ModulationReport) -> Result<Presentation, String> {
     {
         return Err("Invalid modulation image dimensions".into());
     }
-    let row = ((720 / regions as u32).saturating_sub(GAP) / bands as u32).clamp(4, 24);
+    let row = ((720 / regions as u32).saturating_sub(GAP) / bands as u32).clamp(2, 24);
     let panel = row * bands as u32;
     let height = panel * regions as u32 + GAP * (regions as u32 - 1);
     let mut pixels = RgbImage::from_pixel(WIDTH, height, Rgb([40, 45, 54]));
@@ -69,7 +54,7 @@ pub fn present(report: &ModulationReport) -> Result<Presentation, String> {
                 if !depth.is_finite() {
                     return Err("Non-finite modulation depth".into());
                 }
-                let pixel = colour(depth);
+                let pixel = crate::palette::heat(depth / FULL_SCALE);
                 for dx in 0..4 {
                     for dy in 0..row {
                         pixels.put_pixel(column as u32 * 4 + dx, y0 + dy, pixel);
@@ -81,10 +66,10 @@ pub fn present(report: &ModulationReport) -> Result<Presentation, String> {
         let bar = 1.0 / f64::from(region.beats_per_bar.max(1));
         let guides = [
             (bar, [90, 220, 235]),
-            (1.0, [120, 225, 150]),
-            (2.0, [120, 225, 150]),
-            (4.0, [120, 225, 150]),
-            (3.0, [235, 120, 230]),
+            (1.0, [235, 235, 235]),
+            (2.0, [235, 235, 235]),
+            (4.0, [235, 235, 235]),
+            (3.0, [120, 225, 150]),
         ];
         for (rate, rgb) in guides {
             if let Some(x) = x_of(rate) {
@@ -103,6 +88,9 @@ pub fn present(report: &ModulationReport) -> Result<Presentation, String> {
             image::ExtendedColorType::Rgb8,
         )
         .map_err(|e| e.to_string())?;
+    // Thirty bands of rates would be several thousand words for a whole song; the score rates
+    // are read per octave instead, and the peaks stay per band.
+    let group = (bands / 10).max(1);
     let mut summary = String::new();
     for region in &report.regions {
         let mut header = serde_json::to_value(region).map_err(|e| e.to_string())?;
@@ -125,21 +113,34 @@ pub fn present(report: &ModulationReport) -> Result<Presentation, String> {
                     None => format!("{}/beat={:.2}", peak.cycles_per_beat, peak.depth),
                 })
                 .collect();
-            let rhythm: Vec<String> = band
-                .rhythm
-                .iter()
-                .map(|(name, depth)| format!("{name} {depth:.2}"))
-                .collect();
-            summary.push_str(&format!(
-                "  {:>5} Hz {level:.1} dB | peaks {} | rhythm {}\n",
-                band.centre_hz,
-                if peaks.is_empty() {
-                    "none".to_string()
-                } else {
-                    peaks.join(", ")
-                },
-                rhythm.join(", ")
-            ));
+            let peaks = if peaks.is_empty() {
+                "none".to_string()
+            } else {
+                peaks.join(", ")
+            };
+            let mut line = format!("  {:>5} Hz {level:.1} dB | peaks {peaks}", band.centre_hz);
+            if group == 1 {
+                line.push_str(&format!(" | rhythm {}", rhythm_line(&band.rhythm)));
+            }
+            summary.push_str(&line);
+            summary.push('\n');
+        }
+        if group > 1 {
+            summary.push_str("  rhythm by octave (deepest of its bands):\n");
+            for octave in region.bands.chunks(group) {
+                let mut deepest = std::collections::BTreeMap::<String, f64>::new();
+                for band in octave {
+                    for (name, depth) in &band.rhythm {
+                        let slot = deepest.entry(name.clone()).or_insert(0.0);
+                        *slot = slot.max(*depth);
+                    }
+                }
+                let (first, last) = (octave[0].centre_hz, octave[octave.len() - 1].centre_hz);
+                summary.push_str(&format!(
+                    "  {first}-{last} Hz | rhythm {}\n",
+                    rhythm_line(&deepest)
+                ));
+            }
         }
     }
     let order: Vec<String> = report
@@ -155,12 +156,12 @@ pub fn present(report: &ModulationReport) -> Result<Presentation, String> {
         .collect();
     let text = format!(
         "Modulation spectrogram, document revision {revision}, {target}.\n\
-         Image: {WIDTH}x{height}, {regions} panel(s) top to bottom: {order}. Each panel has {bands} octave bands, \
-         lowest (31.5 Hz) at the bottom row and highest (16 kHz) at the top. x is modulation rate in cycles per beat \
+         Image: {WIDTH}x{height}, {regions} panel(s) top to bottom: {order}. Each panel has {bands} {band_kind} bands, \
+         lowest ({lowest} Hz) at the bottom row and highest ({highest} Hz) at the top. x is modulation rate in cycles per beat \
          on a log axis, 1/16 at the left to 16 at the right, 16 columns per octave; the beat is each region's felt beat \
-         (beat_ticks, 960 = quarter note). Colour is depth on a fixed scale: black 0, purple ~0.25, orange ~0.55, light orange ~0.9, pale \
-         yellow {FULL_SCALE} or more, never normalised per image, so panels compare directly. Dotted guides: cyan once \
-         per bar, green 1, 2 and 4 per beat, magenta 3 per beat (triplets).\n\
+         (beat_ticks, 960 = quarter note). Colour is depth on a fixed scale, the ramp {ramp} \
+         where 1.0 is a depth of {FULL_SCALE} or more, never normalised per image, so panels compare directly. Dotted \
+         guides: cyan once per bar, white 1, 2 and 4 per beat, green 3 per beat (triplets).\n\
          Reading: depth is the band envelope's swing at that rate as a fraction of its mean; a peak at 1 per beat with \
          depth 0.5 means that register's loudness rises and falls by about half on every beat. Short separated hits \
          read above 1 and also show at whole multiples of their rate, so the slowest strong peak of a band is its pulse. \
@@ -175,6 +176,13 @@ pub fn present(report: &ModulationReport) -> Result<Presentation, String> {
             |track| format!("track {track} soloed")
         ),
         order = order.join("; "),
+        band_kind = match report.bands {
+            Bands::Octave => "octave",
+            Bands::ThirdOctave => "third-octave",
+        },
+        lowest = report.regions[0].bands[0].centre_hz,
+        highest = report.regions[0].bands[bands - 1].centre_hz,
+        ramp = crate::palette::DESCRIPTION,
     );
     let mut text = text;
     if report.omitted_regions > 0 {
@@ -228,6 +236,7 @@ mod tests {
         let report = ModulationReport {
             revision: 3,
             track: None,
+            bands: Bands::Octave,
             regions: vec![region(0.0), region(FULL_SCALE)],
             omitted_regions: 1,
         };
@@ -238,12 +247,15 @@ mod tests {
         let image = image::load_from_memory(&bytes).unwrap().to_rgb8();
         // 720 / 2 - 4 = 356 rows per panel, 35 per band, clamped to 24.
         assert_eq!(image.dimensions(), (WIDTH, 240 * 2 + GAP));
-        assert_eq!(image.get_pixel(1, 1).0, [0, 0, 0]);
-        assert_eq!(image.get_pixel(1, 240 + GAP + 1).0, [255, 250, 190]);
+        assert_eq!(image.get_pixel(1, 1), &crate::palette::heat(0.0));
+        assert_eq!(
+            image.get_pixel(1, 240 + GAP + 1),
+            &crate::palette::heat(1.0)
+        );
         // The 1-per-beat guide sits four octaves above 1/16.
         let x = x_of(1.0).unwrap();
         assert_eq!(x, 256);
-        assert_eq!(image.get_pixel(x, 0).0, [120, 225, 150]);
+        assert_eq!(image.get_pixel(x, 0).0, [235, 235, 235]);
         assert!(presentation.text.contains("サビ #1 (bars 9..17)"));
         assert!(presentation.text.contains("\"beat\":\"quarter\""));
         assert!(
@@ -256,12 +268,36 @@ mod tests {
     }
 
     #[test]
+    fn third_octave_text_reads_rhythm_per_octave_to_stay_short() {
+        let mut third = region(0.3);
+        third.bands = (0..30).map(|i| third.bands[i % 10].clone()).collect();
+        third.depth = vec![0.3; 30 * COLUMNS];
+        let report = ModulationReport {
+            revision: 1,
+            track: None,
+            bands: Bands::ThirdOctave,
+            regions: vec![third],
+            omitted_regions: 0,
+        };
+        let presentation = present(&report).unwrap();
+        assert!(presentation.text.contains("30 third-octave bands"));
+        assert_eq!(presentation.text.matches("| rhythm").count(), 10);
+        assert!(presentation.text.contains("rhythm by octave"));
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&presentation.png)
+            .unwrap();
+        let image = image::load_from_memory(&bytes).unwrap().to_rgb8();
+        assert_eq!(image.dimensions(), (WIDTH, 23 * 30));
+    }
+
+    #[test]
     fn malformed_reports_are_refused() {
         let mut broken = region(0.1);
         broken.depth.pop();
         let report = ModulationReport {
             revision: 1,
             track: Some(2),
+            bands: Bands::Octave,
             regions: vec![broken],
             omitted_regions: 0,
         };

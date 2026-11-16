@@ -34,8 +34,7 @@ pub fn present(report: &Inspection) -> Result<Presentation, String> {
             if !level.is_finite() {
                 return Err("Non-finite mel power".into());
             }
-            let value = (((level + 90.0) / 90.0).clamp(0.0, 1.0) * 255.0).round() as u8;
-            pixels.put_pixel(x, y, Rgb([value, value, value]));
+            pixels.put_pixel(x, y, crate::palette::heat((level + 90.0) / 90.0));
         }
     }
     for pitch in (0..128).step_by(12) {
@@ -70,8 +69,11 @@ pub fn present(report: &Inspection) -> Result<Presentation, String> {
         .write_image(pixels.as_raw(), 512, 384, image::ExtendedColorType::Rgb8)
         .map_err(|e| e.to_string())?;
     let mut text = format!(
-        "Rendered audio inspection, document revision {}.\n{}\nImage: 512x384. Shared x axis is elapsed seconds 0..{seconds:.3}. Top y=0..127: mel power, high frequencies at top, low at bottom; black=-90 dB, white=0 dB, fixed reference with no per-image normalization. Bottom y=128..383: authored piano roll, MIDI 127 at top, 0 at bottom; grey horizontal lines mark octave C notes. Track colour cycles by numeric ID modulo 6: blue, orange, green, purple, yellow, cyan.\nMel centre frequencies (low to high, Hz): {:?}.\nThis is measured audio plus a score image, not listening. Do not infer pleasing music, exact instruments, clipping, or masking from the picture alone. Use measurements for level claims; the score is before performance transforms. Harmony is stored project metadata, not detected from the audio. Bar-start harmony samples can omit mid-bar changes.",
-        report.revision, report.measurements, report.frequencies
+        "Rendered audio inspection, document revision {}.\n{}\nImage: 512x384. Shared x axis is elapsed seconds 0..{seconds:.3}. Top y=0..127: mel power, high frequencies at top, low at bottom; colour ramp {ramp}, where 0 is -90 dB and 1.0 is 0 dB (pale yellow), fixed reference with no per-image normalization. Bottom y=128..383: authored piano roll, MIDI 127 at top, 0 at bottom; grey horizontal lines mark octave C notes. Track colour cycles by numeric ID modulo 6: blue, orange, green, purple, yellow, cyan.\nMel centre frequencies (low to high, Hz): {:?}.\nThis is measured audio plus a score image, not listening. Do not infer pleasing music, exact instruments, clipping, or masking from the picture alone. Use measurements for level claims; the score is before performance transforms. Harmony is stored project metadata, not detected from the audio. Bar-start harmony samples can omit mid-bar changes.",
+        report.revision,
+        report.measurements,
+        report.frequencies,
+        ramp = crate::palette::DESCRIPTION,
     );
     let score = serde_json::to_string(&report.notes.iter().take(64).collect::<Vec<_>>())
         .map_err(|e| e.to_string())?;
@@ -110,8 +112,8 @@ mod tests {
             .unwrap();
         let image = image::load_from_memory(&bytes).unwrap().to_rgb8();
         assert_eq!(image.dimensions(), (512, 384));
-        assert_eq!(image.get_pixel(0, 0).0, [0, 0, 0]);
-        assert_eq!(image.get_pixel(511, 0).0, [255, 255, 255]);
+        assert_eq!(image.get_pixel(0, 0), &crate::palette::heat(0.0));
+        assert_eq!(image.get_pixel(511, 0), &crate::palette::heat(1.0));
         assert_eq!(image.get_pixel(130, 262).0, [255, 170, 80]);
         assert!(presentation.text.contains("revision 7"));
         assert!(!presentation.text.contains(&presentation.png));

@@ -619,6 +619,9 @@ pub enum Command {
         bars: Option<u32>,
         /// Optional track ID for solo routing; omit for the mix.
         track: Option<u64>,
+        /// third_octave (default, 30 bands) or octave (10 bands, coarser and shorter).
+        #[serde(default)]
+        bands: crate::modulation::Bands,
     },
     /// Hear the open song yourself: renders 1..8 bars of the unsaved mix (at most 30 seconds, inside the arrangement) and delivers the WAV to you as audio input with your next request. Offered only to a model that accepts audio. To hear an edit, call it again on the same bars with compare_to set to an earlier audition_id: you then receive before, then after, at one common protective gain. Returns audition_id, revision and exact WAV measurements; four IDs are retained. Judge only what you actually hear. No save or Undo.
     Listen {
