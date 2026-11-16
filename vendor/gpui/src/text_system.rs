@@ -414,6 +414,7 @@ impl WindowTextSystem {
         wrap_width: Option<Pixels>,
         line_clamp: Option<usize>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
+        debug_assert_runs_end_on_char_boundaries(&text, runs);
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
@@ -914,5 +915,24 @@ pub(crate) fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'
         ".ZedSans" | "Zed Plex Sans" => "IBM Plex Sans",
         ".ZedMono" | "Zed Plex Mono" => "Lilex",
         _ => name,
+    }
+}
+
+/// Panics, in a debug build, when a run ends inside a character of `text`.
+///
+/// Run lengths are bytes, and every platform's line layout slices the text at them, DirectWrite
+/// with a plain `&text[..]`. A run ending mid-character is therefore a crash on Windows and the
+/// wrong span styled elsewhere, and this makes it the same panic on every platform, where the
+/// window tests can see it. Runs reaching past the end are allowed: layout stops at the text.
+fn debug_assert_runs_end_on_char_boundaries(text: &str, runs: &[TextRun]) {
+    if cfg!(debug_assertions) {
+        let mut end = 0;
+        for run in runs {
+            end += run.len;
+            assert!(
+                end > text.len() || text.is_char_boundary(end),
+                "a text run ends at byte {end}, inside a character of {text:?}"
+            );
+        }
     }
 }
