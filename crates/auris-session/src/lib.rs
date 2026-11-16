@@ -117,8 +117,9 @@ pub use auris_core::motion::{
 };
 /// What a resonating effect publishes for a window to draw.
 pub use auris_core::resonance::{
-    RESONANCE_HIGH_HZ, RESONANCE_LOW_HZ, RESONANCE_MODES, RESONANCE_POINTS, RESONANCE_RESPONSE,
-    RESONANCE_STRINGS, ResonanceFrame, ResonanceKind, ResonanceString, response_hz,
+    RESONANCE_CURVE, RESONANCE_HIGH_HZ, RESONANCE_LOW_HZ, RESONANCE_MODES, RESONANCE_POINTS,
+    RESONANCE_RESPONSE, RESONANCE_STRINGS, RESONANCE_VALUES, ResonanceFrame, ResonanceKind,
+    ResonanceString, response_hz,
 };
 /// A song's genre and usage, re-exported for the presentation crates that word their guidance.
 pub use auris_core::style;

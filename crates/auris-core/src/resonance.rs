@@ -31,6 +31,11 @@ pub const RESONANCE_LOW_HZ: f32 = 40.0;
 /// Highest frequency of a frame's response curve.
 pub const RESONANCE_HIGH_HZ: f32 = 12_000.0;
 
+/// Points of a frame's two free curves, [`ResonanceFrame::curve`] and [`ResonanceFrame::trace`].
+pub const RESONANCE_CURVE: usize = 128;
+/// Kind-specific readings a frame carries in [`ResonanceFrame::values`].
+pub const RESONANCE_VALUES: usize = 8;
+
 /// Frequency of point `index` of a frame's response curve.
 pub fn response_hz(index: usize) -> f32 {
     let t = index as f32 / (RESONANCE_RESPONSE - 1) as f32;
@@ -45,6 +50,33 @@ pub enum ResonanceKind {
     Strings,
     /// A box or a plate: a bank of modes with a frequency response.
     Body,
+    /// A steel plate hung in a frame: its lowest modes, and its decay time against frequency
+    /// as the curve.
+    Plate,
+    /// Coiled springs, each a lane of the wave travelling along it, and the springs' delay
+    /// against frequency as the curve.
+    Spring,
+    /// A tape loop past its heads: the tape's magnetisation against the head's field as the
+    /// trace, and the tape's speed over the last moments as the curve.
+    Tape,
+    /// A valve stage: its transfer curve, and the recent operating points as the trace.
+    Tube,
+    /// A rotating horn over a rotating drum: their angles and speeds in the values, and their
+    /// speeds over the last moments as the curve and the trace.
+    Rotary,
+}
+
+impl ResonanceKind {
+    /// Every kind, in the order they are numbered when published.
+    pub const ALL: [ResonanceKind; 7] = [
+        ResonanceKind::Strings,
+        ResonanceKind::Body,
+        ResonanceKind::Plate,
+        ResonanceKind::Spring,
+        ResonanceKind::Tape,
+        ResonanceKind::Tube,
+        ResonanceKind::Rotary,
+    ];
 }
 
 /// One sympathetic string, as it is moving now.
@@ -92,6 +124,16 @@ pub struct ResonanceFrame {
     pub mode_hz: [f32; RESONANCE_MODES],
     /// The body's magnitude response, in decibels relative to its average, at [`response_hz`].
     pub response: [f32; RESONANCE_RESPONSE],
+    /// A curve in the kind's own units, as `[x, y]`; what it is depends on [`Self::kind`].
+    pub curve: [[f32; 2]; RESONANCE_CURVE],
+    /// Points of [`Self::curve`] in use.
+    pub curve_len: usize,
+    /// A second curve, usually the path the effect has just travelled.
+    pub trace: [[f32; 2]; RESONANCE_CURVE],
+    /// Points of [`Self::trace`] in use.
+    pub trace_len: usize,
+    /// Kind-specific readings, each documented by the effect that writes it.
+    pub values: [f32; RESONANCE_VALUES],
 }
 
 impl Default for ResonanceFrame {
@@ -107,6 +149,11 @@ impl Default for ResonanceFrame {
             modes: [0.0; RESONANCE_MODES],
             mode_hz: [0.0; RESONANCE_MODES],
             response: [0.0; RESONANCE_RESPONSE],
+            curve: [[0.0; 2]; RESONANCE_CURVE],
+            curve_len: 0,
+            trace: [[0.0; 2]; RESONANCE_CURVE],
+            trace_len: 0,
+            values: [0.0; RESONANCE_VALUES],
         }
     }
 }
@@ -117,15 +164,41 @@ const STRINGS_AT: usize = HEADER;
 const MODES_AT: usize = STRINGS_AT + RESONANCE_STRINGS * STRING_WORDS;
 const MODE_HZ_AT: usize = MODES_AT + RESONANCE_MODES;
 const RESPONSE_AT: usize = MODE_HZ_AT + RESONANCE_MODES;
-const WORDS: usize = RESPONSE_AT + RESONANCE_RESPONSE;
+const CURVE_AT: usize = RESPONSE_AT + RESONANCE_RESPONSE;
+const TRACE_AT: usize = CURVE_AT + 1 + 2 * RESONANCE_CURVE;
+const VALUES_AT: usize = TRACE_AT + 1 + 2 * RESONANCE_CURVE;
+const WORDS: usize = VALUES_AT + RESONANCE_VALUES;
+
+fn write_curve(
+    words: &mut [u32; WORDS],
+    at: usize,
+    curve: &[[f32; 2]; RESONANCE_CURVE],
+    len: usize,
+) {
+    words[at] = len.min(RESONANCE_CURVE) as u32;
+    for (index, [x, y]) in curve.iter().enumerate() {
+        words[at + 1 + 2 * index] = x.to_bits();
+        words[at + 2 + 2 * index] = y.to_bits();
+    }
+}
+
+fn read_curve(words: &[u32; WORDS], at: usize, curve: &mut [[f32; 2]; RESONANCE_CURVE]) -> usize {
+    for (index, point) in curve.iter_mut().enumerate() {
+        *point = [
+            f32::from_bits(words[at + 1 + 2 * index]),
+            f32::from_bits(words[at + 2 + 2 * index]),
+        ];
+    }
+    (words[at] as usize).min(RESONANCE_CURVE)
+}
 
 impl ResonanceFrame {
     fn to_words(self) -> [u32; WORDS] {
         let mut words = [0_u32; WORDS];
-        words[0] = match self.kind {
-            ResonanceKind::Strings => 0,
-            ResonanceKind::Body => 1,
-        };
+        words[0] = ResonanceKind::ALL
+            .iter()
+            .position(|kind| *kind == self.kind)
+            .unwrap_or(0) as u32;
         words[1] = self.input.to_bits();
         words[2] = self.output.to_bits();
         words[3] = self.root as u32;
@@ -148,17 +221,21 @@ impl ResonanceFrame {
         for (index, db) in self.response.iter().enumerate() {
             words[RESPONSE_AT + index] = db.to_bits();
         }
+        write_curve(&mut words, CURVE_AT, &self.curve, self.curve_len);
+        write_curve(&mut words, TRACE_AT, &self.trace, self.trace_len);
+        for (index, value) in self.values.iter().enumerate() {
+            words[VALUES_AT + index] = value.to_bits();
+        }
         words
     }
 
     fn from_words(words: &[u32; WORDS]) -> Self {
         let value = |index: usize| f32::from_bits(words[index]);
         let mut frame = Self {
-            kind: if words[0] == 1 {
-                ResonanceKind::Body
-            } else {
-                ResonanceKind::Strings
-            },
+            kind: ResonanceKind::ALL
+                .get(words[0] as usize)
+                .copied()
+                .unwrap_or_default(),
             input: value(1),
             output: value(2),
             root: words[3] as i32,
@@ -182,6 +259,11 @@ impl ResonanceFrame {
         }
         for (index, db) in frame.response.iter_mut().enumerate() {
             *db = value(RESPONSE_AT + index);
+        }
+        frame.curve_len = read_curve(words, CURVE_AT, &mut frame.curve);
+        frame.trace_len = read_curve(words, TRACE_AT, &mut frame.trace);
+        for (index, slot) in frame.values.iter_mut().enumerate() {
+            *slot = value(VALUES_AT + index);
         }
         frame
     }
@@ -424,6 +506,16 @@ mod tests {
         frame.response[RESONANCE_RESPONSE - 1] = -12.0;
         writer.publish(&frame);
         assert_eq!(monitor.read(), Some(frame));
+        for kind in ResonanceKind::ALL {
+            frame.kind = kind;
+            frame.curve[RESONANCE_CURVE - 1] = [3.0, -4.0];
+            frame.curve_len = 9;
+            frame.trace[0] = [0.5, 0.25];
+            frame.trace_len = RESONANCE_CURVE;
+            frame.values[RESONANCE_VALUES - 1] = 1.5;
+            writer.publish(&frame);
+            assert_eq!(monitor.read(), Some(frame), "{kind:?}");
+        }
         assert!(!Arc::ptr_eq(&monitor, &writer.clone().monitor()));
     }
 

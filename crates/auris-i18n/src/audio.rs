@@ -245,6 +245,11 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Guitar Amp", "ギターアンプ"),
     ("Body Resonance", "ボディ共鳴"),
     ("Sympathetic Strings", "共鳴弦"),
+    ("Plate Reverb", "プレートリバーブ"),
+    ("Spring Reverb", "スプリングリバーブ"),
+    ("Tape Echo", "テープエコー"),
+    ("Tube Stage", "真空管ステージ"),
+    ("Rotary Speaker", "ロータリースピーカー"),
     ("Equalizer", "イコライザー"),
     ("Gain & Pan", "ゲイン & パン"),
     ("Limiter", "リミッター"),
@@ -255,6 +260,26 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
 
 /// Japanese versions of the one-line descriptions shown in the plugin browser.
 const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
+    (
+        "A steel sheet in a frame: a splash of bending waves, top first, then a bright field",
+        "枠に吊った鋼板。曲げ波が高い音から先に届くしぶきの後、明るい残響が続きます",
+    ),
+    (
+        "Three coiled springs in a tank: every echo a rising chirp, the drip of an amp's reverb",
+        "タンクに張った3本のコイルばね。反射のたびに上昇するチャープが鳴る、アンプのリバーブの響き",
+    ),
+    (
+        "A tape loop past three playback heads: wow, flutter, head bump and the oxide's loop",
+        "3つの再生ヘッドを通るテープループ。ワウ・フラッター、ヘッドバンプ、磁性体のヒステリシス",
+    ),
+    (
+        "One triode with its coupling and cathode capacitors, and an output transformer's iron",
+        "結合コンデンサとカソードコンデンサを含む三極管1段と、出力トランスの鉄心",
+    ),
+    (
+        "A turning horn over a turning drum: Doppler, sweep and the inertia between speeds",
+        "回転するホーンとドラム。ドップラー効果、音の回り込み、速度切り替えの慣性",
+    ),
     (
         "The box of a guitar, violin, cello, piano or speaker cabinet, as a bank of modes",
         "ギター・バイオリン・チェロ・ピアノ・スピーカーキャビネットの胴の共鳴をモードの集まりとして再現",
@@ -475,6 +500,19 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Strings", "弦の本数"),
     ("Lowest Octave", "最低オクターブ"),
     ("Brightness", "明るさ"),
+    ("Length", "長さ"),
+    ("Dispersion", "分散"),
+    ("Heads", "ヘッド"),
+    ("Wow", "ワウ"),
+    ("Flutter", "フラッター"),
+    ("Age", "テープの劣化"),
+    ("Valve", "真空管"),
+    ("Bias", "バイアス"),
+    ("Iron", "トランスの鉄心"),
+    ("Speed", "回転速度"),
+    ("Horn/Drum", "ホーン/ドラム"),
+    ("Mic Distance", "マイク距離"),
+    ("Mic Spread", "マイクの開き"),
     ("Vowel (Oo / Ah / Ee)", "母音（ウ／ア／イ）"),
     ("Voice Size", "声道サイズ"),
     ("Ensemble Variation", "合唱の揺らぎ"),
@@ -837,6 +875,17 @@ const CHOICES: &[(&str, &str)] = &[
     ("Major", "メジャー"),
     ("Minor", "マイナー"),
     ("Pentatonic", "ペンタトニック"),
+    ("Head 1", "ヘッド1"),
+    ("Heads 1+2", "ヘッド1+2"),
+    ("Heads 1+3", "ヘッド1+3"),
+    ("Heads 1+2+3", "ヘッド1+2+3"),
+    // Valve type numbers read the same in either language.
+    ("12AX7", "12AX7"),
+    ("12AT7", "12AT7"),
+    ("12AU7", "12AU7"),
+    ("Stop", "停止"),
+    ("Chorale", "コラール（低速）"),
+    ("Tremolo", "トレモロ（高速）"),
     // Pitch names read the same in either language.
     ("C", "C"),
     ("C#", "C#"),
