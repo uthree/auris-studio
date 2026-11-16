@@ -3031,15 +3031,11 @@ impl AurisApp {
             return Err("The open document changed; start a new conversation".into());
         }
         self.check_agent_edit(command)?;
-        let auris_session::live_agent::Command::InspectAudio {
-            start_bar,
-            bars,
-            track,
-        } = serde_json::from_value(command.clone()).map_err(|e| e.to_string())?
-        else {
-            return Err("Expected inspect_audio".into());
-        };
-        let job = self.session.audio_inspection_job(start_bar, bars, track)?;
+        let request = serde_json::from_value::<auris_session::live_agent::Command>(command.clone())
+            .map_err(|e| e.to_string())?
+            .inspection_request()
+            .ok_or("Expected inspect_audio")?;
+        let job = self.session.audio_inspection_job(&request)?;
         let link = self.agent_chat.link.as_mut().ok_or("The agent stopped")?;
         if link.inspection.is_some() {
             return Err("An inspection is already running".into());

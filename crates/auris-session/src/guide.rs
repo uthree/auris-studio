@@ -317,9 +317,13 @@
 //!
 //! The live agent's `inspect_audio` command snapshots the open document through
 //! [`crate::Session::audio_inspection_job`]. The UI checks permissions and creates the render;
-//! a cancellable worker renders at most eight bars/thirty seconds and measures mel power,
-//! sample peak/RMS and authored notes. A changed revision or a replaced conversation discards
-//! the result. Neither the document nor its files are written.
+//! a cancellable worker renders at most a minute and measures mel power, sample peak/RMS and
+//! authored notes. The range is named the way [`crate::modulation`] names its regions — a
+//! section and its occurrence, a bar range, or the whole song — through the same resolver, so
+//! both tools mean the same bars by `section: "サビ"`. The picture is framed separately: the
+//! piano roll fits the notes' octaves unless the model zooms it, and the mel bands can be spread
+//! over one register. A changed revision or a replaced conversation discards the result.
+//! Neither the document nor its files are written.
 //!
 //! `auris-toolbox` converts these measurements into an in-memory PNG and explicit captions.
 //! The agent sends numeric data to every model and adds the last two inspection images to

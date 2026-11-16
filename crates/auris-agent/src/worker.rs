@@ -463,11 +463,14 @@ impl Bridge {
             report.measurements.clone(),
         )?;
         let caption = format!(
-            "Historical inspection snapshot, revision {}: start_bar={}, bars={}, duration={} seconds. This may predate edits; inspect again to evaluate changed sound. Image 512x384: top 128 rows show mel power (high frequency at top, dark navy=-90 dB through purple and orange to pale yellow=0 dB); bottom 256 rows show authored notes (MIDI 127 at top, 0 at bottom). Time runs left to right across the selected range. Refer to the matching inspect_audio tool result for measurements and score data.",
+            "Historical inspection snapshot, revision {}: start_bar={}, bars={}, duration={} seconds. This may predate edits; inspect again to evaluate changed sound. Image 512x384: top 128 rows show mel power over {} Hz (high frequency at top, dark navy=-90 dB through purple and orange to pale yellow=0 dB); bottom 256 rows show authored notes (MIDI {} at top, {} at bottom). Time runs left to right across the selected range. Refer to the matching inspect_audio tool result for measurements and score data.",
             report.revision,
             report.measurements["start_bar"],
             report.measurements["bars"],
-            report.measurements["seconds"]
+            report.measurements["seconds"],
+            report.measurements["mel_hz_range"],
+            report.high_pitch,
+            report.low_pitch,
         );
         Ok(self.show_picture(presentation, caption))
     }
@@ -1362,6 +1365,8 @@ mod tests {
                 frequencies: vec![1000.0; 64],
                 mel_db: vec![-90.0; 128],
                 notes: vec![],
+                low_pitch: 0,
+                high_pitch: 127,
             };
             worker
                 .send(
@@ -1578,6 +1583,8 @@ mod tests {
                     frequencies: vec![1000.0; 64],
                     mel_db: vec![-90.0; 128],
                     notes: vec![],
+                    low_pitch: 0,
+                    high_pitch: 127,
                 })
                 .unwrap();
             // The transcript's copy of the picture, held for the call's result event once.
@@ -1649,14 +1656,9 @@ mod tests {
                 "edit" => {
                     let command: auris_session::live_agent::Command =
                         serde_json::from_value(event["command"].clone()).unwrap();
-                    let wire = if let auris_session::live_agent::Command::InspectAudio {
-                        start_bar,
-                        bars,
-                        track,
-                    } = command
-                    {
+                    let wire = if let Some(request) = command.inspection_request() {
                         let report = session
-                            .audio_inspection_job(start_bar, bars, track)
+                            .audio_inspection_job(&request)
                             .unwrap()
                             .run(&AtomicBool::new(false))
                             .unwrap();

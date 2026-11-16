@@ -2428,17 +2428,11 @@ fn execute(
     }
     let workspace_file = CANDIDATE_WORKSPACE_FILES.contains(&action);
     let vocal = matches!(action, "list_voices" | "set_singer_voice" | "sing");
-    let command = serde_json::from_value(command).map_err(|e| e.to_string())?;
-    if let auris_session::live_agent::Command::InspectAudio {
-        start_bar,
-        bars,
-        track,
-    } = command
-    {
+    let command: auris_session::live_agent::Command =
+        serde_json::from_value(command).map_err(|e| e.to_string())?;
+    if let Some(request) = command.inspection_request() {
         let _gate = audio_gate(cancel)?;
-        let report = session
-            .audio_inspection_job(start_bar, bars, track)?
-            .run(cancel)?;
+        let report = session.audio_inspection_job(&request)?.run(cancel)?;
         return serde_json::to_string(&report).map_err(|e| e.to_string());
     }
     if workspace_file {

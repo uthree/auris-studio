@@ -590,16 +590,33 @@ pub enum Command {
         #[schemars(range(min = 1, max = 16))]
         limit: usize,
     },
-    /// Inspect actual rendered audio and score without saving: mel image, levels, piano roll and up to 128 harmony_events including within-bar chord/key changes. Event tick is absolute (960 per quarter); bar/beat are 1-based, tick_in_beat uses the meter's beat, start_seconds is relative to the inspected range. Check harmony_events_truncated; inspect_project retains the full harmony maps. Start within the arrangement and request 1..8 bars fitting in 30 seconds. Visual interpretation is not listening. Use the same range before and after editing.
+    /// Inspect actual rendered audio and score without saving: mel image, levels, piano roll and up to 128 harmony_events including within-bar chord/key changes. Event tick is absolute (960 per quarter); bar/beat are 1-based, tick_in_beat uses the meter's beat, start_seconds is relative to the inspected range. Check harmony_events_truncated; inspect_project retains the full harmony maps. Choose the range: section (with instance for a repeat, default the first), start_bar with bars, or nothing for the whole song; at most 60 seconds. Frame the picture: the piano roll fits the notes' octaves unless low_pitch/high_pitch zoom it, and low_hz/high_hz spread the mel bands over one register. Visual interpretation is not listening. Use the same range before and after editing.
     InspectAudio {
-        /// First bar, starting at 1.
+        /// A section label exactly as inspect_project lists it, such as サビ.
+        section: Option<String>,
+        /// Which occurrence of section, from 1; default the first.
         #[schemars(range(min = 1))]
-        start_bar: u32,
-        /// Number of bars, 1..8; the range must fit in 30 seconds.
-        #[schemars(range(min = 1, max = 8))]
-        bars: u32,
+        instance: Option<usize>,
+        /// First bar of an explicit range, from 1; give bars with it.
+        #[schemars(range(min = 1))]
+        start_bar: Option<u32>,
+        /// Number of bars in the explicit range, 1..32; the range must fit in 60 seconds.
+        #[schemars(range(min = 1, max = 32))]
+        bars: Option<u32>,
         /// Optional track ID for solo routing; omit for the mix.
         track: Option<u64>,
+        /// Lowest MIDI pitch the piano roll shows; default fits the notes, a whole octave from C.
+        #[schemars(range(max = 127))]
+        low_pitch: Option<u8>,
+        /// Highest MIDI pitch the piano roll shows; default fits the notes, up to a B.
+        #[schemars(range(max = 127))]
+        high_pitch: Option<u8>,
+        /// Lowest frequency of the mel panel in Hz; default 0.
+        #[schemars(range(min = 0.0, max = 19_900.0))]
+        low_hz: Option<f64>,
+        /// Highest frequency of the mel panel in Hz, at least 100 above low_hz; default 20000.
+        #[schemars(range(min = 100.0, max = 20_000.0))]
+        high_hz: Option<f64>,
     },
     /// Measure how each register's loudness repeats, in beats: a modulation spectrogram of the rendered mix (or one track), each octave band's envelope resampled onto the score's beat grid and Fourier-transformed again. Peaks say what pulses and how often: 1 cycle per beat is a hit on every beat, 2 eighths in 4/4, 4 sixteenths, 3 triplets, per_bar once a bar. Depth is the envelope's swing as a fraction of its mean (0.1 faint, 0.5 clear, above 1 separated hits); short hits also show at whole multiples of their rate, so the slowest strong peak is the pulse. Choose the region: section (every occurrence, or one with instance), each_section to compare all sections from one render, start_bar with bars, or nothing for the whole song; at most 240 seconds per region. Returns a picture (bands low to high, beat rates on a log axis) and per-band peaks and rhythm depths. Measurement, not listening; changes nothing.
     ModulationSpectrum {
@@ -838,6 +855,35 @@ impl Command {
             _ => true,
         }
     }
+    /// The inspection an `inspect_audio` command asks for; `None` for every other command.
+    pub fn inspection_request(&self) -> Option<crate::audio_inspection::InspectionRequest> {
+        let Self::InspectAudio {
+            section,
+            instance,
+            start_bar,
+            bars,
+            track,
+            low_pitch,
+            high_pitch,
+            low_hz,
+            high_hz,
+        } = self
+        else {
+            return None;
+        };
+        Some(crate::audio_inspection::InspectionRequest {
+            section: section.clone(),
+            instance: *instance,
+            start_bar: *start_bar,
+            bars: *bars,
+            track: *track,
+            low_pitch: *low_pitch,
+            high_pitch: *high_pitch,
+            low_hz: *low_hz,
+            high_hz: *high_hz,
+        })
+    }
+
     /// Whether execution requires detached work and an owner-side continuation.
     pub fn needs_worker(&self) -> bool {
         matches!(
@@ -1367,13 +1413,12 @@ impl Session {
                     "style":project.style, "sections":project.sections, "lyrics":lyric_annotation::lyric_lines_json(project), "comments":comments::comments_json(project), "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
                 .to_string())
             }
-            Command::InspectAudio {
-                start_bar,
-                bars,
-                track,
-            } => {
+            Command::InspectAudio { .. } => {
+                let request = command
+                    .inspection_request()
+                    .ok_or("Expected inspect_audio")?;
                 let report = self
-                    .audio_inspection_job(start_bar, bars, track)?
+                    .audio_inspection_job(&request)?
                     .run(&std::sync::atomic::AtomicBool::new(false))?;
                 serde_json::to_string(&report).map_err(|e| e.to_string())
             }

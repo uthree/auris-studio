@@ -234,25 +234,25 @@ fn execute(
             return Err("Use inspect_audio; the host retains the candidate and renders its audition".into()),
         _ => {}
     }
-    if let Command::InspectAudio {
-        start_bar,
-        bars,
-        track,
-    } = command
-    {
+    if let Some(request) = command.inspection_request() {
         let report = session
-            .audio_inspection_job(start_bar, bars, track)
+            .audio_inspection_job(&request)
             .map_err(|e| e.to_string())?
             .run(cancel)
             .map_err(|e| e.to_string())?;
-        if track.is_none() {
+        if request.track.is_none() {
             if evidence.inspected_revision != Some(session.revision()) {
                 evidence.inspected_ranges.clear();
             }
             evidence.inspected_revision = Some(session.revision());
-            evidence
-                .inspected_ranges
-                .push((start_bar, start_bar + bars));
+            let bar = |key: &str| {
+                report.measurements[key]
+                    .as_u64()
+                    .and_then(|v| u32::try_from(v).ok())
+            };
+            if let (Some(start), Some(end)) = (bar("start_bar"), bar("end_bar")) {
+                evidence.inspected_ranges.push((start, end));
+            }
         }
         return Ok(json!({"event":"edit_result","ok":true,"inspection":report}));
     }
@@ -441,11 +441,8 @@ mod tests {
         execute(&mut session, mixer, &settings, &cancel, &mut evidence).unwrap();
         execute(
             &mut session,
-            Command::InspectAudio {
-                start_bar: 1,
-                bars: 8,
-                track: None,
-            },
+            serde_json::from_value(json!({"action":"inspect_audio","start_bar":1,"bars":8}))
+                .unwrap(),
             &settings,
             &cancel,
             &mut evidence,
@@ -454,11 +451,8 @@ mod tests {
         assert!(evidence.validate(&session, &request).is_err());
         execute(
             &mut session,
-            Command::InspectAudio {
-                start_bar: 9,
-                bars: 1,
-                track: None,
-            },
+            serde_json::from_value(json!({"action":"inspect_audio","start_bar":9,"bars":1}))
+                .unwrap(),
             &settings,
             &cancel,
             &mut evidence,

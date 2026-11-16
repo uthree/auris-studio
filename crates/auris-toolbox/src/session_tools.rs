@@ -83,14 +83,9 @@ pub(crate) fn definitions() -> Vec<ToolDefinition> {
                         Some(project) => crate::opened(&project)?,
                         None => crate::headless()?,
                     };
-                    if let auris_session::live_agent::Command::InspectAudio {
-                        start_bar,
-                        bars,
-                        track,
-                    } = command
-                    {
+                    if let Some(request) = command.inspection_request() {
                         let report = session
-                            .audio_inspection_job(start_bar, bars, track)?
+                            .audio_inspection_job(&request)?
                             .run(crate::cancellation::current().flag())?;
                         return serde_json::to_string(&report).map_err(|e| e.to_string());
                     }

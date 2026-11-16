@@ -37,8 +37,19 @@ pub fn present(report: &Inspection) -> Result<Presentation, String> {
             pixels.put_pixel(x, y, crate::palette::heat((level + 90.0) / 90.0));
         }
     }
-    for pitch in (0..128).step_by(12) {
-        let y = 128 + (127 - pitch) * 2;
+    let (low, high) = (u32::from(report.low_pitch), u32::from(report.high_pitch));
+    if low >= high || high > 127 {
+        return Err("Invalid piano roll pitch range".into());
+    }
+    let span = high - low + 1;
+    // Each semitone gets a band of rows; integer edges keep every band at least one row tall.
+    let rows = |pitch: u32| {
+        let top = 128 + (high - pitch) * 256 / span;
+        let bottom = (128 + (high - pitch + 1) * 256 / span).max(top + 1);
+        top..bottom
+    };
+    for pitch in (low..=high).filter(|pitch| pitch % 12 == 0) {
+        let y = rows(pitch).end - 1;
         for x in 0..512 {
             pixels.put_pixel(x, y, Rgb([40, 45, 54]));
         }
@@ -57,10 +68,12 @@ pub fn present(report: &Inspection) -> Result<Presentation, String> {
         }
         let first = ((note.start_seconds / seconds * 512.0).floor() as u32).min(511);
         let last = ((note.end_seconds / seconds * 512.0).ceil() as u32).clamp(first + 1, 512);
-        let y = 128 + u32::from(127 - note.pitch) * 2;
+        if !(low..=high).contains(&u32::from(note.pitch)) {
+            continue;
+        }
         for x in first..last {
-            for dy in 0..2 {
-                pixels.put_pixel(x, y + dy, Rgb(colours[note.track as usize % colours.len()]));
+            for y in rows(u32::from(note.pitch)) {
+                pixels.put_pixel(x, y, Rgb(colours[note.track as usize % colours.len()]));
             }
         }
     }
@@ -69,11 +82,12 @@ pub fn present(report: &Inspection) -> Result<Presentation, String> {
         .write_image(pixels.as_raw(), 512, 384, image::ExtendedColorType::Rgb8)
         .map_err(|e| e.to_string())?;
     let mut text = format!(
-        "Rendered audio inspection, document revision {}.\n{}\nImage: 512x384. Shared x axis is elapsed seconds 0..{seconds:.3}. Top y=0..127: mel power, high frequencies at top, low at bottom; colour ramp {ramp}, where 0 is -90 dB and 1.0 is 0 dB (pale yellow), fixed reference with no per-image normalization. Bottom y=128..383: authored piano roll, MIDI 127 at top, 0 at bottom; grey horizontal lines mark octave C notes. Track colour cycles by numeric ID modulo 6: blue, orange, green, purple, yellow, cyan.\nMel centre frequencies (low to high, Hz): {:?}.\nThis is measured audio plus a score image, not listening. Do not infer pleasing music, exact instruments, clipping, or masking from the picture alone. Use measurements for level claims; the score is before performance transforms. Harmony is stored project metadata, not detected from the audio. Bar-start harmony samples can omit mid-bar changes.",
+        "Rendered audio inspection, document revision {}.\n{}\nImage: 512x384. Shared x axis is elapsed seconds 0..{seconds:.3}. Top y=0..127: mel power over mel_hz_range, high frequencies at top, low at bottom; colour ramp {ramp}, where 0 is -90 dB and 1.0 is 0 dB (pale yellow), fixed reference with no per-image normalization. Bottom y=128..383: authored piano roll, MIDI {high} at top, {low} at bottom, {px:.1} px per semitone; a grey line runs along the bottom of each C, so the row just above it is that C. Notes outside the roll's pitches are left out of the picture (notes_outside_piano_roll). Track colour cycles by numeric ID modulo 6: blue, orange, green, purple, yellow, cyan.\nMel centre frequencies (low to high, Hz): {:?}.\nThis is measured audio plus a score image, not listening. Do not infer pleasing music, exact instruments, clipping, or masking from the picture alone. Use measurements for level claims; the score is before performance transforms. Harmony is stored project metadata, not detected from the audio. Bar-start harmony samples can omit mid-bar changes.",
         report.revision,
         report.measurements,
         report.frequencies,
         ramp = crate::palette::DESCRIPTION,
+        px = 256.0 / f64::from(span),
     );
     let score = serde_json::to_string(&report.notes.iter().take(64).collect::<Vec<_>>())
         .map_err(|e| e.to_string())?;
@@ -104,6 +118,8 @@ mod tests {
                 start_seconds: 0.5,
                 end_seconds: 1.0,
             }],
+            low_pitch: 0,
+            high_pitch: 127,
         };
         report.mel_db[64..].fill(0.0);
         let presentation = present(&report).unwrap();
@@ -117,5 +133,43 @@ mod tests {
         assert_eq!(image.get_pixel(130, 262).0, [255, 170, 80]);
         assert!(presentation.text.contains("revision 7"));
         assert!(!presentation.text.contains(&presentation.png));
+    }
+
+    #[test]
+    fn a_narrow_pitch_range_gives_each_semitone_more_rows_and_drops_notes_outside_it() {
+        let note = |pitch| auris_session::audio_inspection::ScoreNote {
+            track: 0,
+            pitch,
+            start_seconds: 0.0,
+            end_seconds: 2.0,
+        };
+        let report = Inspection {
+            revision: 1,
+            measurements: serde_json::json!({"seconds":2.0}),
+            columns: 1,
+            frequencies: vec![1000.0; 64],
+            mel_db: vec![-90.0; 64],
+            notes: vec![note(48), note(71), note(30)],
+            low_pitch: 48,
+            high_pitch: 71,
+        };
+        let presentation = present(&report).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&presentation.png)
+            .unwrap();
+        let image = image::load_from_memory(&bytes).unwrap().to_rgb8();
+        let blue = [90, 185, 255];
+        // 24 semitones over 256 rows: B4 owns the top rows, C3 the bottom ones.
+        assert_eq!(image.get_pixel(100, 128).0, blue);
+        assert_eq!(image.get_pixel(100, 137).0, blue);
+        assert_eq!(image.get_pixel(100, 383).0, blue);
+        assert_eq!(image.get_pixel(100, 250).0, [12, 16, 24]);
+        assert!(presentation.text.contains("MIDI 71 at top, 48 at bottom"));
+        let reversed = Inspection {
+            low_pitch: 71,
+            high_pitch: 48,
+            ..report
+        };
+        assert!(present(&reversed).is_err());
     }
 }
