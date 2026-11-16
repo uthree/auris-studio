@@ -660,7 +660,7 @@ pub enum Command {
         #[serde(default)]
         refresh: bool,
     },
-    /// Edit authored notes atomically across 1..16 clips at musical positions: bar is the 1-based song bar (as in add_clip, not counted from the clip), beat is 1-based within that bar in the meter's beat (quarter in 4/4, eighth in 6/8), fractional for subdivisions (2.5 offbeat, 2.25 sixteenth, 2.333 triplet), and length_beats counts the same beat. Attacks must sit on a straight subdivision down to an eighth of a beat or a triplet down to a sixth; anything between is refused with the nearest choices, so use swing/humanize performance for feel. Velocity is normalized 0..1, never MIDI 0..127. A replace edit's notes and a patch's add take one string with a note per line or per ';', `bar:beat pitch length [velocity]`, for example "5:1 C4 1 0.75; 5:2 E4 1/2; 5:2.5 G4 1/2" (pitch a MIDI number or a name where C4 = 60, length in beats or a/b, velocity carried from the line before and 0.8 at first), or objects such as {"pitch":60,"bar":5,"beat":1,"length_beats":1,"velocity":0.75}. Use input {"kind":"inline","edits":[...]} or {"kind":"file","source_path":"/absolute/notes.json"}, never both. Edits are objects, not JSON strings; expected_revision belongs at the top level. Read read_notes first and supply its revision. Patch indices address original storage order. Preserves recipes, curves, metadata on updated notes and performance. Identical replacements are no-ops.
+    /// Edit authored notes atomically across 1..16 clips at musical positions: bar is the 1-based song bar (as in add_clip, not counted from the clip), beat is 1-based within that bar in the meter's beat (quarter in 4/4, eighth in 6/8), fractional for subdivisions (2.5 offbeat, 2.25 sixteenth, 2.333 triplet), and length_beats counts the same beat. Attacks must sit on a straight subdivision down to an eighth of a beat or a triplet down to a sixth; anything between is refused with the nearest choices, so use swing/humanize performance for feel. Velocity is normalized 0..1, never MIDI 0..127; for example {"pitch":60,"bar":5,"beat":1,"length_beats":1,"velocity":0.75}. Use input {"kind":"inline","edits":[...]} or {"kind":"file","source_path":"/absolute/notes.json"}, never both. Edits are typed objects, not JSON strings; expected_revision belongs at the top level. Read read_notes first and supply its revision. Patch indices address original storage order. Preserves recipes, curves, metadata on updated notes and performance. Identical replacements are no-ops.
     EditNotes {
         /// Exact content revision from the latest read_notes or inspect_project, or from the
         /// answer of the last command that changed the document.
@@ -669,15 +669,11 @@ pub enum Command {
         #[schemars(length(min = 1, max = 16))]
         edits: Vec<note_editing::NoteEdit>,
     },
-    /// Read 1..8 MIDI clip pages in one call. Copy each clip from inspect_project tracks[].clips[].clip or add_clip's clip result, never tracks[].track or add_track's track result. Track IDs and clip IDs are different addresses. Each request is `{clip:<returned clip ID>,offset:0}`; offset defaults to zero. Returns one shared revision and clips containing up to 128 notes each, by default as text lines `#index bar:beat pitch length velocity` (pitch named with C4 = 60; then t=rank where the timeline rank differs from the index, off_grid for an attack between subdivisions, voice, lyric and ph where they apply), or with format json as objects. bar is the 1-based song bar (each clip also reports its bars `[first,last]`), beat is 1-based in the meter's beat and fractional within the bar, length in the same beats: the units edit_notes takes, so a line without its #index is an edit_notes line. velocity is 0..1; index is the zero-based storage index and the timeline rank orders notes by start. Pages remain in storage order so edits address the original indices; sort by `timeline_index` for lyric and phrase work. The rank uses start position then storage index as its tie-break. Follow each clip's next_offset; truncated is explicit. Do not edit between pages. Pass the top-level revision to edit_notes; stale indices are rejected. Every command that changes the document also answers with the new revision, so an empty clip from add_clip can take edit_notes without being read first. A clip that carries authored bend or controller lanes also lists them in authored_curves as `{kind,number,points}`, in the shape edit_clip_curve's curve takes; an absent field means the clip has none, so never sweep controller numbers to find them.
+    /// Read 1..8 MIDI clip pages in one call. Copy each clip from inspect_project tracks[].clips[].clip or add_clip's clip result, never tracks[].track or add_track's track result. Track IDs and clip IDs are different addresses. Each request is `{clip:<returned clip ID>,offset:0}`; offset defaults to zero. Returns one shared revision and clips containing up to 128 notes each with song bar, beat and length_beats in the same units edit_notes takes (each clip also reports its bars `[first,last]`; on_grid:false marks a stored attack between subdivisions), normalized velocity 0..1, original zero-based storage indices (`index`) and a stable timeline rank (`timeline_index`). Pages remain in storage order so edits address the original indices; sort by `timeline_index` for lyric and phrase work. The rank uses start position then storage index as its tie-break. Follow each clip's next_offset; truncated is explicit. Do not edit between pages. Pass the top-level revision to edit_notes; stale indices are rejected. Every command that changes the document also answers with the new revision, so an empty clip from add_clip can take edit_notes without being read first. A clip that carries authored bend or controller lanes also lists them in authored_curves as `{kind,number,points}`, in the shape edit_clip_curve's curve takes; an absent field means the clip has none, so never sweep controller numbers to find them.
     ReadNotes {
         /// Up to eight distinct clip pages; omitted offset starts at zero.
         #[schemars(length(min = 1, max = 8))]
         clips: Vec<note_editing::NoteRead>,
-        /// text (the default): one line per note, `#index bar:beat pitch length velocity`, the
-        /// same line edit_notes takes after its index; json: one object per note.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        format: Option<note_editing::NoteFormat>,
     },
     /// Add one empty track and return its numeric track ID. Pass kind as one string, for example {"name":"Drums","kind":"drum"}. Instrument and drum tracks start with a default sound; then use set_instrument with an ID from search_instruments. Use add_clip followed by edit_notes to write music. The host owns persistence.
     AddTrack {
@@ -1534,10 +1530,7 @@ impl Session {
                 let result = job.run(&std::sync::atomic::AtomicBool::new(false))?;
                 serde_json::to_string(&self.continue_listening(result)?).map_err(|e| e.to_string())
             }
-            Command::ReadNotes { clips, format } => self.agent_read_notes_as(
-                &clips,
-                format.unwrap_or_else(note_editing::NoteFormat::for_agents),
-            ),
+            Command::ReadNotes { clips } => self.agent_read_notes(&clips),
             Command::AddTrack { name, kind } => {
                 if name.trim().is_empty() {
                     return Err("A track needs a name".into());

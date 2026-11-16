@@ -450,7 +450,7 @@ mod tests {
         let read = || {
             serde_json::from_str::<Value>(&call(
                 "read_notes",
-                json!({"project":path,"clips":[{"clip":clip.0}],"format":"json"}),
+                json!({"project":path,"clips":[{"clip":clip.0}]}),
             ))
             .unwrap()
         };

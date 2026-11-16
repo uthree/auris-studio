@@ -44,138 +44,6 @@ pub struct AuthoredNote {
     pub velocity: f32,
 }
 
-/// The two ways a list of new notes may be written; only its schema is ever built.
-///
-/// Text is the compact one. As objects, every note repeats five key names and a velocity
-/// that is usually the one before it: about sixty-six bytes a note, two thirds of everything
-/// composers wrote in the workshop logs. A line says the same in about thirteen.
-#[derive(schemars::JsonSchema)]
-#[serde(untagged)]
-#[allow(dead_code)]
-enum NoteList {
-    /// One note per line or per `;`: `bar:beat pitch length [velocity]`, for example
-    /// `9:1 A3 1/2 0.8; 9:1.5 B3 1/2; 9:2 C4 1`. bar and beat as in the objects; pitch a MIDI
-    /// number or a name with octave (C4 = 60, F#3, Bb2); length in beats, decimal or a/b;
-    /// velocity 0..1, carried over from the note before when left out (0.8 for the first).
-    Text(String),
-    /// The same notes as objects.
-    Objects(Vec<AuthoredNote>),
-}
-
-/// Reads a [`NoteList`]: its text, or its objects.
-fn note_list<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<AuthoredNote>, D::Error> {
-    use serde::de::Error;
-    match serde_json::Value::deserialize(deserializer)? {
-        serde_json::Value::String(text) => parse_note_lines(&text).map_err(D::Error::custom),
-        value => serde_json::from_value(value).map_err(D::Error::custom),
-    }
-}
-
-/// The velocity a written note list starts from when its first line names none.
-const DEFAULT_TEXT_VELOCITY: f32 = 0.8;
-
-/// Parses `bar:beat pitch length [velocity]` lines; see [`NoteList::Text`].
-pub fn parse_note_lines(text: &str) -> Result<Vec<AuthoredNote>, String> {
-    let mut notes = Vec::new();
-    let mut velocity = DEFAULT_TEXT_VELOCITY;
-    for (number, line) in text
-        .split(['\n', ';'])
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .enumerate()
-    {
-        let wrong = |what: &str| {
-            format!(
-                "note {} \"{line}\": {what}; write bar:beat pitch length [velocity], e.g. 9:2.5 A3 1/2 0.8",
-                number + 1
-            )
-        };
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if !(3..=4).contains(&fields.len()) {
-            return Err(wrong("expected three or four fields"));
-        }
-        let (bar, beat) = fields[0]
-            .split_once(':')
-            .ok_or_else(|| wrong("the position needs bar:beat"))?;
-        let bar = bar
-            .parse()
-            .map_err(|_| wrong("the bar is not a whole number"))?;
-        let beat = beat
-            .parse()
-            .map_err(|_| wrong("the beat is not a number"))?;
-        let pitch = parse_pitch(fields[1])
-            .ok_or_else(|| wrong("the pitch is not 0..127 or a name like C4, F#3, Bb2"))?;
-        let length_beats = parse_beats(fields[2])
-            .ok_or_else(|| wrong("the length is not a number of beats or a/b"))?;
-        if let Some(written) = fields.get(3) {
-            velocity = written
-                .parse()
-                .ok()
-                .filter(|v: &f32| (0.0..=1.0).contains(v))
-                .ok_or_else(|| wrong("the velocity is not 0..1"))?;
-        }
-        notes.push(AuthoredNote {
-            pitch,
-            bar,
-            beat,
-            length_beats,
-            velocity,
-        });
-    }
-    Ok(notes)
-}
-
-/// A MIDI number, or a note name with its octave where C4 is 60.
-pub fn parse_pitch(text: &str) -> Option<u8> {
-    if let Ok(number) = text.parse::<u8>() {
-        return (number <= 127).then_some(number);
-    }
-    let mut chars = text.chars();
-    let step = match chars.next()?.to_ascii_uppercase() {
-        'C' => 0,
-        'D' => 2,
-        'E' => 4,
-        'F' => 5,
-        'G' => 7,
-        'A' => 9,
-        'B' => 11,
-        _ => return None,
-    };
-    let rest = chars.as_str();
-    let (shift, octave) = match rest.chars().next()? {
-        '#' | '♯' => (1, &rest[rest.chars().next()?.len_utf8()..]),
-        'b' | '♭' => (-1, &rest[rest.chars().next()?.len_utf8()..]),
-        _ => (0, rest),
-    };
-    let octave: i32 = octave.parse().ok()?;
-    u8::try_from((octave + 1) * 12 + step + shift)
-        .ok()
-        .filter(|pitch| *pitch <= 127)
-}
-
-/// The name [`parse_pitch`] reads back: sharps, with C4 as 60.
-pub fn pitch_name(pitch: u8) -> String {
-    const NAMES: [&str; 12] = [
-        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-    ];
-    format!(
-        "{}{}",
-        NAMES[usize::from(pitch % 12)],
-        i32::from(pitch / 12) - 1
-    )
-}
-
-/// Beats written as a decimal or as a fraction a/b.
-fn parse_beats(text: &str) -> Option<f64> {
-    let value = match text.split_once('/') {
-        Some((top, bottom)) => top.parse::<f64>().ok()? / bottom.parse::<f64>().ok()?,
-        None => text.parse().ok()?,
-    };
-    value.is_finite().then_some(value)
-}
-
 /// Partial changes to an existing note; all other metadata is preserved.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -359,17 +227,14 @@ pub enum NoteEdit {
         #[serde(default)]
         update: Vec<NoteUpdate>,
         /// New notes appended after removals and updates.
-        #[serde(default, deserialize_with = "note_list")]
-        #[schemars(with = "NoteList")]
+        #[serde(default)]
         add: Vec<AuthoredNote>,
     },
     /// Replace all authored notes; an empty array clears the clip.
     Replace {
         /// Stable MIDI clip ID.
         clip: u64,
-        /// Complete replacement; an empty list or string clears the clip.
-        #[serde(deserialize_with = "note_list")]
-        #[schemars(with = "NoteList")]
+        /// Complete replacement; an empty array clears the clip.
         notes: Vec<AuthoredNote>,
     },
 }
@@ -384,95 +249,8 @@ impl NoteEdit {
     }
 }
 
-/// How read_notes and edit_notes count time, said once in every read.
-/// How read_notes writes each clip's notes.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum NoteFormat {
-    /// One line per note, as edit_notes takes them: `#index bar:beat pitch length velocity`,
-    /// then `t=rank` where the timeline rank differs from the index, `off_grid`,
-    /// `voice=name`, `lyric="…"` and `ph=a.b` where they apply.
-    #[default]
-    Text,
-    /// One JSON object per note.
-    Json,
-}
-
-impl NoteFormat {
-    /// What read_notes gives when the call names no format: text, unless
-    /// `AURIS_AGENT_NOTE_FORMAT=json` asks for the objects (for comparing the two in trials).
-    pub fn for_agents() -> Self {
-        match std::env::var("AURIS_AGENT_NOTE_FORMAT").as_deref() {
-            Ok("json") => Self::Json,
-            _ => Self::Text,
-        }
-    }
-}
-
-/// `value` in at most `decimals` decimals, trailing zeros dropped: 2.5, 2.3333, 1.
-fn decimal_text(value: f64, decimals: usize) -> String {
-    let text = format!("{value:.decimals$}");
-    let text = if text.contains('.') {
-        text.trim_end_matches('0').trim_end_matches('.')
-    } else {
-        &text
-    };
-    if text.is_empty() || text == "-0" {
-        "0".into()
-    } else {
-        text.into()
-    }
-}
-
-/// One read_notes object as the line [`NoteFormat::Text`] describes.
-fn note_line(note: &serde_json::Value) -> String {
-    let number = |key: &str| note[key].as_f64().unwrap_or_default();
-    let mut line = format!(
-        "#{} {}:{} {} {} {}",
-        note["index"],
-        note["bar"],
-        decimal_text(number("beat"), 4),
-        pitch_name(note["pitch"].as_u64().unwrap_or_default().min(127) as u8),
-        decimal_text(number("length_beats"), 4),
-        decimal_text(number("velocity").clamp(0.0, 1.0), 2),
-    );
-    if note["timeline_index"] != note["index"] {
-        line.push_str(&format!(" t={}", note["timeline_index"]));
-    }
-    if note["on_grid"] == false {
-        line.push_str(" off_grid");
-    }
-    if let Some(voice) = note["drum_voice"].as_str() {
-        line.push_str(&format!(" voice={voice}"));
-    }
-    if let Some(lyric) = note.get("lyric") {
-        line.push_str(&format!(" lyric={lyric}"));
-    }
-    if let Some(phonemes) = note["phonemes"].as_array() {
-        let joined: Vec<&str> = phonemes
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .collect();
-        line.push_str(&format!(" ph={}", joined.join(".")));
-    }
-    line
-}
-
 impl Session {
-    /// [`Self::agent_read_notes_as`] with each note as a JSON object.
-    #[cfg(test)]
     pub(super) fn agent_read_notes(&self, requests: &[NoteRead]) -> Result<String, String> {
-        self.agent_read_notes_as(requests, NoteFormat::Json)
-    }
-
-    /// One page of notes from each requested clip, in `format`.
-    pub(super) fn agent_read_notes_as(
-        &self,
-        requests: &[NoteRead],
-        format: NoteFormat,
-    ) -> Result<String, String> {
         if requests.is_empty() || requests.len() > 8 {
             return Err("Supply 1..8 distinct clip pages".into());
         }
@@ -538,18 +316,6 @@ impl Session {
             let next = request.offset + notes.len();
             let first_bar = signatures.bar_of(clip.start);
             let last_bar = signatures.bar_of(clip.start + clip.length - Ticks(1));
-            let notes: serde_json::Value = match format {
-                NoteFormat::Json => notes.into(),
-                NoteFormat::Text => notes
-                    .iter()
-                    .map(note_line)
-                    .collect::<Vec<_>>()
-                    .join(
-                        "
-",
-                    )
-                    .into(),
-            };
             let mut page = serde_json::json!({"clip":request.clip,"bars":[first_bar,last_bar],"offset":request.offset,"notes":notes,"total":clip.notes.len(),
                 "next_offset":(next < clip.notes.len()).then_some(next),"truncated":next < clip.notes.len()});
             // The lanes that exist, so nobody reads all hundred and twenty-nine to find them.
@@ -724,105 +490,6 @@ pub(crate) fn candidate_project(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn note_lines_read_every_field_and_carry_the_velocity() {
-        let notes =
-            parse_note_lines("9:1 A3 1/2 0.7; 9:1.5 59 0.5\n\n 9:2 Bb2 1 ;10:2.333 C#4 1/3 1")
-                .unwrap();
-        let read: Vec<_> = notes
-            .iter()
-            .map(|n| (n.bar, n.beat, n.pitch, n.length_beats, n.velocity))
-            .collect();
-        assert_eq!(
-            read,
-            [
-                (9, 1.0, 57, 0.5, 0.7),
-                (9, 1.5, 59, 0.5, 0.7),
-                (9, 2.0, 46, 1.0, 0.7),
-                (10, 2.333, 61, 1.0 / 3.0, 1.0),
-            ]
-        );
-        assert_eq!(parse_note_lines("1:1 C4 1").unwrap()[0].velocity, 0.8);
-        assert!(parse_note_lines("").unwrap().is_empty());
-        for (line, says) in [
-            ("9 A3 1", "bar:beat"),
-            ("9:1 H3 1", "pitch"),
-            ("9:1 C4", "three or four"),
-            ("9:1 C4 1 80", "velocity"),
-            ("9:1 G#9 1", "pitch"),
-        ] {
-            let error = parse_note_lines(line).unwrap_err();
-            assert!(error.contains(says) && error.contains("note 1"), "{error}");
-        }
-        for pitch in 0..=127 {
-            assert_eq!(parse_pitch(&pitch_name(pitch)), Some(pitch));
-        }
-    }
-
-    #[test]
-    fn edit_notes_takes_text_or_objects_and_read_notes_gives_text_back() {
-        let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
-        let track = session.add_default_instrument_track("Lead").unwrap();
-        let clip = session
-            .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::QUARTER * 8)
-            .unwrap();
-        let edit = |session: &mut Session, notes: serde_json::Value| {
-            let revision = session.agent_document_revision().unwrap();
-            let edits: Vec<NoteEdit> = serde_json::from_value(
-                serde_json::json!([{"kind":"replace","clip":clip.0,"notes":notes}]),
-            )
-            .unwrap();
-            session.agent_edit_notes(&revision, edits).unwrap();
-            session.project().midi_clip(clip).unwrap().1.notes.clone()
-        };
-        let as_text = edit(
-            &mut session,
-            "1:1 C4 1 0.75; 1:2 E4 1/2; 1:2.5 G4 1/2".into(),
-        );
-        let as_objects = edit(
-            &mut session,
-            serde_json::json!([
-                {"pitch":60,"bar":1,"beat":1,"length_beats":1,"velocity":0.75},
-                {"pitch":64,"bar":1,"beat":2,"length_beats":0.5,"velocity":0.75},
-                {"pitch":67,"bar":1,"beat":2.5,"length_beats":0.5,"velocity":0.75}
-            ]),
-        );
-        assert_eq!(as_text, as_objects);
-        let page: serde_json::Value = serde_json::from_str(
-            &session
-                .agent_read_notes_as(
-                    &[NoteRead {
-                        clip: clip.0,
-                        offset: 0,
-                    }],
-                    NoteFormat::Text,
-                )
-                .unwrap(),
-        )
-        .unwrap();
-        assert!(page.get("time").is_none());
-        let text = page["clips"][0]["notes"].as_str().unwrap();
-        assert_eq!(
-            text,
-            "#0 1:1 C4 1 0.75\n#1 1:2 E4 0.5 0.75\n#2 1:2.5 G4 0.5 0.75"
-        );
-        // A line read back, its index dropped, writes the same note again.
-        let lines: Vec<_> = text
-            .lines()
-            .map(|line| line.split_once(' ').unwrap().1)
-            .collect();
-        assert_eq!(edit(&mut session, lines.join("\n").into()), as_objects);
-        // An unreadable line is refused before anything changes, naming the line.
-        let revision = session.agent_document_revision().unwrap();
-        let error = serde_json::from_value::<Vec<NoteEdit>>(
-            serde_json::json!([{"kind":"replace","clip":clip.0,"notes":"1:1 C4 1\n1:x E4 1"}]),
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(error.contains("note 2"), "{error}");
-        assert_eq!(session.agent_document_revision().unwrap(), revision);
-    }
 
     #[test]
     fn inspection_and_wrong_track_id_distinguish_the_clip_address() {
