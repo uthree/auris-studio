@@ -262,6 +262,7 @@ actions!(
         VisualizerOscilloscopeGain,
         VisualizerStereoAutoGain,
         VisualizerLoudnessReset,
+        VisualizerChromaOrder,
         /// Move keyboard focus to the next panel.
         FocusNextPane,
         /// Move keyboard focus to the previous panel.
@@ -636,6 +637,7 @@ bindable! {
         "visualizer.oscilloscope_gain", GroupAnalysis, VisualizerDisplayGain, "" => VisualizerOscilloscopeGain;
         "visualizer.stereo_auto_gain", GroupAnalysis, VisualizerStereoAutoGain, "" => VisualizerStereoAutoGain;
         "visualizer.loudness_reset", GroupAnalysis, VisualizerLoudnessReset, "" => VisualizerLoudnessReset;
+        "visualizer.chroma_order", GroupAnalysis, VisualizerChromaOrder, "" => VisualizerChromaOrder;
         "analysis.results", GroupAnalysis, AnalysisResults, "" => OpenAnalysisResults;
     }
 

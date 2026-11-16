@@ -191,14 +191,17 @@ pub fn bands_from_bins(bins: &[f32], sample_rate: f64, low_hz: f64, high_hz: f64
     }
 }
 
-/// [`bands_from_bins`], with a band too narrow to hold a bin of its own given the level of the
-/// bin nearest its centre.
+/// [`bands_from_bins`], with a band too narrow to hold a bin of its own read off the straight
+/// line between the two bins either side of its centre.
 ///
-/// For a bar display, where an empty band is a hole in the floor rather than a quiet band. At the
-/// bottom of the range a sixth of an octave is a few hertz and a bin is tens of them, so a bin
-/// covers several bands; repeating its reading across them says what the window measured there,
-/// at the resolution it measured it, and invents nothing a neighbour did not.
-pub fn bands_from_bins_nearest(
+/// For a curve, and for a spectrogram drawn finer than the window resolves. At the bottom of the
+/// range a twenty-fourth of an octave is a hertz or two and a bin is tens of them, so several
+/// bands share every gap between bins. Repeating the nearest bin across them draws a staircase
+/// whose risers are an artefact of where the bins happen to fall; joining the bins with straight
+/// lines draws what the window measured, at the resolution it measured it, without the steps.
+/// The interpolation is in decibels, as the display is, and it adds no level that neither
+/// neighbour had.
+pub fn bands_from_bins_interpolated(
     bins: &[f32],
     sample_rate: f64,
     low_hz: f64,
@@ -229,10 +232,60 @@ pub fn bands_from_bins_nearest(
         if holds_a_bin {
             continue;
         }
-        let centre = (from * to).sqrt();
-        let nearest = ((centre / hz_per_bin).round() as usize).min(bins.len() - 1);
-        *level = bins[nearest];
+        let at = (from * to).sqrt() / hz_per_bin;
+        let below = (at.floor() as usize).min(bins.len() - 1);
+        let above = (below + 1).min(bins.len() - 1);
+        let fraction = (at - below as f64).clamp(0.0, 1.0) as f32;
+        *level = bins[below] + (bins[above] - bins[below]) * fraction;
     }
+}
+
+/// Frequency of A above middle C, which names every other pitch class.
+const CONCERT_A_HZ: f64 = 440.0;
+
+/// How much of each of the twelve pitch classes is in a spectrum: a chromagram's column.
+///
+/// `bins` are levels in dBFS, as [`SpectrumAnalyzer::magnitudes`] fills them, and the result is
+/// power, linear, with C first and B last, in twelve-tone equal temperament from A = 440 Hz.
+/// Octaves are folded together, which is the point: a chord reads the same in any voicing, and
+/// the bass's root and the melody's note land in the same row.
+///
+/// A bin belongs to the semitone nearest it and is weighted by a raised cosine of how far from
+/// that semitone's centre it sits, so a tone in tune counts fully and the skirt of its window
+/// halfway to the next semitone counts for nothing — the alternative, sharing every bin between
+/// its two neighbours, gives every pure tone a ghost a semitone away.
+///
+/// Only bins between `low_hz` and `high_hz` count, and of those only the ones narrower than a
+/// semitone: below that a bin spans two pitch classes and assigning it to either is a guess. How
+/// low that is depends on the window, which is why a chromagram wants a longer one than a
+/// spectrum does.
+pub fn chroma_from_bins(bins: &[f32], sample_rate: f64, low_hz: f64, high_hz: f64) -> [f32; 12] {
+    let mut chroma = [0.0f32; 12];
+    if bins.len() < 2 || sample_rate <= 0.0 || low_hz <= 0.0 || high_hz <= low_hz {
+        return chroma;
+    }
+    let hz_per_bin = sample_rate / 2.0 / (bins.len() - 1) as f64;
+    // A semitone at `f` is `f * (2^(1/12) - 1)` wide; below this frequency a bin is wider.
+    let resolvable_from = hz_per_bin / (2f64.powf(1.0 / 12.0) - 1.0);
+    let from = low_hz.max(resolvable_from);
+    let first = (from / hz_per_bin).ceil() as usize;
+    for (index, &level) in bins.iter().enumerate().skip(first.max(1)) {
+        let frequency = index as f64 * hz_per_bin;
+        if frequency > high_hz {
+            break;
+        }
+        if level <= SILENCE_DB {
+            continue;
+        }
+        // MIDI note 69 is A4; 60 is C4, so the remainder mod 12 counts from C.
+        let note = 69.0 + 12.0 * (frequency / CONCERT_A_HZ).log2();
+        let nearest = note.round();
+        let distance = (note - nearest) as f32;
+        let weight = (std::f32::consts::PI * distance).cos().powi(2);
+        let class = (nearest as i64).rem_euclid(12) as usize;
+        chroma[class] += weight * 10.0f32.powf(level / 10.0);
+    }
+    chroma
 }
 
 /// A sine at `frequency`, for tests and for anyone measuring a filter.
@@ -378,22 +431,113 @@ mod tests {
     }
 
     #[test]
-    fn narrow_bands_take_the_nearest_bin_and_wide_ones_keep_their_own() {
-        // Bins 100 Hz apart, and sixty bands across 20 Hz to 20 kHz: below a few hundred hertz a
-        // band is narrower than a bin.
+    fn narrow_bands_are_joined_by_straight_lines_and_wide_ones_keep_their_own() {
+        // Bins 100 Hz apart, and 240 bands across 20 Hz to 20 kHz: below a few kilohertz a band
+        // is narrower than a bin.
         let bins: Vec<f32> = (0..=240).map(|bin| -0.1 * bin as f32).collect();
-        let mut sparse = [0.0; 60];
-        let mut filled = [0.0; 60];
+        let mut sparse = [0.0; 240];
+        let mut joined = [0.0; 240];
         bands_from_bins(&bins, 48_000.0, 20.0, 20_480.0, &mut sparse);
-        bands_from_bins_nearest(&bins, 48_000.0, 20.0, 20_480.0, &mut filled);
-        assert!(sparse.iter().take(20).any(|&level| level == SILENCE_DB));
-        assert!(filled.iter().all(|&level| level > SILENCE_DB));
-        // A band around 50 Hz has the 0 Hz or 100 Hz bin as its nearest; one around 1 kHz has
-        // bins of its own and keeps the loudest of them, as it always did.
-        for (band, (&sparse, &filled)) in sparse.iter().zip(&filled).enumerate() {
+        bands_from_bins_interpolated(&bins, 48_000.0, 20.0, 20_480.0, &mut joined);
+        assert!(sparse.iter().take(80).any(|&level| level == SILENCE_DB));
+        assert!(joined.iter().all(|&level| level > SILENCE_DB));
+        for (band, (&sparse, &joined)) in sparse.iter().zip(&joined).enumerate() {
             if sparse > SILENCE_DB {
-                assert_eq!(sparse, filled, "band {band} held a bin and was changed");
+                assert_eq!(sparse, joined, "band {band} held a bin and was changed");
             }
         }
+        // The bins fall a tenth of a decibel per bin, so an interpolated band reads its centre
+        // frequency's fraction of the way down: no steps, and nothing the bins did not say.
+        let centre = |band: usize| 20.0 * 1024f64.powf((band as f64 + 0.5) / 240.0);
+        for (band, &level) in joined.iter().enumerate().take(60) {
+            let expected = -0.1 * (centre(band) / 100.0) as f32;
+            assert!(
+                (level - expected).abs() < 1e-3,
+                "band {band}: {level} against {expected}"
+            );
+        }
+        // Monotonic bins give a monotonic curve: the line has no risers in it.
+        assert!(joined.windows(2).all(|pair| pair[1] <= pair[0] + 1e-6));
+    }
+
+    fn chroma_of(frequencies: &[f64]) -> [f32; 12] {
+        let rate = 48_000.0;
+        let mut analyzer = SpectrumAnalyzer::new(8192);
+        let mut signal = vec![0.0f32; 8192];
+        for &frequency in frequencies {
+            for (sample, tone) in signal.iter_mut().zip(sine(frequency, rate, 0.25, 8192)) {
+                *sample += tone;
+            }
+        }
+        analyzer.push(&signal);
+        let mut bins = vec![0.0; analyzer.bin_count()];
+        analyzer.magnitudes(&mut bins);
+        chroma_from_bins(&bins, rate, 100.0, 5_000.0)
+    }
+
+    fn loudest_class(chroma: &[f32; 12]) -> usize {
+        loudest(chroma)
+    }
+
+    #[test]
+    fn a_tone_lands_in_its_own_pitch_class_in_any_octave() {
+        // A2, A4 and A6, then C3, middle C and C6.
+        for frequency in [110.0, 440.0, 1760.0] {
+            assert_eq!(loudest_class(&chroma_of(&[frequency])), 9, "{frequency} Hz");
+        }
+        for frequency in [130.81, 261.63, 1046.5] {
+            assert_eq!(loudest_class(&chroma_of(&[frequency])), 0, "{frequency} Hz");
+        }
+    }
+
+    #[test]
+    fn a_pure_tone_leaves_its_neighbours_nearly_empty() {
+        let chroma = chroma_of(&[440.0]);
+        let a = chroma[9];
+        for (class, &power) in chroma.iter().enumerate() {
+            if class != 9 {
+                // Twenty decibels down at least: no ghost a semitone away.
+                assert!(power < a * 0.01, "class {class}: {power} against A's {a}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_major_triad_lights_its_three_classes_above_the_rest() {
+        // C4, E4, G4.
+        let chroma = chroma_of(&[261.63, 329.63, 392.0]);
+        let quietest_of_chord = [0, 4, 7]
+            .iter()
+            .map(|&class| chroma[class])
+            .fold(f32::INFINITY, f32::min);
+        for class in [1, 2, 3, 5, 6, 8, 9, 10, 11] {
+            assert!(
+                chroma[class] < quietest_of_chord * 0.1,
+                "class {class}: {} against {quietest_of_chord}",
+                chroma[class]
+            );
+        }
+    }
+
+    #[test]
+    fn silence_and_tones_outside_the_range_have_no_chroma() {
+        assert!(chroma_of(&[]).iter().all(|&power| power == 0.0));
+        // 60 Hz is below the 100 Hz floor, 8 kHz above the 5 kHz ceiling.
+        let outside = chroma_of(&[60.0, 8_000.0]);
+        let inside = chroma_of(&[440.0]);
+        assert!(outside.iter().sum::<f32>() < inside[9] * 1e-3);
+    }
+
+    #[test]
+    fn bins_wider_than_a_semitone_are_left_out() {
+        // At 48 kHz a 1024-sample window's bins are 47 Hz apart, wider than a semitone below
+        // about 800 Hz: A4 cannot be told from its neighbours there and so is not counted.
+        let rate = 48_000.0;
+        let mut analyzer = SpectrumAnalyzer::new(1024);
+        analyzer.push(&sine(440.0, rate, 0.25, 1024));
+        let mut bins = vec![0.0; analyzer.bin_count()];
+        analyzer.magnitudes(&mut bins);
+        let chroma = chroma_from_bins(&bins, rate, 100.0, 5_000.0);
+        assert!(chroma.iter().all(|&power| power < 1e-6), "{chroma:?}");
     }
 }
