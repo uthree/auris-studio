@@ -492,6 +492,9 @@ pub struct Session {
     ///
     /// See [`Self::rebuild_graph`]; [`Self::poll`] finishes it.
     graph_deferred_since: Option<std::time::Instant>,
+    /// How many graphs have been built, for tests that hold a document change to one rebuild.
+    #[cfg(test)]
+    graph_builds: usize,
     /// Whether the meter has moved since the render graph was built.
     ///
     /// The engine holds a copy of the signature map for one purpose — accenting the metronome's
@@ -827,6 +830,8 @@ impl Session {
             listening: Default::default(),
             needs_rebuild: false,
             graph_deferred_since: None,
+            #[cfg(test)]
+            graph_builds: 0,
             meter_is_stale: false,
             last_record: None,
             path: None,
@@ -1812,6 +1817,10 @@ impl Session {
 
     /// Builds the render graph and hands it to the audio thread, now.
     fn build_graph(&mut self) {
+        #[cfg(test)]
+        {
+            self.graph_builds += 1;
+        }
         // Whatever the meter now is, this is the copy the engine will be holding.
         self.meter_is_stale = false;
         let rate = self.engine.sample_rate();
@@ -1932,6 +1941,16 @@ impl Session {
         self.rebuild_graph();
         // The loop lives in the audio thread's transport and only `SetLoop` moves it, so a
         // document swap that does not republish leaves playback wrapping the old range.
+        self.publish_loop();
+    }
+
+    /// [`Self::replace_project`] for a document that also takes this installation's SoundFonts,
+    /// rebuilt once with them in.
+    fn replace_project_with_library(&mut self, project: Project) {
+        self.trace_edit_boundary("replace_project");
+        self.adopt_project(project);
+        self.install_library_fonts();
+        self.rebuild_graph();
         self.publish_loop();
     }
 
