@@ -851,6 +851,7 @@ async fn receive_turn_tracked(
             }
             "result" => {
                 recovery.terminal_result = true;
+                bridge.emit(usage_event(&message));
                 if message["is_error"] == true || message["subtype"] != "success" {
                     return Err(format!(
                         "Claude Code turn failed: {}",
@@ -879,9 +880,40 @@ async fn receive_turn_tracked(
     }
 }
 
+/// What a turn cost, from Claude Code's closing `result` message, in the shape every
+/// backend reports. Claude counts cached and freshly cached input apart from the rest and
+/// its thinking inside the output, so `input` is the sum and `reasoning` is unknown.
+fn usage_event(result: &Value) -> Value {
+    let usage = &result["usage"];
+    let count = |key: &str| usage[key].as_u64().unwrap_or(0);
+    let cached = count("cache_read_input_tokens");
+    let written = count("cache_creation_input_tokens");
+    json!({
+        "event": "usage",
+        "input": count("input_tokens") + cached + written,
+        "cached_input": cached,
+        "cache_write": written,
+        "output": count("output_tokens"),
+        "reasoning": null,
+        "cost_usd": result["total_cost_usd"],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_turn_reports_its_tokens_with_cached_input_counted_as_input() {
+        let event = usage_event(&json!({"type":"result","total_cost_usd":0.25,"usage":{
+            "input_tokens":10,"cache_read_input_tokens":900,"cache_creation_input_tokens":90,
+            "output_tokens":40}}));
+        assert_eq!(event["input"], 1000);
+        assert_eq!(event["cached_input"], 900);
+        assert_eq!(event["cache_write"], 90);
+        assert_eq!(event["output"], 40);
+        assert_eq!(event["cost_usd"], 0.25);
+    }
 
     fn test_history(bridge: &Bridge, path: Option<PathBuf>) -> Opened {
         Opened::open(bridge, path, false, None).unwrap()

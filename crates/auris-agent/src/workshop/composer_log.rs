@@ -3,7 +3,8 @@
 //! The conversation keeps only per-tool counts; this is the account of what was actually asked
 //! and answered. `composer-log.jsonl` in the candidate's folder holds one JSON object per line:
 //! the assignment, each call with its arguments, each result with its text, refused permissions,
-//! the model's prose between calls and how the attempt ended. Long values are cut and the file
+//! the model's prose between calls, the tokens each turn cost (input with its cached part,
+//! output and, where the backend says, reasoning) and how the attempt ended. Long values are cut and the file
 //! stops growing at [`LIMIT`], so a runaway candidate cannot fill the disk. It lives and dies
 //! with the candidate's folder, so deleting the conversation deletes it. Writing is best effort:
 //! a log that cannot be written never fails the music.
@@ -73,6 +74,14 @@ impl Log {
                 if self.results.insert(id.clone()) {
                     self.write(json!({"kind":"result","id":id,"tool":event["tool"],"ok":event["ok"],"text":cut(event["text"].as_str().unwrap_or_default())}));
                 }
+            }
+            "usage" => {
+                let mut entry = event.clone();
+                if let Some(entry) = entry.as_object_mut() {
+                    entry.remove("event");
+                    entry.insert("kind".into(), json!("usage"));
+                }
+                self.write(entry);
             }
             "answer" => {
                 self.flush_prose();
@@ -187,6 +196,7 @@ mod tests {
         }
         log.observe(&json!({"event":"result","call_id":"a","tool":"inspect_project","ok":false,"text":"x".repeat(TEXT + 5)}));
         log.permission("cli_command", false);
+        log.observe(&json!({"event":"usage","input":1000,"cached_input":900,"output":40}));
         log.observe(&json!({"event":"answer","text":"done"}));
         drop(log);
         let lines = lines(folder.path());
@@ -199,9 +209,12 @@ mod tests {
                 "call",
                 "result",
                 "permission",
+                "usage",
                 "answer"
             ]
         );
+        assert_eq!(lines[5]["input"], 1000);
+        assert!(lines[5].get("event").is_none());
         assert_eq!(lines[1]["text"], "Inspecting first.");
         assert_eq!(lines[3]["ok"], false);
         assert!(
