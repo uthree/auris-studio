@@ -394,9 +394,7 @@ pub(super) fn bass(
     let ground = Ground::pick(&mut bar_stream(frame, part, section, "ground", 0), busy);
     // The dial as it was set, for the two things it switches rather than scales.
     let dial = part.density.unwrap_or_else(|| settings.mood.density());
-    // Whether the band pushes this stretch's chord changes, and whether the chord in hand was
-    // pushed into by the one before it. A rhythm somebody wrote says where its notes are.
-    let pushing = part.rhythm.is_none() && band_pushes(section, settings.mood.syncopation);
+    // Whether the chord in hand was pushed into by the one before it. See `band_pushes`.
     let mut pushed_in = false;
 
     for (position_in_section, event) in section.events.iter().enumerate() {
@@ -529,13 +527,17 @@ pub(super) fn bass(
         // comp strikes the same change at the same moment — see `band_pushes` — and a bass
         // that waited for the line would be restriking the old root under the new chord. A
         // walk does not push: it is on every beat by definition.
-        let pushes_out = pushing
+        // A rhythm somebody wrote says where its notes are.
+        let pushes_out = part.rhythm.is_none()
             && figure != BassFigure::Walk
             && steps > half
             && section
                 .events
                 .get(position_in_section + 1)
-                .is_some_and(|next| next.start == event.end())
+                .is_some_and(|next| {
+                    next.start == event.end()
+                        && band_pushes(&event.chord, &next.chord, settings.mood.syncopation)
+                })
             && !section.continues_chord(position_in_section + 1);
         let varies = part.rhythm.is_none()
             && (bar % PICKUP_EVERY == PICKUP_EVERY - 1 || closing)

@@ -718,10 +718,10 @@ mod tests {
     }
 
     #[test]
-    fn two_clips_over_one_stretch_push_the_same_changes_whatever_their_seeds() {
+    fn two_clips_over_the_same_chords_push_the_same_changes_however_they_are_cut() {
         // A clip is one part with a seed of its own, and a comp that drew its push from that
         // seed pushed alone: the keyboard half a beat early over a bass restriking the old
-        // root on the line. Whether a stretch pushes is read off the stretch.
+        // root on the line. Whether a change is pushed is read off the change.
         const HALF_BEAT: Ticks = Ticks(480);
         // The bar lines a part arrives at early: a note begun half a beat before the line and
         // held across it, with nothing struck on the line itself.
@@ -743,7 +743,7 @@ mod tests {
             "| ii | V | I | vi |",
             "| I | IV | V | IV |",
         ];
-        let mut stretches_that_push = 0;
+        let mut pushed_changes = 0;
         for chart in charts {
             let mut harmony = Harmony::in_key(Key::parse("C major").unwrap());
             harmony.stamp(&Chart::parse(chart).unwrap(), Ticks::ZERO, 8, four_four());
@@ -754,7 +754,26 @@ mod tests {
                 write_phrase(&harmony, Ticks::ZERO, BAR * 8, four_four(), &recipe, None)
             };
             let band = pushed(&write(ClipPreset::Chords, 0, 1.0), 8);
-            stretches_that_push += usize::from(!band.is_empty());
+            pushed_changes += band.len();
+            // The same eight bars as two clips of four: every change inside either clip is
+            // pushed or not as it was in the one clip of eight. The change at the cut is
+            // nobody's — neither clip holds both its chords.
+            let half = |from: i64| {
+                let mut recipe = ClipRecipe::new(ClipPreset::Chords, 5);
+                recipe.style = Some(crate::PerformanceStyle::Rock);
+                recipe.syncopation = 1.0;
+                let notes = write_phrase(&harmony, BAR * from, BAR * 4, four_four(), &recipe, None);
+                pushed(&notes, 4)
+                    .into_iter()
+                    .map(|line| line + from)
+                    .collect::<Vec<_>>()
+            };
+            let cut: Vec<i64> = half(0).into_iter().chain(half(4)).collect();
+            let uncut: Vec<i64> = band.iter().copied().filter(|line| *line != 4).collect();
+            assert_eq!(
+                cut, uncut,
+                "{chart}: two clips of four pushed other changes"
+            );
             for seed in 1..12u64 {
                 assert_eq!(
                     pushed(&write(ClipPreset::Chords, seed, 1.0), 8),
@@ -798,11 +817,11 @@ mod tests {
                 assert!(pushed(&write(ClipPreset::Bass, seed * 31, 0.0), 8).is_empty());
             }
         }
-        // Six stretches in ten at the top of the dial; of these six, some and not all.
+        // Six changes in ten at the top of the dial: some of these forty-two, and not all.
         assert!(
-            (1..charts.len()).contains(&stretches_that_push),
-            "{stretches_that_push} of {} stretches push",
-            charts.len()
+            (8..36).contains(&pushed_changes),
+            "{pushed_changes} of {} changes are pushed",
+            charts.len() * 7
         );
     }
 
