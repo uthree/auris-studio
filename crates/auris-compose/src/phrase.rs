@@ -73,6 +73,12 @@ pub fn kit_reach(preset: ClipPreset) -> &'static [KitReach] {
                 voice: DrumVoice::Percussion,
                 hand: Role::Snare,
             },
+            KitReach {
+                name: "open-hat",
+                role: DrumRole::OpenHat,
+                voice: DrumVoice::OpenHat,
+                hand: Role::Hat,
+            },
         ],
         _ => &[],
     }
@@ -157,6 +163,7 @@ pub fn write_phrase(
 struct Reach {
     crash: Option<u8>,
     tom: Option<u8>,
+    open_hat: Option<u8>,
 }
 
 /// What `voice` of the split kit `kit` reaches for.
@@ -187,6 +194,7 @@ fn reached(kit: &ClipRecipe, voice: &auris_core::DrumVoiceRecipe) -> Reach {
         let note = map.voices.get(&extra.role).copied();
         match extra.voice {
             DrumVoice::Crash => reach.crash = note,
+            DrumVoice::OpenHat => reach.open_hat = note,
             _ => reach.tom = note,
         }
     }
@@ -335,6 +343,7 @@ fn write_reaching(
                 };
                 match reach.voice {
                     DrumVoice::Crash => part.crash = note,
+                    DrumVoice::OpenHat => part.open_hat = note,
                     _ => part.tom = note,
                 }
             }
@@ -342,7 +351,10 @@ fn write_reaching(
             // says it may.
             if let Some(reach) = reach {
                 match role {
-                    Role::Hat => part.crash = reach.crash,
+                    Role::Hat => {
+                        part.crash = reach.crash;
+                        part.open_hat = reach.open_hat;
+                    }
                     Role::Snare => part.tom = reach.tom,
                     _ => {}
                 }
@@ -378,12 +390,15 @@ fn write_reaching(
             draft.notes.into_iter().map(move |note| {
                 // A drum the part reached for is a voice of its own: a kit map moves a crash
                 // by its role, and one named `hat` would be moved onto the hat.
-                let reached =
-                    [(part.crash, "crash"), (part.tom, "tom")]
-                        .into_iter()
-                        .find(|(reach, _)| {
-                            *reach == Some(note.pitch) && part.drum_note() != Some(note.pitch)
-                        });
+                let reached = [
+                    (part.crash, "crash"),
+                    (part.tom, "tom"),
+                    (part.open_hat, "open-hat"),
+                ]
+                .into_iter()
+                .find(|(reach, _)| {
+                    *reach == Some(note.pitch) && part.drum_note() != Some(note.pitch)
+                });
                 let voice = match reached {
                     _ if !drums => String::new(),
                     Some((_, reach)) => reach.to_string(),
@@ -602,7 +617,10 @@ mod tests {
         // reach for at a join.
         let kit = pitches(ClipPreset::Drums);
         assert!([36, 38, 42].iter().all(|pitch| kit.contains(pitch)));
-        assert!(kit.iter().all(|pitch| [36, 38, 42, 47, 49].contains(pitch)));
+        assert!(
+            kit.iter()
+                .all(|pitch| [36, 38, 42, 46, 47, 49].contains(pitch))
+        );
     }
 
     #[test]

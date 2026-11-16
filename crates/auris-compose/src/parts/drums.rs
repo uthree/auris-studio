@@ -38,6 +38,12 @@ pub(super) fn drums(
         .clone()
         .unwrap_or_else(|| crate::frame::groove_pattern(&settings.groove, voice));
     let grid = part_grid(frame, part);
+    // A groove that keeps time on the open hat strikes every stroke of its pattern there, when
+    // the kit has one to strike.
+    let open_groove = !written
+        && voice == DrumVoice::ClosedHat
+        && crate::rhythm::groove(&settings.groove).is_some_and(|groove| groove.open_hat);
+    let pitch = part.open_hat.filter(|_| open_groove).unwrap_or(pitch);
     let mut notes = Vec::new();
     // How hard the drummer is leaning on the groove. The middle of the dial plays it as written
     // — everything below thins it, everything above fills it in — so that a kit nobody has
@@ -101,6 +107,23 @@ pub(super) fn drums(
             choose.chance(crashing(section.intensity))
         });
 
+    // The stroke this take's hat opens on the way out of a phrase, if it opens one: the open
+    // hat's note, and the step. Asked of the fill dial like every other way the kit marks a
+    // join, and not at all where the whole groove is already open.
+    let opened = part
+        .open_hat
+        .filter(|_| voice == DrumVoice::ClosedHat && grooved && !written && !open_groove)
+        .filter(|_| settings.fill > 0.0)
+        .and_then(|note| {
+            let mut choose = bar_stream(frame, part, section, "open", 0);
+            let opens = choose.chance(OPENS);
+            let late = choose.chance(1.0 / 3.0);
+            opens
+                .then(|| open_step(grid, late))
+                .flatten()
+                .map(|step| (note, step))
+        });
+
     for bar in 0..section.bars {
         // Where this bar stops being the groove, so the answer does not land in the middle of
         // the snare's own run.
@@ -150,7 +173,11 @@ pub(super) fn drums(
             if step == 0 && crash.is_some() && lands(settings, section, grid, bar) {
                 continue;
             }
-            notes.push(stroke(pitch, bar_start, step, accent));
+            // The same stroke, on the open hat, in the bar that closes a phrase.
+            let struck_on = opened
+                .filter(|(_, at)| *at == step && section.closes_phrase(bar))
+                .map_or(pitch, |(open, _)| open);
+            notes.push(stroke(struck_on, bar_start, step, accent));
         }
         if let Some(crash) = crash
             && lands(settings, section, grid, bar)
@@ -230,6 +257,25 @@ fn lands(
 /// where it is hard to imagine one missing.
 fn crashing(intensity: f32) -> f32 {
     (intensity.clamp(0.0, 1.0) * 1.2 - 0.18).clamp(0.0, 1.0)
+}
+
+/// How many takes open the hat on the way out of a phrase.
+///
+/// A quarter. Of the corpus's 165 sixteen-bar kit windows, 36 open a hat in one to seven of
+/// their bars — the ones that open it in most bars or all of them are playing a groove that
+/// keeps time on it, which is `Groove::open_hat`.
+const OPENS: f32 = 0.25;
+
+/// The stroke a hat opens: the half-beat after the last beat but one, or after the last.
+///
+/// Where the corpus opens a single stroke of a closed pattern it is the offbeat of three twice
+/// as often as the offbeat of four, and hardly anywhere else. `None` in a bar too short to
+/// have the beat, or on a grid with no half-beat.
+fn open_step(grid: crate::rhythm::Grid, late: bool) -> Option<usize> {
+    let per_beat = grid.steps_per_beat();
+    let beats = grid.steps_per_bar() / per_beat.max(1);
+    let back = if late { 1 } else { 2 };
+    (per_beat >= 2 && beats >= back).then(|| (beats - back) * per_beat + per_beat / 2)
 }
 
 /// How often a fill leaves the snare for the tom.
@@ -1042,6 +1088,92 @@ mod tests {
             voice.tom = (voice.role == Role::Snare).then_some(47);
         }
         song
+    }
+
+    #[test]
+    fn a_hat_opens_one_stroke_on_the_way_out_of_a_phrase() {
+        let mut opening = 0;
+        for seed in 0..64u64 {
+            let mut song = joined(seed, 0.5);
+            for voice in &mut song.parts {
+                voice.open_hat = (voice.role == Role::Hat).then_some(46);
+            }
+            let (frame, parts) = song.draft();
+            let bar = frame.grid.bar_ticks().raw();
+            let step = frame.grid.step_ticks().raw();
+            let hat = part(&parts, "hat");
+            let open: Vec<_> = hat.notes.iter().filter(|note| note.pitch == 46).collect();
+            if open.is_empty() {
+                continue;
+            }
+            opening += 1;
+            // One stroke, the same one, in each bar that closes a phrase, and the closed hat
+            // is not struck under it.
+            let places: Vec<i64> = open
+                .iter()
+                .map(|note| note.start.raw() % bar / step)
+                .collect();
+            assert!(
+                places.iter().all(|place| *place == places[0]),
+                "seed {seed}: {places:?}"
+            );
+            assert!(
+                [10, 14].contains(&places[0]),
+                "seed {seed}: opened at {places:?}"
+            );
+            let bars: Vec<i64> = open.iter().map(|note| note.start.raw() / bar).collect();
+            assert_eq!(bars, vec![3, 7, 11, 15], "seed {seed}");
+            for note in &open {
+                assert!(
+                    !hat.notes
+                        .iter()
+                        .any(|other| other.pitch == 42 && other.start == note.start)
+                );
+            }
+            // A kit with no open hat keeps the stroke where it was.
+            let (_, closed) = joined(seed, 0.5).draft();
+            assert_eq!(part(&closed, "hat").notes.len(), hat.notes.len());
+        }
+        assert!(
+            (6..=28).contains(&opening),
+            "{opening} of 64 takes opened the hat"
+        );
+        // And a kit told not to fill is a loop.
+        for seed in 0..64u64 {
+            let mut song = joined(seed, 0.0);
+            for voice in &mut song.parts {
+                voice.open_hat = (voice.role == Role::Hat).then_some(46);
+            }
+            let (_, parts) = song.draft();
+            assert!(
+                part(&parts, "hat")
+                    .notes
+                    .iter()
+                    .all(|note| note.pitch == 42)
+            );
+        }
+    }
+
+    #[test]
+    fn a_groove_that_keeps_time_on_the_open_hat_strikes_it_on_every_beat() {
+        let mut song = kit("open-rock", 0.5, 0.7, 3, 4);
+        for voice in &mut song.parts {
+            voice.open_hat = (voice.role == Role::Hat).then_some(46);
+        }
+        let (frame, parts) = song.draft();
+        let hat = part(&parts, "hat");
+        assert!(hat.notes.iter().all(|note| note.pitch == 46));
+        assert_eq!(bar_steps(&frame, hat, 0), vec![0, 4, 8, 12]);
+        // The backbeat and the kick are a rock beat's.
+        assert_eq!(bar_steps(&frame, part(&parts, "snare"), 0), vec![4, 12]);
+        // A kit with nothing assigned to the open hat keeps the time on the closed one.
+        let (_, parts) = kit("open-rock", 0.5, 0.7, 3, 4).draft();
+        assert!(
+            part(&parts, "hat")
+                .notes
+                .iter()
+                .all(|note| note.pitch == 42)
+        );
     }
 
     #[test]

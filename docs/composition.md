@@ -82,15 +82,16 @@ over two bars and then again, so a sparser or a busier groove is still a groove 
 drummer gets busier without playing something else. *Which* rhythm it plays is
 still the groove picker, and that is a choice from a drummer's own vocabulary rather than a
 number: `basic-rock`, `eight-beat`, `sixteen-beat`, `four-on-the-floor`, `shuffle`, `breakbeat`,
-`bossa-nova`, `half-time` and `sparse`.
+`bossa-nova`, `half-time`, `sparse` and `open-rock`, which keeps time on the hat left open.
 
 A kit turns where its phrases do. The last bar of a clip runs a fill, as long as **Fill** asks
 for; a clip of eight bars or more may run twice as much of that bar, up to the whole of it, and
 also turns at the end of every second phrase — the eighth bar of sixteen. A whole kit may run
 the back half of a fill onto a tom, and may land on a crash in the bar a fill leads into, the
-clip's first bar included; a section played hard crashes more often than a quiet one. A clip
+clip's first bar included; a section played hard crashes more often than a quiet one. One take
+in four opens a single hat stroke in the bar that closes each phrase. A clip
 that is one drum on a track of its own stays that drum, and a kit whose sound assignment has no
-crash or no tom keeps those strokes on the hat and the snare. With **Fill** at zero the kit does
+crash, no tom or no open hat keeps those strokes on the hat and the snare. With **Fill** at zero the kit does
 none of this and the clip is a loop.
 
 A bass line follows the kick of a groove as well, without reading the kit's notes: a new bass
