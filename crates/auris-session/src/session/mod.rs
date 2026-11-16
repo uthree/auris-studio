@@ -488,6 +488,10 @@ pub struct Session {
     pub(crate) lint_audio: Option<crate::lint::AudioLintResult>,
     pub(crate) execution_trace: std::cell::RefCell<crate::execution_trace::Recorder>,
     needs_rebuild: bool,
+    /// When a rebuild was put off to wait for a hosted plugin's spare instance to come home.
+    ///
+    /// See [`Self::rebuild_graph`]; [`Self::poll`] finishes it.
+    graph_deferred_since: Option<std::time::Instant>,
     /// Whether the meter has moved since the render graph was built.
     ///
     /// The engine holds a copy of the signature map for one purpose — accenting the metronome's
@@ -822,6 +826,7 @@ impl Session {
             execution_trace: Default::default(),
             listening: Default::default(),
             needs_rebuild: false,
+            graph_deferred_since: None,
             meter_is_stale: false,
             last_record: None,
             path: None,
@@ -1262,6 +1267,9 @@ impl Session {
         }
         if rebuild_vst3 {
             self.invalidate_graph();
+        }
+        if self.graph_deferred_since.is_some() {
+            self.rebuild_graph();
         }
     }
 
@@ -1772,8 +1780,38 @@ impl Session {
         }
     }
 
-    /// Rebuilds the render graph and hands it to the audio thread.
+    /// Rebuilds the render graph and hands it to the audio thread — or, when that would load a
+    /// hosted plugin again only because the audio thread has not yet handed the previous graph
+    /// back, leaves it to [`Self::poll`] a tick later.
+    ///
+    /// The wait is a callback or two; loading the plugin is hundreds of milliseconds on the
+    /// thread that draws the window, once per edit, which froze it while an agent edited a song
+    /// that played through Surge XT. Edits made in the meantime are folded into the one rebuild.
+    /// Only a running audio thread brings graphs home, so without one nothing is put off, and a
+    /// thread that has stopped answering is waited for no longer than
+    /// [`GRAPH_HANDOVER_PATIENCE`].
     pub fn rebuild_graph(&mut self) {
+        self.take_back_graphs();
+        let waiting = self
+            .graph_deferred_since
+            .is_none_or(|since| since.elapsed() < GRAPH_HANDOVER_PATIENCE);
+        if waiting
+            && self
+                .device
+                .as_ref()
+                .is_some_and(|device| device.is_running())
+            && self.hosted.handover_pending()
+        {
+            self.graph_deferred_since
+                .get_or_insert_with(std::time::Instant::now);
+            return;
+        }
+        self.graph_deferred_since = None;
+        self.build_graph();
+    }
+
+    /// Builds the render graph and hands it to the audio thread, now.
+    fn build_graph(&mut self) {
         // Whatever the meter now is, this is the copy the engine will be holding.
         self.meter_is_stale = false;
         let rate = self.engine.sample_rate();
@@ -1946,6 +1984,13 @@ fn output_changed(before: &AudioPreferences, after: &AudioPreferences) -> bool {
 /// A callback comes every few milliseconds on any device, so this is two hundred of them at the
 /// least, and short enough that a person pressing Play again is not left waiting.
 const OUTPUT_STALL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How long a rebuild waits for the audio thread to hand back a hosted plugin's spare instance.
+///
+/// A callback comes every few milliseconds, so a running output answers well within this; one
+/// that does not has stalled, and the rebuild then loads another instance as it did before
+/// waiting existed rather than leave an edit unheard.
+const GRAPH_HANDOVER_PATIENCE: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// A gap between polls longer than this means the watch was not watching — the machine slept,
 /// or the window thread was busy — and the stillness seen across it proves nothing.
