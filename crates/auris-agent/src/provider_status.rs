@@ -19,6 +19,173 @@ pub struct ProviderStatus {
     /// Public release comparison, when this CLI has a supported release source.
     /// Independent of model discovery and authentication.
     pub update: Option<ProviderUpdate>,
+    /// How Auris can install that newer release itself, when one is
+    /// [available](ProviderUpdate::Available) and the installation method is recognised.
+    /// `None` leaves the update to the published instructions.
+    pub update_command: Option<UpdateCommand>,
+}
+
+/// A command that brings an installed CLI up to its latest release without a terminal:
+/// the CLI's own updater, or the package manager that installed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdateCommand {
+    /// The program to run.
+    pub program: PathBuf,
+    /// Its arguments.
+    pub args: Vec<String>,
+}
+
+impl UpdateCommand {
+    /// The command as a person would type it, shown before it runs.
+    pub fn display(&self) -> String {
+        let name = self
+            .program
+            .file_stem()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.program.display().to_string());
+        std::iter::once(name)
+            .chain(self.args.iter().cloned())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// Where a program called `name` is installed, looking where installers put package managers
+/// as well as on `PATH`, which an application opened from Finder barely has.
+fn find_program(name: &str) -> Option<PathBuf> {
+    let mut directories: Vec<_> =
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+    if cfg!(target_os = "macos") {
+        directories.extend([
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]);
+    }
+    if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+        directories.push(PathBuf::from(home).join(".bun/bin"));
+    }
+    let names: Vec<String> = if cfg!(windows) {
+        vec![format!("{name}.cmd"), format!("{name}.exe")]
+    } else {
+        vec![name.to_owned()]
+    };
+    directories
+        .iter()
+        .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
+        .find(|path| path.is_file())
+}
+
+/// The update for `backend`'s CLI at `executable`, whose real location is `resolved`.
+///
+/// Claude Code and OpenCode update themselves (`claude update`, `opencode upgrade`) and know
+/// how they were installed; Homebrew casks are the exception, since the cask owns the files.
+/// Codex has no updater of its own, so the package manager is read off the path it lives at.
+fn plan_update(
+    backend: &str,
+    executable: &Path,
+    resolved: &Path,
+    find: &dyn Fn(&str) -> Option<PathBuf>,
+) -> Option<UpdateCommand> {
+    let location = resolved.to_string_lossy().replace('\\', "/");
+    let run = |program: PathBuf, args: &[&str]| UpdateCommand {
+        program,
+        args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+    };
+    let brew = |args: &[&str]| find("brew").map(|brew| run(brew, args));
+    match backend {
+        "claude" if location.contains("/Caskroom/claude-code/") => {
+            brew(&["upgrade", "--cask", "claude-code"])
+        }
+        "claude" => Some(run(executable.to_path_buf(), &["update"])),
+        "opencode" => Some(run(executable.to_path_buf(), &["upgrade"])),
+        "codex" if location.contains("/Caskroom/codex/") => brew(&["upgrade", "--cask", "codex"]),
+        "codex" if location.contains("/Cellar/codex/") => brew(&["upgrade", "codex"]),
+        "codex" if location.contains("/.bun/") => {
+            find("bun").map(|bun| run(bun, &["add", "-g", "@openai/codex@latest"]))
+        }
+        "codex" if location.contains("/node_modules/") && location.contains("pnpm") => {
+            find("pnpm").map(|pnpm| run(pnpm, &["add", "-g", "@openai/codex@latest"]))
+        }
+        "codex" if location.contains("/node_modules/") => {
+            find("npm").map(|npm| run(npm, &["install", "-g", "@openai/codex@latest"]))
+        }
+        _ => None,
+    }
+}
+
+fn update_command(backend: &str, executable: &Path) -> Option<UpdateCommand> {
+    let resolved = std::fs::canonicalize(executable).unwrap_or_else(|_| executable.to_path_buf());
+    plan_update(backend, executable, &resolved, &find_program)
+}
+
+/// The longest stretch of a failed update's output worth showing.
+const UPDATE_OUTPUT_TAIL: usize = 600;
+
+async fn run_update(command: &UpdateCommand) -> Result<(), String> {
+    let mut process = tokio::process::Command::new(&command.program);
+    process
+        .args(&command.args)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    // npm, pnpm and a script-installed CLI are Node programs whose `#!/usr/bin/env node` needs
+    // `node` on `PATH`; it is installed beside them, and an application opened from Finder
+    // has no `PATH` that would find it otherwise.
+    if let Some(directory) = command.program.parent() {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let joined = std::env::join_paths(
+            std::iter::once(directory.to_path_buf()).chain(std::env::split_paths(&path)),
+        )
+        .map_err(|error| error.to_string())?;
+        process.env("PATH", joined);
+    }
+    #[cfg(windows)]
+    process.creation_flags(0x08000000);
+    let output = tokio::time::timeout(Duration::from_secs(600), process.output())
+        .await
+        .map_err(|_| format!("{} did not finish within ten minutes", command.display()))?
+        .map_err(|error| format!("{}: {error}", command.display()))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let text = if output.stderr.iter().any(|byte| !byte.is_ascii_whitespace()) {
+        String::from_utf8_lossy(&output.stderr)
+    } else {
+        String::from_utf8_lossy(&output.stdout)
+    };
+    let text = text.trim();
+    let start = text
+        .char_indices()
+        .rev()
+        .nth(UPDATE_OUTPUT_TAIL)
+        .map_or(0, |(index, _)| index);
+    Err(format!(
+        "{} failed ({}): {}",
+        command.display(),
+        output.status,
+        &text[start..]
+    ))
+}
+
+/// Run `command` on a worker thread and report once it has finished.
+/// The process is killed if it runs longer than ten minutes; dropping the receiver does not
+/// stop it, since an update interrupted halfway is worse than one left to finish.
+pub fn update_provider_background(command: UpdateCommand) -> mpsc::Receiver<Result<(), String>> {
+    let (sender, receiver) = mpsc::channel();
+    let failed = sender.clone();
+    let spawn = std::thread::Builder::new()
+        .name("auris-provider-update".into())
+        .spawn(move || {
+            let result = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| error.to_string())
+                .and_then(|runtime| runtime.block_on(run_update(&command)));
+            let _ = sender.send(result);
+        });
+    if let Err(error) = spawn {
+        let _ = failed.send(Err(error.to_string()));
+    }
+    receiver
 }
 
 /// Result of comparing an installed CLI with its public stable release.
@@ -206,6 +373,11 @@ async fn probe(mut prefs: AgentPreferences) -> ProviderStatus {
     };
     let ((version, update), listing) = tokio::join!(version, listing);
     status.version = version;
+    if matches!(update, Some(ProviderUpdate::Available(_)))
+        && let Some(executable) = &status.executable
+    {
+        status.update_command = update_command(&prefs.backend, executable);
+    }
     status.update = update;
     match listing {
         Ok(count) => status.models = Some(count),
@@ -389,6 +561,94 @@ mod tests {
             assert!(request.starts_with("get / http/1.1"));
             assert!(!request.contains("authorization:"));
         }
+    }
+
+    #[test]
+    fn updates_follow_the_installation_method() {
+        let tools = |name: &str| Some(PathBuf::from(format!("/tools/{name}")));
+        let plan = |backend: &str, path: &str| {
+            plan_update(backend, Path::new("/bin/cli"), Path::new(path), &tools)
+                .map(|command| command.display())
+        };
+        assert_eq!(
+            plan("claude", "/Users/a/.local/share/claude/versions/2.1.0").as_deref(),
+            Some("cli update")
+        );
+        assert_eq!(
+            plan("claude", "/opt/homebrew/Caskroom/claude-code/2.1.0/claude").as_deref(),
+            Some("brew upgrade --cask claude-code")
+        );
+        assert_eq!(
+            plan("opencode", "/Users/a/.opencode/bin/opencode").as_deref(),
+            Some("cli upgrade")
+        );
+        assert_eq!(
+            plan(
+                "codex",
+                "/opt/homebrew/Caskroom/codex/0.9.0/codex-aarch64-apple-darwin"
+            )
+            .as_deref(),
+            Some("brew upgrade --cask codex")
+        );
+        assert_eq!(
+            plan(
+                "codex",
+                "/usr/local/lib/node_modules/@openai/codex-darwin-arm64/vendor/x/bin/codex"
+            )
+            .as_deref(),
+            Some("npm install -g @openai/codex@latest")
+        );
+        assert_eq!(
+            plan(
+                "codex",
+                r"C:\Users\a\AppData\Roaming\npm\node_modules\@openai\codex\vendor\codex.exe"
+            )
+            .as_deref(),
+            Some("npm install -g @openai/codex@latest")
+        );
+        assert_eq!(
+            plan(
+                "codex",
+                "/Users/a/.bun/install/global/node_modules/@openai/codex/bin/codex"
+            )
+            .as_deref(),
+            Some("bun add -g @openai/codex@latest")
+        );
+        // A Codex built from source, or one whose package manager is not installed, is left to
+        // the published instructions rather than guessed at.
+        assert_eq!(
+            plan("codex", "/Users/a/src/codex/target/release/codex"),
+            None
+        );
+        assert_eq!(
+            plan_update(
+                "codex",
+                Path::new("/bin/codex"),
+                Path::new("/usr/lib/node_modules/@openai/codex/bin/codex"),
+                &|_| None
+            ),
+            None
+        );
+        assert_eq!(plan("antigravity", "/usr/local/bin/agy"), None);
+    }
+
+    #[tokio::test]
+    async fn a_failed_update_reports_the_end_of_its_output() {
+        let cargo = UpdateCommand {
+            program: PathBuf::from(env!("CARGO")),
+            args: vec!["no-such-subcommand-for-auris".into()],
+        };
+        let error = run_update(&cargo).await.unwrap_err();
+        assert!(
+            error.starts_with("cargo no-such-subcommand-for-auris failed"),
+            "{error}"
+        );
+        assert!(error.contains("no-such-subcommand-for-auris"), "{error}");
+        let version = UpdateCommand {
+            program: PathBuf::from(env!("CARGO")),
+            args: vec!["--version".into()],
+        };
+        assert_eq!(run_update(&version).await, Ok(()));
     }
 
     #[test]
