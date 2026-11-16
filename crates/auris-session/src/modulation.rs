@@ -194,11 +194,11 @@ fn rhythm_rates(beats_per_bar: u32) -> Vec<(String, f64)> {
 
 /// A stretch to measure, resolved from a [`Selection`].
 #[derive(Clone, Debug)]
-struct Region {
-    section: Option<String>,
-    instance: Option<usize>,
-    start: Ticks,
-    end: Ticks,
+pub(crate) struct Region {
+    pub(crate) section: Option<String>,
+    pub(crate) instance: Option<usize>,
+    pub(crate) start: Ticks,
+    pub(crate) end: Ticks,
 }
 
 /// An owned render and its regions. Run on a worker, never on the UI or audio thread.
@@ -211,14 +211,31 @@ pub struct ModulationJob {
     omitted: usize,
 }
 
-fn resolve(project: &Project, selection: &Selection) -> Result<(Vec<Region>, usize), String> {
-    let ways = usize::from(selection.section.is_some())
-        + usize::from(selection.start_bar.is_some() || selection.bars.is_some())
-        + usize::from(selection.each_section);
+/// How a tool names a stretch of the song: a section (every occurrence, or one), each section,
+/// a bar range, or — with nothing given — the whole song. Shared by every measuring tool so
+/// `section: "サビ", instance: 2` means the same bars to all of them.
+pub(crate) struct RegionQuery<'a> {
+    pub(crate) section: Option<&'a str>,
+    pub(crate) instance: Option<usize>,
+    pub(crate) start_bar: Option<u32>,
+    pub(crate) bars: Option<u32>,
+    pub(crate) each_section: bool,
+    /// The most bars an explicit range may span.
+    pub(crate) max_bars: u32,
+}
+
+/// Resolve a [`RegionQuery`] to regions in song order, before any length limit is applied.
+pub(crate) fn select_regions(
+    project: &Project,
+    query: &RegionQuery<'_>,
+) -> Result<Vec<Region>, String> {
+    let ways = usize::from(query.section.is_some())
+        + usize::from(query.start_bar.is_some() || query.bars.is_some())
+        + usize::from(query.each_section);
     if ways > 1 {
         return Err("Choose one of section, start_bar+bars or each_section".into());
     }
-    if selection.instance.is_some() && selection.section.is_none() {
+    if query.instance.is_some() && query.section.is_none() {
         return Err("instance needs section".into());
     }
     let song_end = project.end_tick();
@@ -232,12 +249,12 @@ fn resolve(project: &Project, selection: &Selection) -> Result<(Vec<Region>, usi
         start: span.start,
         end: span.end,
     };
-    let mut regions: Vec<Region> = if selection.each_section {
+    Ok(if query.each_section {
         if spans.is_empty() {
             return Err("The song has no named sections; set them with edit_timeline, or give start_bar and bars".into());
         }
         spans.iter().map(named).collect()
-    } else if let Some(label) = &selection.section {
+    } else if let Some(label) = query.section {
         let label = label.trim();
         let matching: Vec<_> = spans.iter().filter(|span| span.label == label).collect();
         if matching.is_empty() {
@@ -247,7 +264,7 @@ fn resolve(project: &Project, selection: &Selection) -> Result<(Vec<Region>, usi
                 "No section is called {label:?}; the song's sections are {labels:?}"
             ));
         }
-        match selection.instance {
+        match query.instance {
             Some(instance) => vec![named(
                 matching
                     .iter()
@@ -261,12 +278,12 @@ fn resolve(project: &Project, selection: &Selection) -> Result<(Vec<Region>, usi
             )],
             None => matching.into_iter().map(named).collect(),
         }
-    } else if selection.start_bar.is_some() || selection.bars.is_some() {
-        let (Some(start_bar), Some(bars)) = (selection.start_bar, selection.bars) else {
+    } else if query.start_bar.is_some() || query.bars.is_some() {
+        let (Some(start_bar), Some(bars)) = (query.start_bar, query.bars) else {
             return Err("Give start_bar and bars together".into());
         };
-        if start_bar == 0 || !(1..=256).contains(&bars) {
-            return Err("Use start_bar >= 1 and bars 1..256".into());
+        if start_bar == 0 || !(1..=query.max_bars).contains(&bars) {
+            return Err(format!("Use start_bar >= 1 and bars 1..{}", query.max_bars));
         }
         let start = project.signatures.bar_start(start_bar);
         let end = project
@@ -288,7 +305,21 @@ fn resolve(project: &Project, selection: &Selection) -> Result<(Vec<Region>, usi
             start: Ticks::ZERO,
             end: song_end,
         }]
-    };
+    })
+}
+
+fn resolve(project: &Project, selection: &Selection) -> Result<(Vec<Region>, usize), String> {
+    let mut regions = select_regions(
+        project,
+        &RegionQuery {
+            section: selection.section.as_deref(),
+            instance: selection.instance,
+            start_bar: selection.start_bar,
+            bars: selection.bars,
+            each_section: selection.each_section,
+            max_bars: 256,
+        },
+    )?;
     let seconds = |region: &Region| {
         project.tempo_map.ticks_to_seconds(region.end).0
             - project.tempo_map.ticks_to_seconds(region.start).0
