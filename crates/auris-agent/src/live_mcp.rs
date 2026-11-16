@@ -142,6 +142,17 @@ impl ServerHandler for LiveTools {
                         ]),
                         Err(error) => CallToolResult::error(vec![ContentBlock::text(error)]),
                     }
+                } else if request.name == "modulation_spectrum" {
+                    match serde_json::from_str(reply["text"].as_str().unwrap_or_default())
+                        .map_err(|e| e.to_string())
+                        .and_then(|report| crate::toolbox::modulation::present(&report))
+                    {
+                        Ok(presentation) => CallToolResult::success(vec![
+                            ContentBlock::text(presentation.text),
+                            ContentBlock::image(presentation.png, "image/png"),
+                        ]),
+                        Err(error) => CallToolResult::error(vec![ContentBlock::text(error)]),
+                    }
                 } else {
                     CallToolResult::success(vec![ContentBlock::text(
                         reply["text"].as_str().unwrap_or_default(),

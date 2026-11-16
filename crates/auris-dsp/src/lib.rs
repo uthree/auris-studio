@@ -66,6 +66,7 @@ pub mod guitar_amp;
 pub mod limiter;
 pub mod loudness;
 pub mod mel;
+pub mod modulation;
 pub mod pack;
 pub mod reference_features;
 pub mod reverb;

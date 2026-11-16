@@ -174,6 +174,8 @@ enum Answer {
     Text,
     /// `inspect_audio`: measurements and a PNG.
     Inspection,
+    /// `modulation_spectrum`: peaks per band and a PNG.
+    Modulation,
     /// `listen`: the report and each clip as audio content, for a client whose model hears.
     Audition,
 }
@@ -182,6 +184,7 @@ impl Answer {
     fn of(tool: &str) -> Self {
         match tool {
             "inspect_audio" => Self::Inspection,
+            "modulation_spectrum" => Self::Modulation,
             "listen" => Self::Audition,
             _ => Self::Text,
         }
@@ -204,6 +207,16 @@ async fn blocking_tool(
         serde_json::from_str(&text)
             .map_err(|e| e.to_string())
             .and_then(|report| toolbox::audio_inspection::present(&report))
+            .map(|report| {
+                vec![
+                    ContentBlock::text(report.text),
+                    ContentBlock::image(report.png, "image/png"),
+                ]
+            })
+    } else if answer == Answer::Modulation {
+        serde_json::from_str(&text)
+            .map_err(|e| e.to_string())
+            .and_then(|report| toolbox::modulation::present(&report))
             .map(|report| {
                 vec![
                     ContentBlock::text(report.text),

@@ -602,6 +602,18 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: b
                         }
                         return Ok(ToolOutput::text(text));
                     }
+                    if name == "modulation_spectrum" && reply["ok"] == true {
+                        let report =
+                            serde_json::from_str(reply["text"].as_str().unwrap_or_default())
+                                .map_err(|e| ToolExecutionError::other(e.to_string()))?;
+                        let (text, image) = bridge
+                            .accept_modulation(&report)
+                            .map_err(ToolExecutionError::other)?;
+                        if let Some(call_id) = &call_id {
+                            bridge.stash_result_media(call_id, "images", vec![image]);
+                        }
+                        return Ok(ToolOutput::text(text));
+                    }
                     edit_reply(reply)
                         .map(ToolOutput::text)
                         .map_err(|e| ToolExecutionError::other(e.0))
