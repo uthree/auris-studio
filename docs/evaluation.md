@@ -232,6 +232,19 @@ of the kit table are counted over a thousand.
 
 The corpus stays on the machine that holds it, and so does anything counted from one song.
 
+To put two builds of the writers through the learned ear as well, write the same bands with each:
+
+```
+cargo run -p auris-session --example band_takes -- bands/
+```
+
+`band_takes` saves twelve projects — a lead over each of six named progressions at two seeds,
+and chords, a bass, an arpeggio and a kit written round it by `Session::accompany` — and prints
+what the score linter finds in each. No model composes anything, so two builds given the same
+seeds differ only by what their writers write. Render each with `auris render`, gain-match and
+score them as below, and compare song by song: the pairs are the evidence, not the means.
+These are instrumentals, so SongEval and Audiobox are the scorers to read.
+
 ## Melody against the lyric's accent
 
 ```
