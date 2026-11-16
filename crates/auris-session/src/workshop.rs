@@ -476,8 +476,25 @@ pub struct ThreadInfo {
     pub title: String,
     /// Whether the conversation is in the archive.
     pub archived: bool,
-    /// Last saved time in seconds since the Unix epoch.
+    /// When the conversation last gained or lost a message, in seconds since the Unix epoch.
+    ///
+    /// Opening, leaving, renaming or archiving a conversation saves it too, but does not move it
+    /// in the sidebar: only the exchange itself counts as an update.
     pub updated: u64,
+}
+
+/// When a conversation's transcript last changed length, kept beside it in [`ACTIVITY_FILE`].
+///
+/// A sidecar rather than a field of [`Document`], because every holder of a document saves its
+/// own copy: a stamp carried inside the document would be stale in the caller's copy and be
+/// renewed on every later save.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct Activity {
+    /// Messages in the transcript when [`Activity::at`] was taken.
+    messages: usize,
+    /// Seconds since the Unix epoch.
+    at: u64,
 }
 
 impl Store {
@@ -637,7 +654,7 @@ impl Store {
         store.save(&Document::default())?;
         Ok(store)
     }
-    /// List both ordinary and archived conversations, newest saved first.
+    /// List both ordinary and archived conversations, most recently written to first.
     pub fn threads(&self) -> Result<Vec<ThreadInfo>, String> {
         let mut ids = vec!["default".to_owned()];
         match std::fs::read_dir(self.library_root.join("threads")) {
@@ -662,11 +679,10 @@ impl Store {
                 continue;
             }
             let document = store.load()?;
-            let updated = std::fs::metadata(store.root.join("conversation.json"))
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .map_or(0, |time| time.as_secs());
+            let updated = match store.activity() {
+                Some(activity) => activity.at,
+                None => store.saved_at(),
+            };
             threads.push(ThreadInfo {
                 id,
                 title: document.sidebar_title(),
@@ -726,7 +742,38 @@ impl Store {
                 }
             }
         }
-        write(&self.root.join("conversation.json"), &document)
+        let activity = match self.activity() {
+            Some(activity) if activity.messages == document.messages.len() => None,
+            Some(_) => Some(unix_now()),
+            // A history written before the sidecar existed is dated by its last save.
+            None if self.root.join("conversation.json").is_file() => Some(self.saved_at()),
+            None => Some(unix_now()),
+        };
+        write(&self.root.join("conversation.json"), &document)?;
+        match activity {
+            Some(at) => write(
+                &self.root.join(ACTIVITY_FILE),
+                &Activity {
+                    messages: document.messages.len(),
+                    at,
+                },
+            ),
+            None => Ok(()),
+        }
+    }
+    /// The transcript's recorded activity, or `None` for a history that predates it.
+    fn activity(&self) -> Option<Activity> {
+        read_or_default::<Option<Activity>>(&self.root.join(ACTIVITY_FILE))
+            .ok()
+            .flatten()
+    }
+    /// When the transcript file was last written, for histories without [`ACTIVITY_FILE`].
+    fn saved_at(&self) -> u64 {
+        std::fs::metadata(self.root.join("conversation.json"))
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |time| time.as_secs())
     }
     /// Keep a long decoded reference beside the transcript, named by its content, so that the
     /// transcript stays small enough to rewrite on every turn however many scores are attached.
@@ -931,6 +978,14 @@ const REFERENCE_INLINE_BYTES: usize = 4 * 1024;
 
 /// The folder, inside a conversation, holding its long decoded references.
 const REFERENCE_DIR: &str = "references";
+/// Sidecar holding [`Activity`], beside each `conversation.json`.
+const ACTIVITY_FILE: &str = "activity.json";
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |time| time.as_secs())
+}
 
 /// Atomically correct or remove an existing preference without overwriting concurrent changes.
 pub fn revise_preference(
@@ -1592,6 +1647,61 @@ mod tests {
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].id, third.thread_id);
         assert_eq!(library.active_thread().unwrap().thread_id, third.thread_id);
+    }
+    #[test]
+    fn conversations_are_listed_by_their_last_message_not_their_last_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let library = Store::new(dir.path().into());
+        let mut first = Document::default();
+        first.messages.push(chat(true, "First song"));
+        library.save(&first).unwrap();
+        let second = library.create_thread().unwrap();
+        let mut document = Document::default();
+        document.messages.push(chat(true, "Second song"));
+        second.save(&document).unwrap();
+        // Date the two exchanges apart, the first one earlier.
+        let date = |store: &Store, messages, at| {
+            write(&store.root.join(ACTIVITY_FILE), &Activity { messages, at }).unwrap();
+        };
+        date(&library, 1, 100);
+        date(&second, 1, 200);
+        let order = || -> Vec<(String, u64)> {
+            library
+                .threads()
+                .unwrap()
+                .into_iter()
+                .map(|t| (t.id, t.updated))
+                .collect()
+        };
+        assert_eq!(order()[0], (second.thread_id.clone(), 200));
+
+        // Opening, leaving or renaming the first one saves it without moving it up.
+        first.title = "Renamed".into();
+        first.draft = "half a thought".into();
+        library.save(&first).unwrap();
+        assert_eq!(order()[0], (second.thread_id.clone(), 200));
+        assert_eq!(order()[1], ("default".to_owned(), 100));
+
+        // Sending in it does.
+        first.messages.push(chat(true, "Another verse"));
+        library.save(&first).unwrap();
+        let listed = order();
+        assert_eq!(listed[0].0, "default");
+        assert!(listed[0].1 > 200);
+    }
+
+    #[test]
+    fn a_history_without_recorded_activity_keeps_its_last_save_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let library = Store::new(dir.path().into());
+        let mut document = Document::default();
+        document.messages.push(chat(true, "Old song"));
+        library.save(&document).unwrap();
+        std::fs::remove_file(library.root.join(ACTIVITY_FILE)).unwrap();
+        let saved = library.saved_at();
+        assert_eq!(library.threads().unwrap()[0].updated, saved);
+        library.save(&document).unwrap();
+        assert_eq!(library.activity().unwrap().at, saved);
     }
     fn chat(user: bool, text: &str) -> Message {
         Message {
