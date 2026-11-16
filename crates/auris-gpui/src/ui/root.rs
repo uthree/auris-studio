@@ -797,6 +797,15 @@ impl AurisApp {
                             cx.notify();
                         },
                     ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerChromaOrder, _, cx| {
+                            this.visualizer_command(
+                                super::visualizer::VisualizerCommand::ChromaOrder,
+                            );
+                            cx.notify();
+                        },
+                    ))
                     .on_action(Self::window_listener(cx, Self::on_focus_next_pane))
                     .on_action(Self::window_listener(cx, Self::on_focus_previous_pane))
             })

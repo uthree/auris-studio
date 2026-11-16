@@ -159,6 +159,40 @@ pub(crate) enum VisualizerCommand {
     SetOscilloscopeGain(OscilloscopeGain),
     StereoAutoGain,
     LoudnessReset,
+    ChromaOrder,
+    SetChromaOrder(ChromaOrder),
+}
+
+/// How the chromagram's face orders the twelve pitch classes round the clock.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ChromaOrder {
+    /// C, C♯, D … a semitone a step, as on a keyboard: a cluster is neighbours.
+    #[default]
+    Chromatic,
+    /// C, G, D … a fifth a step: a key is half the face, and a chord's notes sit together.
+    Fifths,
+}
+
+impl ChromaOrder {
+    /// The orders in the order the switch shows them.
+    const ALL: [Self; 2] = [Self::Chromatic, Self::Fifths];
+
+    /// Where on the face, counted clockwise from twelve o'clock, `class` (0 = C) sits.
+    fn position(self, class: usize) -> usize {
+        match self {
+            Self::Chromatic => class % 12,
+            // Seven semitones is a fifth, and seven is its own inverse mod 12, so the same
+            // multiplication goes from a class to its place on the circle and back.
+            Self::Fifths => class * 7 % 12,
+        }
+    }
+
+    fn key(self) -> Key {
+        match self {
+            Self::Chromatic => Key::VisualizerChromaChromatic,
+            Self::Fifths => Key::VisualizerChromaFifths,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -242,6 +276,7 @@ pub(crate) struct VisualizerState {
     oscilloscope_span: OscilloscopeSpan,
     oscilloscope_gain: OscilloscopeGain,
     stereo_auto_gain: bool,
+    chroma_order: ChromaOrder,
     frame: Option<VisualizerFrame>,
     mean: Vec<f32>,
     peak: Vec<f32>,
@@ -282,6 +317,7 @@ impl Default for VisualizerState {
             oscilloscope_span: OscilloscopeSpan::default(),
             oscilloscope_gain: OscilloscopeGain::default(),
             stereo_auto_gain: false,
+            chroma_order: ChromaOrder::default(),
             frame: None,
             mean: Vec::new(),
             peak: Vec::new(),
@@ -521,13 +557,18 @@ fn chroma_angle(class: f32) -> f32 {
     class / 12.0 * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2
 }
 
-/// The outline of one cell of the wheel: the part of pitch class `class`'s twelfth between
-/// radii `inner` and `outer` about `centre`, a little narrower than a twelfth so neighbouring
-/// classes stay apart.
-fn chroma_cell(centre: Point<Pixels>, inner: f32, outer: f32, class: usize) -> Vec<Point<Pixels>> {
+/// The outline of one cell of the wheel: the part of the twelfth at clock `position` (0 at
+/// twelve o'clock) between radii `inner` and `outer` about `centre`, a little narrower than a
+/// twelfth so neighbouring classes stay apart.
+fn chroma_cell(
+    centre: Point<Pixels>,
+    inner: f32,
+    outer: f32,
+    position: usize,
+) -> Vec<Point<Pixels>> {
     const STEPS: usize = 6;
     let half = std::f32::consts::PI / 12.0 * 0.9;
-    let middle = chroma_angle(class as f32);
+    let middle = chroma_angle(position as f32);
     let at = |radius: f32, angle: f32| {
         point(
             centre.x + px(radius * angle.cos()),
@@ -553,6 +594,7 @@ fn paint_chroma_wheel(
     theme: &atelier::Theme,
     rings: &[[f32; 12]],
     loudest: Option<usize>,
+    order: ChromaOrder,
 ) {
     let centre = bounds.center();
     let radius =
@@ -566,14 +608,14 @@ fn paint_chroma_wheel(
         for (class, &level) in levels.iter().enumerate() {
             fill_polygon(
                 window,
-                &chroma_cell(centre, inner, outer, class),
+                &chroma_cell(centre, inner, outer, order.position(class)),
                 heat_color(theme, level),
             );
         }
     }
     let font = px(11.);
     for (class, name) in PITCH_CLASSES.iter().enumerate() {
-        let angle = chroma_angle(class as f32);
+        let angle = chroma_angle(order.position(class) as f32);
         let at = point(
             centre.x + px((radius + CHROMA_LABEL_MARGIN * 0.55) * angle.cos()),
             centre.y + px((radius + CHROMA_LABEL_MARGIN * 0.55) * angle.sin()),
@@ -717,6 +759,13 @@ impl AurisApp {
             }
             VisualizerCommand::SetOscilloscopeGain(gain) => state.oscilloscope_gain = gain,
             VisualizerCommand::StereoAutoGain => state.stereo_auto_gain = !state.stereo_auto_gain,
+            VisualizerCommand::ChromaOrder => {
+                state.chroma_order = match state.chroma_order {
+                    ChromaOrder::Chromatic => ChromaOrder::Fifths,
+                    ChromaOrder::Fifths => ChromaOrder::Chromatic,
+                };
+            }
+            VisualizerCommand::SetChromaOrder(order) => state.chroma_order = order,
             VisualizerCommand::LoudnessReset => {
                 state.loudness = VisualizerLoudness::default();
                 self.session.reset_visualizer_loudness();
@@ -840,7 +889,7 @@ impl AurisApp {
         let spectrum = self.spectrum_card(cx);
         let loudness = self.loudness_card(cx);
         let spectrogram = self.spectrogram_card();
-        let chromagram = self.chromagram_card();
+        let chromagram = self.chromagram_card(cx);
         let stereo = self.stereo_card(cx);
         let oscilloscope = self.oscilloscope_card(cx);
         let two_columns = window.viewport_size().width >= TWO_COLUMNS_FROM;
@@ -1342,18 +1391,34 @@ impl AurisApp {
     /// three seconds: a clock face of pitch classes, C at twelve o'clock and rising clockwise,
     /// with time running outwards in rings — the newest on the rim, three seconds ago at the hub.
     /// A chord is a shape on the face whatever its voicing, and a held one is a spoke.
-    fn chromagram_card(&self) -> AnyElement {
+    fn chromagram_card(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let tokens = &self.theme.atelier;
         let loudest = self.visualizer.loudest_pitch_class();
         let rings = self.visualizer.chroma_rings();
+        let order = self.visualizer.chroma_order;
         let theme = tokens.clone();
         let wheel = canvas(
             |_, _, _| (),
             move |bounds: Bounds<Pixels>, _, window, cx| {
-                paint_chroma_wheel(window, cx, bounds, &theme, &rings, loudest);
+                paint_chroma_wheel(window, cx, bounds, &theme, &rings, loudest, order);
             },
         )
         .size_full();
+        let switch = SegmentedControl::new(
+            "visualizer-chroma-order",
+            ChromaOrder::ALL.map(|order| Segment::label(self.t(order.key()))),
+            ChromaOrder::ALL
+                .iter()
+                .position(|&each| each == order)
+                .unwrap_or(0),
+        )
+        .size(ControlSize::Small)
+        .on_select(cx.listener(|this, index: &usize, _, cx| {
+            if let Some(&order) = ChromaOrder::ALL.get(*index) {
+                this.visualizer_command(VisualizerCommand::SetChromaOrder(order));
+            }
+            cx.notify();
+        }));
         visualizer_card_with(
             "visualizer-chromagram",
             self.t(Key::VisualizerChromagram),
@@ -1365,6 +1430,7 @@ impl AurisApp {
             }),
         )
         .w_full()
+        .child(switch)
         .child(
             plot_well(&self.theme)
                 .id("visualizer-chromagram-plot")
@@ -2388,6 +2454,49 @@ mod tests {
         );
         assert_eq!(chroma_level(0.0), 0.0);
         assert_eq!(chroma_level(1.0), 1.0);
+    }
+
+    #[test]
+    fn the_circle_of_fifths_puts_each_class_a_fifth_from_its_neighbour() {
+        let names = |order: ChromaOrder| {
+            let mut face = [""; 12];
+            for (class, name) in PITCH_CLASSES.iter().enumerate() {
+                face[order.position(class)] = name;
+            }
+            face
+        };
+        assert_eq!(names(ChromaOrder::Chromatic), PITCH_CLASSES);
+        assert_eq!(
+            names(ChromaOrder::Fifths),
+            [
+                "C", "G", "D", "A", "E", "B", "F♯", "C♯", "G♯", "D♯", "A♯", "F"
+            ]
+        );
+        // Every class has a place and no two share one.
+        let mut seen = [false; 12];
+        for class in 0..12 {
+            seen[ChromaOrder::Fifths.position(class)] = true;
+        }
+        assert!(seen.iter().all(|&taken| taken));
+    }
+
+    #[gpui::test]
+    fn the_chroma_order_switches_from_the_card_and_the_palette(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = harness::open(cx);
+        cx.dispatch_action(actions::ToggleVisualizer);
+        harness::paint(&app, cx);
+        let handle = app.read_with(cx, |app, _| app.auxiliary_windows[&Surface::Visualizer]);
+        let mut utility = gpui::VisualTestContext::from_window(handle.into(), cx);
+        utility.simulate_resize(size(px(1200.), px(2400.)));
+        utility.run_until_parked();
+        harness::click("visualizer-chroma-order-1", &mut utility);
+        app.read_with(&utility, |app, _| {
+            assert_eq!(app.visualizer.chroma_order, ChromaOrder::Fifths);
+        });
+        cx.dispatch_action(actions::VisualizerChromaOrder);
+        app.read_with(cx, |app, _| {
+            assert_eq!(app.visualizer.chroma_order, ChromaOrder::Chromatic);
+        });
     }
 
     #[test]
