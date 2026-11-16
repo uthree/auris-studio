@@ -157,7 +157,7 @@ pub enum Command {
         /// Create, read, preview, apply or cancel a bounded candidate round.
         operation: crate::session::candidates::Operation,
     },
-    /// Suggest up to three melody-aware chord progressions without changing notes or harmony. Pass request with melody_clips, start_bar, bars and optional key/mood/ending. Keeps a plain alternative; 7th, sus4 and diminished colour needs melodic evidence and appropriate resolution, never a complexity quota. Returns explanations, tensions, a content revision and harmony objects usable by accompaniment. Read tool_help for bounds. These are heuristic proposals; compare and audition before claiming musical improvement.
+    /// Suggest up to three melody-aware chord progressions without changing notes or harmony. Pass request with melody_clips, start_bar, bars and optional key/mood/ending. Keeps a plain alternative; 7th, sus4 and diminished colour needs melodic evidence and appropriate resolution, never a complexity quota. Returns explanations, tensions, a content revision and harmony objects usable by the accompaniment tool where it is offered. Read tool_help for bounds. These are heuristic proposals; compare and audition before claiming musical improvement.
     SuggestHarmony {
         /// Explicit foreground clips and musical intent for one short phrase.
         request: harmony_suggestions::Request,
@@ -737,7 +737,7 @@ pub enum Command {
         #[serde(default)]
         pickup_beats: Option<f64>,
     },
-    /// Generate a new MIDI phrase on an existing instrument or drum track using the project's key, chords and meter. Write melodic harmony with edit_harmony first; drum parts use the track's sound assignments. part is lead, chords, pad, arp, bass, drums, kick, snare or hat. A drum part is struck for the section most of it lies in: softer in a verse, harder in a chorus, hardest in the last chorus; edit_recipe's intensity changes it. Returns clip ID, note count, seed and intensity; zero notes is an empty clip, not a finished phrase. Existing clips are preserved. One Undo removes the new clip; persistence follows the host.
+    /// Generate a new MIDI phrase on an existing instrument or drum track using the project's key, chords and meter. Write melodic harmony with edit_harmony first; drum parts use the track's sound assignments. part is lead, chords, pad, arp, bass, drums, kick, snare or hat. A drum part is struck for the section most of it lies in: softer in a verse, harder in a chorus, hardest in the last chorus; edit_recipe's intensity changes it where that tool is offered. Returns clip ID, note count, seed and intensity; zero notes is an empty clip, not a finished phrase. Existing clips are preserved. One Undo removes the new clip; persistence follows the host.
     GeneratePhrase {
         /// Stable instrument or drum track ID from inspect_project or add_track.
         track: u64,
