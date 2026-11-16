@@ -373,6 +373,45 @@ fn try_discovery_lock(lock: &Mutex<()>) -> Result<MutexGuard<'_, ()>, String> {
     }
 }
 
+/// How long a search waits for another one's scan before it gives up and says the scan is busy.
+///
+/// Concurrent searches are the ordinary case, not a fault: a composer asks for several sounds at
+/// once, and workshop candidates write side by side. Refusing at once cost those composers 52
+/// failed calls across 14 logs, retried by hand until the first scan was done — after 3 to 52
+/// seconds in all but one. A waiter takes the finished catalog from the cache instead.
+const DISCOVERY_WAIT: Duration = Duration::from_secs(60);
+/// How often a waiting search looks at the build lock again.
+const DISCOVERY_POLL: Duration = Duration::from_millis(100);
+
+/// [`try_discovery_lock`], retried for up to `wait` while nobody cancels.
+///
+/// Polls rather than blocks, so a scan that hangs holds a waiter for `wait` at most and a
+/// cancelled search stops within one poll.
+fn wait_for_discovery_lock<'a>(
+    lock: &'a Mutex<()>,
+    cancelled: Option<&AtomicBool>,
+    wait: Duration,
+) -> Result<MutexGuard<'a, ()>, String> {
+    let deadline = Instant::now() + wait;
+    loop {
+        match try_discovery_lock(lock) {
+            Ok(guard) => return Ok(guard),
+            Err(_) => {
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "Sound discovery is still busy after waiting {} seconds for another scan; continue other work and search again later",
+                        wait.as_secs()
+                    ));
+                }
+                if cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                    return Err("Sound search was cancelled".into());
+                }
+                std::thread::sleep(DISCOVERY_POLL);
+            }
+        }
+    }
+}
+
 struct AcousticWorkerPermit {
     counter: &'static AtomicUsize,
 }
@@ -1639,9 +1678,10 @@ impl SoundLibraryJob {
                 return Ok(catalog);
             }
         }
-        // Native discovery can hang. Never queue caller threads behind it: cached reads bypass
-        // this permit, while misses and refreshes fail fast and can be retried by the frontend.
-        let _build = try_discovery_lock(&CATALOG_BUILD)?;
+        // Native discovery can hang. Never queue caller threads behind it unboundedly: cached
+        // reads bypass this permit, while misses and refreshes wait a bounded, cancellable while
+        // for another build and then take its catalog from the cache below.
+        let _build = wait_for_discovery_lock(&CATALOG_BUILD, cancelled, DISCOVERY_WAIT)?;
         let refreshed_generation = {
             let mut entries = cache.lock().map_err(|_| "Sound catalog lock failed")?;
             // Another builder may have populated this scope before this caller acquired the
@@ -3310,6 +3350,35 @@ mod tests {
 
         drop(try_discovery_lock(&lock).unwrap());
         assert!(!lock.is_poisoned());
+    }
+
+    #[test]
+    fn a_search_waits_for_another_scan_but_not_forever_nor_once_cancelled() {
+        let lock = Arc::new(Mutex::new(()));
+        // Released by its scan a moment later: the waiter gets in.
+        let held = Arc::clone(&lock);
+        let (taken, ready) = std::sync::mpsc::channel();
+        let scan = std::thread::spawn(move || {
+            let _guard = held.lock().unwrap();
+            taken.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+        });
+        ready.recv().unwrap();
+        let started = Instant::now();
+        drop(wait_for_discovery_lock(&lock, None, Duration::from_secs(10)).unwrap());
+        assert!(started.elapsed() >= Duration::from_millis(100));
+        scan.join().unwrap();
+
+        // Never released: the waiter gives up at its deadline, or at once when cancelled.
+        let _guard = lock.lock().unwrap();
+        let error = wait_for_discovery_lock(&lock, None, Duration::from_millis(250)).unwrap_err();
+        assert!(error.contains("still busy"), "{error}");
+        let cancelled = AtomicBool::new(true);
+        let started = Instant::now();
+        let error =
+            wait_for_discovery_lock(&lock, Some(&cancelled), Duration::from_secs(10)).unwrap_err();
+        assert!(error.contains("cancelled"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]
