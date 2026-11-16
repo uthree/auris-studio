@@ -95,9 +95,11 @@ none of this and the clip is a loop.
 
 A bass line follows the kick of a groove as well, without reading the kit's notes: a new bass
 clip takes the groove of the generated kit most of it lies under, and keeps it in its own recipe.
-It draws one figure for the section and holds it, plays mostly the root, lets go on the beat
-before a syncopated note in some takes, and in most takes steps into the next bar at the end of
-every second one.
+It draws one figure for the section and holds it, and plays mostly the root. A root-and-fifth
+line is played on the kick, on the beats, or on the two halves of the bar. Every second bar
+turns the figure its own way — a pickup into the next bar, the last note dropped, or the last
+note moved onto the pickup — and the bar that closes a phrase runs up the scale into the next.
+Half the takes let a note go before a syncopated one, or just before a backbeat.
 
 An arpeggio breaks each chord in closed position, led from the chord before it the way the chords
 part is, so the figure stays under the hand while the harmony moves. It runs in one of six
