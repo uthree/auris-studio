@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-use super::{MixerEdgeKind, MixerNode, MixerPort, destination};
+use super::{MixerEdgeKind, MixerGraph, MixerNode, MixerPort, destination};
 use crate::{Edit, ParamTarget, Session, prelude::*};
 
 #[cfg(test)]
@@ -259,6 +259,11 @@ impl Session {
         let error = |error: crate::SessionError| error.to_string();
         let mut changed = false;
         let mut result = Value::Null;
+        // The node whose routing or effect chain the operation reshaped. Its row comes back
+        // instead of the whole graph, which every write used to repeat: kilobytes per call,
+        // fifteen hundred calls in the workshop logs. A control change (set_strip,
+        // set_parameter) answers in `result` alone.
+        let mut reshaped: Option<MixerNode> = None;
         match operation {
             GraphAction::SetOutputs { source, targets } => {
                 if targets.len() > 64 {
@@ -275,6 +280,7 @@ impl Session {
                 let revision = self.revision();
                 self.set_track_outputs(track, &outputs).map_err(error)?;
                 changed = self.revision() != revision;
+                reshaped = Some(MixerNode(Some(track)));
             }
             GraphAction::AddOutput {
                 source,
@@ -305,6 +311,7 @@ impl Session {
                 });
                 self.set_track_outputs(track, &outputs).map_err(error)?;
                 changed = true;
+                reshaped = Some(MixerNode(Some(track)));
                 result = json!({"source":source,"target":target,"gain_db":gain_db,"pre_fader":pre_fader});
             }
             GraphAction::SetSidechain { effect, source } => {
@@ -323,6 +330,7 @@ impl Session {
                     self.set_effect_sidechain(owner, slot, source)
                         .map_err(error)?;
                 }
+                reshaped = Some(MixerNode(owner));
                 result =
                     json!({"effect":effect,"source":source.map(|id| MixerNode(Some(id)).key())});
             }
@@ -423,6 +431,7 @@ impl Session {
                     }
                     changed = self.connect_mixer(from, port).map_err(error)?;
                 }
+                reshaped = Some(MixerNode(Some(from)));
             }
             GraphAction::Disconnect {
                 source,
@@ -449,6 +458,7 @@ impl Session {
                     [tap] => {
                         self.remove_track_output(from, to, *tap).map_err(error)?;
                         changed = true;
+                        reshaped = Some(MixerNode(Some(from)));
                     }
                     _ => {
                         return Err("A pre- and a post-fader output share this source and target; supply pre_fader".into());
@@ -460,11 +470,13 @@ impl Session {
                 let slot = self.add_effect(owner, effect).map_err(error)?;
                 result = json!({"effect":effect_key(slot),"node":input});
                 changed = true;
+                reshaped = Some(MixerNode(owner));
             }
             GraphAction::RemoveEffect { node } => {
-                let (_, slot) = self.graph_effect(node)?;
+                let (owner, slot) = self.graph_effect(node)?;
                 self.remove_effect(slot);
                 changed = true;
+                reshaped = Some(MixerNode(owner));
                 result = json!({"removed_node":node});
             }
             GraphAction::MoveEffect { node, position } => {
@@ -482,6 +494,7 @@ impl Session {
                 if changed {
                     self.move_effect(owner, slot, delta);
                 }
+                reshaped = Some(MixerNode(owner));
                 result = json!({"node":node,"position":position});
             }
             GraphAction::EnableEffect { node, enabled } => {
@@ -536,6 +549,7 @@ impl Session {
                         }
                     }
                 }
+                reshaped = Some(MixerNode(Some(track)));
                 result = json!({"source":source,"target":target,"gain_db":gain_db.unwrap_or(output.gain_db),"pre_fader":moved == Tap::PreFader,"automated":self.is_automated(ParamTarget::Output {track, to, tap: moved})});
             }
             GraphAction::SetParameter { node, param, value } => {
@@ -564,7 +578,11 @@ impl Session {
                 result = json!({"node":node,"param":param,"value":self.param_value(*target, descriptor),"automated":self.is_automated(*target)});
             }
         }
-        Ok(json!({"changed":changed,"result":result,"graph":self.mixer_graph_report(0, None)?}))
+        let mut answer = json!({"changed":changed,"result":result});
+        if let Some(node) = reshaped {
+            answer["node"] = self.graph_node_report(node);
+        }
+        Ok(answer)
     }
 
     /// The track a model names as the source of a connection.
@@ -619,8 +637,33 @@ impl Session {
             .skip(offset)
             .take(limit.unwrap_or(32).clamp(1, 64))
             .collect();
+        let (nodes, edges) = self.graph_rows(&graph, &page);
+        let effects: Vec<_> = self
+            .registry()
+            .effects()
+            .map(|effect| json!({"id":effect.id,"name":effect.name,"description":effect.description}))
+            .collect();
+        let next = offset + page.len();
+        Ok(
+            json!({"acyclic":true,"order":"processing","nodes":nodes,"edges":edges,"total_nodes":ordered.len(),"next_offset":(next < ordered.len()).then_some(next),"available_effects":effects}),
+        )
+    }
+
+    /// One node of the graph and its outgoing edges, as `read` lists them.
+    fn graph_node_report(&mut self, node: MixerNode) -> Value {
+        let graph = self.mixer_graph();
+        let (mut nodes, edges) = self.graph_rows(&graph, &[node]);
+        let mut row = nodes.pop().unwrap_or(Value::Null);
+        if row.is_object() {
+            row["edges"] = edges.into();
+        }
+        row
+    }
+
+    /// `read`'s rows for `page`: each node, then every edge leaving one of them.
+    fn graph_rows(&mut self, graph: &MixerGraph, page: &[MixerNode]) -> (Vec<Value>, Vec<Value>) {
         let mut nodes = Vec::new();
-        for node in &page {
+        for node in page {
             let owner = node.0;
             // Asked first: whether an effect has a key input can mean building it.
             let keyed: Vec<bool> = self
@@ -700,15 +743,7 @@ impl Session {
                 row
             })
             .collect();
-        let effects: Vec<_> = self
-            .registry()
-            .effects()
-            .map(|effect| json!({"id":effect.id,"name":effect.name,"description":effect.description}))
-            .collect();
-        let next = offset + page.len();
-        Ok(
-            json!({"acyclic":true,"order":"processing","nodes":nodes,"edges":edges,"total_nodes":ordered.len(),"next_offset":(next < ordered.len()).then_some(next),"available_effects":effects}),
-        )
+        (nodes, edges)
     }
 }
 
