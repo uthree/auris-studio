@@ -737,6 +737,10 @@ const THEORY_DESCRIPTIONS: &[(&str, &str)] = &[
         "バックビートを小節の中央へ移し、体感テンポを半分にしたもの",
     ),
     (
+        "A rock beat under a hat left open on every beat, for a chorus played loud",
+        "ハイハットを開けたまま毎拍で刻むロックのビート。強く演奏するサビ向け",
+    ),
+    (
         "Almost nothing: for intros and ambient sections",
         "ほとんど何も鳴らさない。イントロやアンビエントな場面に",
     ),
