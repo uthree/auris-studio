@@ -176,10 +176,21 @@ fn command(
     Ok(command)
 }
 
+/// How long Claude Code waits for one live tool call, in milliseconds.
+///
+/// Without a `timeout` on the server, Claude Code gives an HTTP request sixty seconds to its
+/// first byte and then cancels it. A live tool answers only when the host has finished, and
+/// normalize_mix on a full song, a render or a long `sing` takes longer than that: the
+/// cancellation ended the whole conversation in the middle of a mix. The per-server timeout
+/// raises that per-request timer and the five-minute idle limit with it.
+const LIVE_TOOL_TIMEOUT_MS: u64 = 30 * 60 * 1000;
+
 fn write_mcp_config(cwd: &Path, mcp: Option<&LiveMcp>) -> Result<(), String> {
     let servers = match mcp {
-        Some(mcp) => json!({"auris_live":{"type":"http","url":mcp.url,
-            "headers":{"Authorization":format!("Bearer {}", mcp.token)}}}),
+        Some(mcp) => {
+            json!({"auris_live":{"type":"http","url":mcp.url,"timeout":LIVE_TOOL_TIMEOUT_MS,
+            "headers":{"Authorization":format!("Bearer {}", mcp.token)}}})
+        }
         None => json!({}),
     };
     // The token lives only in the private temporary directory, never in process arguments.
@@ -1191,6 +1202,13 @@ mod tests {
             format!("Bearer {}", mcp.token)
         );
         assert_eq!(config["mcpServers"].as_object().unwrap().len(), 1);
+        // Long host work must not hit Claude Code's sixty-second default for HTTP servers.
+        assert!(
+            config["mcpServers"]["auris_live"]["timeout"]
+                .as_u64()
+                .unwrap()
+                >= 15 * 60 * 1000
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
