@@ -329,9 +329,10 @@ from repaints: a late repaint repeats its frame across the columns it missed, so
 three seconds at any frame rate. It is painted as one texture a frame (`window.paint_image`) rather than with
 Atelier's `Heatmap`, whose quad per cell came to fifty-seven thousand quads at this resolution.
 
-The chromagram folds the mono sum into the twelve pitch classes (A = 440 Hz, B on top, C at the
-bottom) over the same three seconds, with the loudest class of the newest column named in the
-card's header. It has its own 8192-sample window (170 ms at 48 kHz), because telling neighbouring
+The chromagram, a side card beside the oscilloscope, folds the mono sum into the twelve pitch
+classes (A = 440 Hz) over the same three seconds. It is a clock face: C at twelve o'clock rising
+clockwise, and time running outwards in 24 rings of 125 ms, the newest on the rim. The loudest
+class of the newest column is named in the card's header. It has its own 8192-sample window (170 ms at 48 kHz), because telling neighbouring
 semitones apart near 100 Hz takes bins 6 Hz apart; `auris_dsp::chroma_from_bins` counts only bins
 from 100 Hz to 5 kHz that are narrower than a semitone, weighted by a raised cosine of their
 distance from it, and each column is scaled to its loudest class over a 24 dB ramp. Nothing is
