@@ -296,21 +296,22 @@ the arrangement and breathing harnesses add their own tests on the same configur
 ## Live audio visualizer
 
 Open **Window > Audio Visualizer** to inspect a strip. The window is the Atelier analyser: a
-spectrum beside a loudness meter, a spectrogram beside a goniometer, and an oscilloscope under
-them, each a card drawn with `atelier::viz`. The toolbar chooses **Master** or the **Selected
+spectrum beside a loudness meter, a spectrogram beside a goniometer, and a chromagram and an
+oscilloscope under them, each a card drawn with `atelier::viz`. The toolbar chooses **Master** or the **Selected
 track**, and **Pre-fader** (after the chain, before fader, pan and mute) or **Post-fader** (what the
 strip sends on). The EQ editor has an independent tap, so both windows can remain open on
 different strips. Every control is also in the command palette. Below 900 px the cards stack in
 one column.
 
-The spectrum is sixty sixth-octave bars from 20 Hz to 20.48 kHz, exactly ten octaves so each grid
-division is one, over 72 dB. It is taken over 4096 samples (85 ms at 48 kHz), four times the EQ
-editor's window, and a band too narrow to hold a bin of its own shows the nearest bin
-(`auris_dsp::bands_from_bins_nearest`) rather than a hole. It can show the equal-power stereo
+The spectrum is a shaded curve through 240 twenty-fourth-octave bands from 20 Hz to 20.48 kHz,
+exactly ten octaves so each grid division is one, over 72 dB. It is taken over 4096 samples
+(85 ms at 48 kHz), four times the EQ editor's window, and a band too narrow to hold a bin of its
+own is read off the straight line between the bins either side of it
+(`auris_dsp::bands_from_bins_interpolated`) rather than a hole or a step. It can show the equal-power stereo
 average, either channel, the larger L/R value in each bin, or the mono sum. **Average** smooths
 power with a time-based 200 ms response, so delayed repaints do not change its meaning. **Peak
-hold** keeps the largest observed value per band. **Save comparison** draws the displayed spectrum
-as a line over the bars, and **Clear comparison / peaks** starts again.
+hold** keeps the largest observed value per band, drawn as a faint second line. **Save
+comparison** draws the displayed spectrum as a coloured line over the curve, and **Clear comparison / peaks** starts again.
 
 The loudness card is an EBU R128 meter (`auris_dsp::LoudnessMeter`): momentary (400 ms),
 short-term (3 s), integrated and loudness range since the last reset, and the four-times
@@ -322,8 +323,18 @@ again. The badge compares the integrated loudness with the −14 LUFS the stream
 normalise to (±1 LU) and the true peak with their −1 dBTP ceiling. The two bars beside it are
 each channel's sample peak, held for two seconds.
 
-The spectrogram keeps the last three seconds in 25 ms columns, high frequencies on top, on the
-theme's heat ramp.
+The spectrogram keeps the last three seconds in 240 columns of 12.5 ms, one row per spectrum band,
+high frequencies on top, on the theme's heat ramp. Columns are counted from the clock rather than
+from repaints: a late repaint repeats its frame across the columns it missed, so the history spans
+three seconds at any frame rate.
+
+The chromagram folds the mono sum into the twelve pitch classes (A = 440 Hz, B on top, C at the
+bottom) over the same three seconds, with the loudest class of the newest column named in the
+card's header. It has its own 8192-sample window (170 ms at 48 kHz), because telling neighbouring
+semitones apart near 100 Hz takes bins 6 Hz apart; `auris_dsp::chroma_from_bins` counts only bins
+from 100 Hz to 5 kHz that are narrower than a semitone, weighted by a raised cosine of their
+distance from it, and each column is scaled to its loudest class over a 24 dB ramp. Nothing is
+drawn while the loudest class is below −80 dBFS.
 
 The oscilloscope overlays the left and right channels. Its automatic trigger aligns a rising zero
 crossing from the louder channel, keeping periodic signals stable without delaying or modifying
