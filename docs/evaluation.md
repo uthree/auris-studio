@@ -196,24 +196,27 @@ chords used to strike 4.2 times a bar at a density of 0.75 and 6.8 at 0.76.
 The reference is the PDMX subset the melody model reads: pop and rock scores with lyrics, 4/4
 only. It holds 264 sixteen-bar bass windows from 51 files (General MIDI programs 32 to 39) and
 165 kit windows from 37 — a drum window counts only with a kick and a snare in every bar and
-two strokes of a timekeeper, since a tambourine part is not a kit playing time. Unstyled takes
+two strokes of a timekeeper, since a tambourine part is not a kit playing time. A fill bar is
+one with three snare and tom strokes more than the window's commonest bar has — the commonest
+and not the median, which a kit that ghosts a stroke in every second bar lifts by half a stroke,
+enough to hide half its own fills. Unstyled takes
 at the default density, the kit's over its eight grooves, stood here when the tool was written:
 
 | A bass line | Corpus | Takes |
 | --- | --- | --- |
 | Notes in a bar | 5.4 | 5.1 |
-| Onset spacings of an eighth | 46% | 48% |
-| Onset spacings of a dotted quarter | 5% | 19% |
+| Onset spacings of an eighth | 46% | 49% |
+| Onset spacings of a dotted quarter | 5% | 9% |
 | Intervals that repeat the note | 42% | 40% |
 | Time sounding | 87% | 92% |
 | Bars that strike their downbeat | 89% | 85% |
-| Bars with the rhythm of the bar before | 39% | 67% |
-| Different bar rhythms in sixteen bars | 5.1 | 1.7 |
+| Bars with the rhythm of the bar before | 39% | 52% |
+| Different bar rhythms in sixteen bars | 5.1 | 3.0 |
 
 | A kit | Corpus | Takes |
 | --- | --- | --- |
-| Different bars in sixteen | 6.1 | 4.6 |
-| Fill bars in sixteen | 1.5 | 0.6 |
+| Different bars in sixteen | 6.1 | 4.8 |
+| Fill bars in sixteen | 1.5 | 1.5 |
 | Kick strokes in a bar | 3.0 | 3.4 |
 | Sixteen bars that strike a crash | 66% | 67% |
 | Sixteen bars that strike a tom | 39% | 45% |

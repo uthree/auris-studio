@@ -549,7 +549,16 @@ fn fill(
         FillShape::Burst,
     ];
     let mut choose = bar_stream(frame, part, section, "fill", bar);
-    let shape = SHAPES[choose.weighted(&[1.4, 1.0, 0.9, 0.8]).min(SHAPES.len() - 1)];
+    // In a window of a beat, three against the window's four and every half-beat are the same
+    // two strokes, so that fill was on the table twice: nearly half of all one-beat fills,
+    // where the run that fills the beat was a third. Where two shapes are one, one is drawn.
+    let mut weights = [1.4, 1.0, 0.9, 0.8];
+    if fill_steps(FillShape::Tresillo, from, steps, per_beat)
+        == fill_steps(FillShape::Eighths, from, steps, per_beat)
+    {
+        weights[1] = 0.0;
+    }
+    let shape = SHAPES[choose.weighted(&weights).min(SHAPES.len() - 1)];
     // Drawn whether or not there is a tom to go to, so a kit with one and a kit without fill
     // in the same shape.
     let travels = choose.chance(TOM_FILLS);
