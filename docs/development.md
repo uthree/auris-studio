@@ -326,7 +326,8 @@ each channel's sample peak, held for two seconds.
 The spectrogram keeps the last three seconds in 240 columns of 12.5 ms, one row per spectrum band,
 high frequencies on top, on the theme's heat ramp. Columns are counted from the clock rather than
 from repaints: a late repaint repeats its frame across the columns it missed, so the history spans
-three seconds at any frame rate.
+three seconds at any frame rate. It is painted as one texture a frame (`window.paint_image`) rather than with
+Atelier's `Heatmap`, whose quad per cell came to fifty-seven thousand quads at this resolution.
 
 The chromagram folds the mono sum into the twelve pitch classes (A = 440 Hz, B on top, C at the
 bottom) over the same three seconds, with the loudest class of the newest column named in the

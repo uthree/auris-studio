@@ -11,7 +11,7 @@
 use super::widgets::{ButtonStyle, button};
 use super::{analyser::FLOOR_DB, paint};
 use crate::{app::AurisApp, theme::Theme};
-use atelier::viz::{Heatmap, Spectrum, SpectrumStyle, Vectorscope, Waveform};
+use atelier::viz::{Heatmap, Spectrum, SpectrumStyle, Vectorscope, Waveform, heat_color};
 use atelier::{
     Badge, Button, Card, ControlSize, IconName, Label, LevelMeter, METER_FLOOR_DB, SectionHeader,
     Segment, SegmentedControl, Stat, TextColor, TextSize, Tone,
@@ -23,8 +23,10 @@ use auris_session::{
 use gpui::{
     AnyElement, Bounds, Hsla, Pixels, Window, canvas, div, point, prelude::*, px, relative,
 };
+use image::{Frame, RgbaImage};
 use std::{
     collections::VecDeque,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -61,6 +63,10 @@ const SPECTROGRAM_COLUMNS: usize = 240;
 const PITCH_CLASSES: [&str; 12] = [
     "C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B",
 ];
+
+/// Height of one chromagram row: a line of the smallest text, so each note name sits beside its
+/// own row rather than drifting over the next.
+const CHROMA_ROW_HEIGHT: f32 = 18.0;
 
 /// How far below the loudest pitch class the chromagram's colour ramp reaches, in decibels.
 ///
@@ -234,7 +240,7 @@ pub(crate) struct VisualizerState {
     correlation_history: VecDeque<CorrelationPoint>,
     correlation_negative_peak: Option<f32>,
     /// Past spectra, oldest first, one per [`SPECTROGRAM_SPAN`] / [`SPECTROGRAM_COLUMNS`].
-    spectrogram: VecDeque<std::sync::Arc<[f32]>>,
+    spectrogram: VecDeque<Arc<[f32]>>,
     /// Past pitch-class columns, beside [`Self::spectrogram`]; `None` where nothing pitched was
     /// heard.
     chromagram: VecDeque<Option<[f32; 12]>>,
@@ -243,6 +249,11 @@ pub(crate) struct VisualizerState {
     loudness: VisualizerLoudness,
     /// Each channel's held sample peak in dBFS and when it was set.
     meter_hold: [Option<(f32, Instant)>; 2],
+    /// Spectrogram pictures replaced since the last paint, released through the window that
+    /// drew them.
+    retired_images: Vec<Arc<gpui::RenderImage>>,
+    /// The spectrogram picture drawn last.
+    spectrogram_image: Option<Arc<gpui::RenderImage>>,
 }
 
 impl Default for VisualizerState {
@@ -273,6 +284,8 @@ impl Default for VisualizerState {
             last_column_at: None,
             loudness: VisualizerLoudness::default(),
             meter_hold: [None; 2],
+            retired_images: Vec::new(),
+            spectrogram_image: None,
         }
     }
 }
@@ -467,6 +480,28 @@ fn columns_due(last: Option<Instant>, now: Instant) -> (usize, Option<Instant>) 
     } else {
         (owed, Some(last + every * owed as u32))
     }
+}
+
+/// `values` (row-major, top row first, 0 to 1) as a picture `columns` wide and `rows` tall, one
+/// pixel per cell on the theme's heat ramp — what Atelier's Heatmap would paint, as a texture.
+fn heat_image(
+    theme: &atelier::Theme,
+    columns: usize,
+    rows: usize,
+    values: &[f32],
+) -> Arc<gpui::RenderImage> {
+    let (width, height) = (columns.max(1), rows.max(1));
+    let mut bytes = Vec::with_capacity(width * height * 4);
+    for index in 0..width * height {
+        let gpui::Rgba { r, g, b, a } =
+            heat_color(theme, values.get(index).copied().unwrap_or(0.)).into();
+        let byte = |channel: f32| (channel.clamp(0., 1.) * 255.).round() as u8;
+        // RenderImage keeps RgbaImage storage but uploads it as BGRA.
+        bytes.extend([byte(b), byte(g), byte(r), byte(a)]);
+    }
+    let pixels = RgbaImage::from_raw(width as u32, height as u32, bytes)
+        .expect("the buffer is exactly width × height pixels");
+    Arc::new(gpui::RenderImage::new(vec![Frame::new(pixels)]))
 }
 
 /// Where a pitch class's power, as a fraction of the loudest, sits on the chromagram's ramp.
@@ -684,9 +719,14 @@ impl AurisApp {
 
     pub(crate) fn render_visualizer(
         &mut self,
-        window: &Window,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
+        for image in self.visualizer.retired_images.drain(..) {
+            if let Err(error) = window.drop_image(image) {
+                log::debug!("could not release a spectrogram picture: {error}");
+            }
+        }
         let spacing = self.theme.atelier.spacing;
         let background = self.theme.atelier.colors.background;
         let toolbar = self.visualizer_toolbar(cx);
@@ -1118,10 +1158,17 @@ impl AurisApp {
         .into_any_element()
     }
 
-    fn spectrogram_card(&self) -> AnyElement {
+    fn spectrogram_card(&mut self) -> AnyElement {
+        let (rows, cells) = self.visualizer.spectrogram_cells();
+        // A texture rather than Atelier's Heatmap, which paints a quad per cell: at 240 by 240
+        // that is fifty-seven thousand quads a frame, and the window's frame rate went with them.
+        // The colours are the Heatmap's own ramp, so the two read the same.
+        let image = heat_image(&self.theme.atelier, SPECTROGRAM_COLUMNS, rows, &cells);
+        if let Some(old) = self.visualizer.spectrogram_image.replace(image.clone()) {
+            self.visualizer.retired_images.push(old);
+        }
         let tokens = &self.theme.atelier;
         let spacing = tokens.spacing;
-        let (rows, cells) = self.visualizer.spectrogram_cells();
         visualizer_card(
             "visualizer-spectrogram",
             self.t(Key::VisualizerSpectrogram),
@@ -1131,9 +1178,25 @@ impl AurisApp {
         .child(
             plot_well(&self.theme)
                 .id("visualizer-spectrogram-plot")
+                .relative()
                 .flex_1()
                 .min_h(px(180.))
-                .child(Heatmap::new(SPECTROGRAM_COLUMNS, rows, cells)),
+                // Painted into the well's bounds rather than laid out as an `img`, which takes
+                // its height from the texture's aspect ratio and would overflow the well.
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, _, window, _| {
+                            if let Err(error) =
+                                window.paint_image(bounds, Default::default(), image, 0, false)
+                            {
+                                log::debug!("could not paint the spectrogram: {error}");
+                            }
+                        },
+                    )
+                    .absolute()
+                    .inset_0(),
+                ),
         )
         .child(
             div()
@@ -1181,15 +1244,19 @@ impl AurisApp {
             .w(px(28.))
             .py(spacing.xs)
             .children(PITCH_CLASSES.iter().enumerate().rev().map(|(class, name)| {
-                div().flex().flex_1().items_center().justify_end().child(
-                    Label::new(*name).size(TextSize::XSmall).mono().color(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .items_center()
+                    .justify_end()
+                    .child(Label::new(*name).size(TextSize::XSmall).mono().color(
                         if loudest == Some(class) {
                             TextColor::Default
                         } else {
                             TextColor::Faint
                         },
-                    ),
-                )
+                    ))
             }));
         visualizer_card_with(
             "visualizer-chromagram",
@@ -1206,7 +1273,7 @@ impl AurisApp {
             div()
                 .flex()
                 .gap(spacing.sm)
-                .h(px(12. * 14.))
+                .h(px(12. * CHROMA_ROW_HEIGHT))
                 .child(names)
                 .child(
                     plot_well(&self.theme)
@@ -2001,7 +2068,8 @@ mod tests {
         harness::paint(&app, cx);
         let handle = app.read_with(cx, |app, _| app.auxiliary_windows[&Surface::Visualizer]);
         let mut utility = gpui::VisualTestContext::from_window(handle.into(), cx);
-        utility.simulate_resize(size(px(1200.), px(1400.)));
+        // Tall enough that the oscilloscope's controls are on screen under the chromagram.
+        utility.simulate_resize(size(px(1200.), px(2400.)));
         utility.run_until_parked();
         for selector in [
             "visualizer-source-1",
@@ -2131,6 +2199,28 @@ mod tests {
             state.accept_at(frame(-6.), start + Duration::from_millis(25 * step as u64));
         }
         assert_eq!(state.spectrogram.len(), SPECTROGRAM_COLUMNS);
+    }
+
+    #[test]
+    fn the_spectrogram_picture_is_the_heatmap_ramp_one_pixel_per_cell() {
+        let theme = crate::theme::Theme::default().atelier;
+        let image = heat_image(&theme, 3, 2, &[0., 0.5, 1., 1., 0.5, 0.]);
+        let frame = image.as_bytes(0).expect("one frame");
+        assert_eq!(frame.len(), 3 * 2 * 4);
+        let pixel = |index: usize| &frame[index * 4..index * 4 + 4];
+        let expected = |value: f32| {
+            let gpui::Rgba { r, g, b, a } = heat_color(&theme, value).into();
+            [b, g, r, a].map(|channel| (channel * 255.).round() as u8)
+        };
+        assert_eq!(pixel(0), expected(0.));
+        assert_eq!(pixel(2), expected(1.));
+        assert_eq!(
+            pixel(3),
+            expected(1.),
+            "the second row starts where the first ends"
+        );
+        assert_eq!(pixel(5), expected(0.));
+        assert_ne!(pixel(0), pixel(2));
     }
 
     #[test]
