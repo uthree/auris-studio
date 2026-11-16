@@ -11,7 +11,10 @@ mod provider_status;
 pub mod tool_calls;
 mod tool_failures;
 pub use discovery::{ModelConnection, discover_models_background};
-pub use provider_status::{ProviderStatus, ProviderUpdate, check_providers_background};
+pub use provider_status::{
+    ProviderStatus, ProviderUpdate, UpdateCommand, check_providers_background,
+    update_provider_background,
+};
 mod attachments;
 pub use attachments::{AttachmentKind, attachment_kind, validate_attachments};
 pub mod approval_review;

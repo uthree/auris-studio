@@ -20,8 +20,57 @@ pub(super) struct AgentSettings {
     checking_providers: bool,
     provider_check_focus: FocusHandle,
     provider_check: Option<gpui::Task<()>>,
+    /// Updates run from the CLI rows, by row.
+    updates: [ProviderUpdateRun; 4],
+    /// A connection check to run once the one in flight has finished, because an update
+    /// ended while it was running and its version may predate the update.
+    recheck_providers: bool,
     pub(super) prompt_viewport:
         std::rc::Rc<std::cell::RefCell<crate::ui::text_area::ProseViewport>>,
+}
+
+/// Where an update started from a CLI row has got to.
+#[derive(Default)]
+enum ProviderUpdateRun {
+    /// No update has been started since the last check.
+    #[default]
+    Idle,
+    /// The update is running; dropping the task stops watching it, not the update.
+    Running(#[allow(dead_code)] gpui::Task<()>),
+    /// The update finished; a fresh check is reading the new version.
+    Done,
+    /// The update failed, with what it printed.
+    Failed(String),
+}
+
+/// A problem in a provider's details: what went wrong, in the warning colour, over what the
+/// provider or the update printed.
+fn problem(title: &str, detail: &str, theme: &Theme) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .p_3()
+        .rounded(Metrics::RADIUS_MD)
+        .bg(theme.atelier.colors.warning_wash)
+        .text_size(theme.atelier.typography.size_sm)
+        .child(div().text_color(theme.warning).child(title.to_owned()))
+        .child(div().text_color(theme.text).child(detail.to_owned()))
+        .into_any_element()
+}
+
+/// The version an installed CLI printed, as a version number: `2.1.322 (Claude Code)` and
+/// `codex-cli 0.9.0` both read as `v…`. Anything else is shown as printed.
+fn short_version(printed: &str) -> String {
+    printed
+        .split_whitespace()
+        .find_map(|word| {
+            let number = word.strip_prefix('v').unwrap_or(word);
+            semver::Version::parse(number)
+                .ok()
+                .map(|_| format!("v{number}"))
+        })
+        .unwrap_or_else(|| printed.to_owned())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -187,6 +236,8 @@ impl AgentSettings {
             checking_providers: false,
             provider_check_focus: cx.focus_handle(),
             provider_check: None,
+            updates: Default::default(),
+            recheck_providers: false,
             prompt_viewport: Default::default(),
             prefs,
         }
@@ -247,6 +298,9 @@ impl SettingsWindow {
                             }
                             if disconnected {
                                 this.agent.checking_providers = false;
+                                if std::mem::take(&mut this.agent.recheck_providers) {
+                                    this.check_agent_providers(cx);
+                                }
                             }
                             cx.notify();
                         })
@@ -277,21 +331,94 @@ impl SettingsWindow {
         }
     }
 
+    /// Run the update the last check offered for CLI row `row`.
+    fn update_agent_provider(&mut self, row: usize, cx: &mut Context<Self>) {
+        if matches!(self.agent.updates[row], ProviderUpdateRun::Running(_)) {
+            return;
+        }
+        let Some(command) = self.agent.provider_status[row]
+            .as_ref()
+            .and_then(|status| status.update_command.clone())
+        else {
+            return;
+        };
+        // Harness windows never run a package manager.
+        let receiver = if cfg!(test) {
+            drop(command);
+            // An update that never reports, so a test can hand in the result it wants.
+            let (sender, receiver) = std::sync::mpsc::channel();
+            std::mem::forget(sender);
+            receiver
+        } else {
+            auris_agent::update_provider_background(command)
+        };
+        self.watch_agent_update(row, receiver, cx);
+        cx.notify();
+    }
+
+    fn watch_agent_update(
+        &mut self,
+        row: usize,
+        receiver: std::sync::mpsc::Receiver<Result<(), String>>,
+        cx: &mut Context<Self>,
+    ) {
+        let task = cx.spawn(async move |this, cx| {
+            let result = loop {
+                match receiver.try_recv() {
+                    Ok(result) => break result,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        break Err("The update stopped without reporting a result".into());
+                    }
+                }
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(200))
+                    .await;
+            };
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(()) => {
+                        this.agent.updates[row] = ProviderUpdateRun::Done;
+                        if this.agent.checking_providers {
+                            this.agent.recheck_providers = true;
+                        } else {
+                            this.check_agent_providers(cx);
+                        }
+                    }
+                    Err(error) => {
+                        this.agent.updates[row] = ProviderUpdateRun::Failed(error);
+                        // The output is in the details, so they open on it.
+                        this.agent.expanded_providers[row] = true;
+                    }
+                }
+                cx.notify();
+            });
+        });
+        self.agent.updates[row] = ProviderUpdateRun::Running(task);
+    }
+
+    /// What a provider row says about its connection: a toned badge, then the version and the
+    /// number of models, all quiet. Release news is the row's action, not part of this line.
     fn agent_provider_status(&self, row: usize) -> AnyElement {
         let status = self.agent.provider_status[row].as_ref();
         let current = self.agent_provider_status_is_current(row);
-        let label = if !current {
-            Key::AgentProviderCheckNeeded
+        let checking = current && status.is_none() && self.agent.checking_providers;
+        let (label, tone) = if !current {
+            (Key::AgentProviderCheckNeeded, atelier::Tone::Neutral)
         } else if let Some(status) = status {
             match (status.error.is_some(), status.models) {
-                (false, Some(0)) => Key::AgentProviderNoModels,
-                (false, Some(_)) => Key::AgentProviderConnected,
-                _ => Key::AgentProviderUnavailable,
+                (false, Some(0)) => (Key::AgentProviderNoModels, atelier::Tone::Warning),
+                (false, Some(_)) => (Key::AgentProviderConnected, atelier::Tone::Success),
+                // A CLI that was not found is a choice not taken yet, not a fault.
+                _ if row < 4 && status.executable.is_none() => {
+                    (Key::AgentProviderNotInstalled, atelier::Tone::Neutral)
+                }
+                _ => (Key::AgentProviderUnavailable, atelier::Tone::Warning),
             }
         } else if self.agent.checking_providers {
-            Key::AgentProviderChecking
+            (Key::AgentProviderChecking, atelier::Tone::Neutral)
         } else {
-            Key::AgentProviderUnavailable
+            (Key::AgentProviderUnavailable, atelier::Tone::Warning)
         };
         let mut line = div()
             .id(("agent-provider-status", row))
@@ -300,53 +427,123 @@ impl SettingsWindow {
             .flex_wrap()
             .items_center()
             .gap_2()
-            .text_xs()
+            .text_size(self.theme.atelier.typography.size_xs)
             .text_color(self.theme.text_muted)
-            .child(
-                div()
-                    .px_2()
-                    .py_0p5()
-                    .rounded(Metrics::RADIUS_SM)
-                    .bg(self.theme.surface_sunken)
-                    .text_color(
-                        if current && status.is_some_and(|status| status.error.is_some()) {
-                            self.theme.warning
-                        } else {
-                            self.theme.text
-                        },
-                    )
-                    .child(self.t(label)),
-            );
+            .when(checking, |line| {
+                line.child(crate::ui::widgets::activity_indicator(
+                    gpui::ElementId::Name(format!("agent-provider-checking-{row}").into()),
+                    self.theme.text_muted,
+                ))
+            })
+            .child(if checking {
+                div().child(self.t(label)).into_any_element()
+            } else {
+                atelier::Badge::new(self.t(label))
+                    .tone(tone)
+                    .dot()
+                    .into_any_element()
+            });
         if current && let Some(status) = status {
+            let mut facts = Vec::new();
             if let Some(version) = &status.version {
-                line = line.child(div().child(version.clone()));
-            } else if row < 4 {
-                line = line.child(div().child(self.t(Key::AgentProviderVersionUnknown)));
+                facts.push(short_version(version));
             }
-            if let Some(count) = status.models {
-                line = line.child(
-                    div().child(
-                        self.t(Key::AgentProviderModelCount)
-                            .replace("{count}", &count.to_string()),
-                    ),
+            if let Some(count) = status.models.filter(|_| status.error.is_none()) {
+                facts.push(
+                    self.t(Key::AgentProviderModelCount)
+                        .replace("{count}", &count.to_string()),
                 );
             }
-            match &status.update {
-                Some(auris_agent::ProviderUpdate::Available(version)) => {
-                    line = line.child(
-                        div().text_color(self.theme.warning).child(
-                            self.t(Key::AgentUpdateAvailable)
-                                .replace("{version}", version),
-                        ),
-                    );
-                }
-                Some(auris_agent::ProviderUpdate::Unavailable) => {
-                    line = line.child(self.t(Key::AgentUpdateUnknown));
-                }
-                _ => {}
+            if !facts.is_empty() {
+                line = line.child(div().child(facts.join(" · ")));
             }
         }
         line.into_any_element()
+    }
+
+    /// The action at the end of CLI row `row`: Update when a newer release can be installed from
+    /// here, How to update when it cannot, and what an update did once it has run.
+    fn agent_provider_action(&self, row: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let theme = &self.theme;
+        let status = self.agent.provider_status[row]
+            .as_ref()
+            .filter(|_| self.agent_provider_status_is_current(row));
+        let available = match status.and_then(|status| status.update.as_ref()) {
+            Some(auris_agent::ProviderUpdate::Available(version)) => Some(version.clone()),
+            _ => None,
+        };
+        let badge = |key: Key, tone: atelier::Tone| {
+            div()
+                .id(gpui::SharedString::from(format!(
+                    "agent-provider-update-state-{row}"
+                )))
+                .debug_selector(move || format!("agent-provider-update-state-{row}"))
+                .child(atelier::Badge::new(self.t(key)).tone(tone))
+                .into_any_element()
+        };
+        let action = match &self.agent.updates[row] {
+            ProviderUpdateRun::Running(_) => div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_size(theme.atelier.typography.size_sm)
+                .text_color(theme.text_muted)
+                .child(crate::ui::widgets::activity_indicator(
+                    gpui::ElementId::Name(format!("agent-provider-updating-{row}").into()),
+                    theme.accent,
+                ))
+                .child(self.t(Key::AgentUpdateRunning))
+                .into_any_element(),
+            ProviderUpdateRun::Done if available.is_none() => {
+                badge(Key::AgentUpdateDone, atelier::Tone::Success)
+            }
+            ProviderUpdateRun::Failed(_) if available.is_none() => {
+                badge(Key::AgentUpdateFailed, atelier::Tone::Danger)
+            }
+            _ => {
+                let version = available?;
+                let command = status.and_then(|status| status.update_command.as_ref());
+                let button = if let Some(command) = command {
+                    atelier::Button::new(
+                        gpui::SharedString::from(format!("agent-provider-update-{row}")),
+                        self.t(Key::AgentUpdate),
+                    )
+                    .primary()
+                    .icon(IconName::ArrowUp)
+                    .tooltip(
+                        self.t(Key::AgentUpdateRuns)
+                            .replace("{command}", &command.display()),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update_agent_provider(row, cx);
+                    }))
+                } else {
+                    atelier::Button::new(
+                        gpui::SharedString::from(format!("agent-provider-update-{row}")),
+                        self.t(Key::AgentUpdateManual),
+                    )
+                    .tooltip(self.t(Key::AgentUpdateManualHelp))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.agent.expanded_providers[row] = true;
+                        cx.notify();
+                    }))
+                };
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        atelier::Badge::new(
+                            self.t(Key::AgentUpdateAvailable)
+                                .replace("{version}", &version),
+                        )
+                        .tone(atelier::Tone::Accent),
+                    )
+                    .child(button.size(ControlSize::Small))
+                    .into_any_element()
+            }
+        };
+        Some(action)
     }
 
     fn apply_agent(&mut self, cx: &mut Context<Self>) {
@@ -616,16 +813,28 @@ impl SettingsWindow {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = &self.theme;
-        let expanded = self.agent.expanded_providers[index - 2];
+        let row = index - 2;
+        let expanded = self.agent.expanded_providers[row];
+        // The disclosure mark leads, as in a Finder list, so that the row's own action can sit
+        // at its end without the two reading as one control.
         let header = div()
             .flex()
             .items_center()
             .gap_3()
             .w_full()
             .min_w_0()
+            .child(icon(
+                if expanded {
+                    Icon::ChevronDown
+                } else {
+                    Icon::ChevronRight
+                },
+                Metrics::DISCLOSURE_INDICATOR_SIZE,
+                theme.text_muted,
+            ))
             .child(
                 div()
-                    .size_10()
+                    .size_9()
                     .flex_shrink_0()
                     .flex()
                     .items_center()
@@ -642,17 +851,9 @@ impl SettingsWindow {
                     .flex_col()
                     .gap_1()
                     .child(div().text_sm().text_color(theme.text).child(name))
-                    .child(self.agent_provider_status(index - 2)),
-            )
-            .child(icon(
-                if expanded {
-                    Icon::ChevronDown
-                } else {
-                    Icon::ChevronRight
-                },
-                Metrics::DISCLOSURE_INDICATOR_SIZE,
-                theme.text_muted,
-            ));
+                    .child(self.agent_provider_status(row)),
+            );
+        let action = self.agent_provider_action(row, cx);
         div()
             .w_full()
             .min_w_0()
@@ -662,58 +863,99 @@ impl SettingsWindow {
             .border_b_1()
             .border_color(theme.border_subtle)
             .child(
-                button_with_content(
-                    ("agent-provider-details", index),
-                    header,
-                    ButtonStyle::Ghost,
-                    crate::ui::widgets::ButtonState::Enabled(crate::ui::widgets::Latch::Off),
-                    theme.accent,
-                    theme,
-                    cx.listener(move |this, _, _, cx| {
-                        this.agent.expanded_providers[index - 2] =
-                            !this.agent.expanded_providers[index - 2];
-                        cx.notify();
-                    }),
-                )
-                .h_auto()
-                .w_full()
-                .min_w_0()
-                .p_3(),
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        button_with_content(
+                            ("agent-provider-details", index),
+                            header,
+                            ButtonStyle::Ghost,
+                            crate::ui::widgets::ButtonState::Enabled(
+                                crate::ui::widgets::Latch::Off,
+                            ),
+                            theme.accent,
+                            theme,
+                            cx.listener(move |this, _, _, cx| {
+                                this.agent.expanded_providers[row] =
+                                    !this.agent.expanded_providers[row];
+                                cx.notify();
+                            }),
+                        )
+                        .h_auto()
+                        .flex_1()
+                        .min_w_0()
+                        .p_3(),
+                    )
+                    .children(action.map(|action| div().flex_none().pr_3().child(action))),
             )
             .when(expanded, |view| {
-                let status = self.agent.provider_status[index - 2]
+                let status = self.agent.provider_status[row]
                     .as_ref()
-                    .filter(|_| self.agent_provider_status_is_current(index - 2));
+                    .filter(|_| self.agent_provider_status_is_current(row));
                 let mut details = div()
                     .w_full()
                     .min_w_0()
-                    .px_3()
+                    .pl(gpui::px(52.))
+                    .pr_3()
                     .pb_4()
                     .flex()
                     .flex_col()
-                    .gap_2()
-                    .child(
-                        FormField::new(self.t(label))
-                            .description(self.t(help))
-                            .child(self.agent_field(index, cx)),
-                    );
-                let (name, logo, _help, url) = crate::setup_guide::AGENT_SETUP[index - 2];
-                details = details.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(provider_logo(logo, theme.text))
-                        .child(crate::setup_guide::setup_link(name, name, url, theme)),
-                );
-                if let Some(status) = status {
-                    if let Some(path) = &status.executable {
-                        details = details.child(note(&path.display().to_string(), theme));
-                    }
-                    if let Some(error) = &status.error {
-                        details = details.child(note(error, theme));
-                    }
+                    .gap_3();
+                if let ProviderUpdateRun::Failed(error) = &self.agent.updates[row] {
+                    details = details.child(problem(self.t(Key::AgentUpdateFailed), error, theme));
                 }
+                if let Some(error) = status.and_then(|status| status.error.as_ref()) {
+                    details =
+                        details.child(problem(self.t(Key::AgentProviderUnavailable), error, theme));
+                }
+                if let Some(path) = status.and_then(|status| status.executable.as_ref()) {
+                    details = details.child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .text_size(theme.atelier.typography.size_sm)
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_color(theme.text_muted)
+                                    .child(self.t(Key::AgentProviderLocation)),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .text_color(theme.text)
+                                    .child(path.display().to_string()),
+                            ),
+                    );
+                }
+                if matches!(
+                    status.and_then(|status| status.update.as_ref()),
+                    Some(auris_agent::ProviderUpdate::Unavailable)
+                ) {
+                    details = details.child(note(self.t(Key::AgentUpdateUnknown), theme));
+                }
+                details = details.child(
+                    FormField::new(self.t(label))
+                        .description(self.t(help))
+                        .child(self.agent_field(index, cx)),
+                );
+                let (_, _, _, url) = crate::setup_guide::AGENT_SETUP[row];
+                const GUIDE: [&str; 4] = [
+                    "agent-provider-guide-0",
+                    "agent-provider-guide-1",
+                    "agent-provider-guide-2",
+                    "agent-provider-guide-3",
+                ];
+                details = details.child(crate::setup_guide::setup_link(
+                    GUIDE[row],
+                    self.t(Key::AgentProviderSetupGuide),
+                    url,
+                    theme,
+                ));
                 view.child(details)
             })
             .into_any_element()
@@ -789,31 +1031,21 @@ impl SettingsWindow {
                 .gap_3()
                 .child(div().text_lg().child(self.t(Key::AgentProviders)))
                 .child(
-                    crate::ui::widgets::button_enabled(
-                        "agent-check-providers",
-                        self.t(Key::AgentProviderCheck),
-                        ButtonStyle::Normal,
-                        crate::ui::widgets::ButtonState::available(
-                            false,
-                            !self.agent.checking_providers,
-                        ),
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, window, cx| {
+                    atelier::Button::new("agent-check-providers", self.t(Key::AgentProviderCheck))
+                        .icon(IconName::Refresh)
+                        .size(ControlSize::Small)
+                        .tooltip(self.t(Key::AgentProviderCheckHelp))
+                        .track_focus(&self.agent.provider_check_focus)
+                        .on_click(cx.listener(|this, _, window, cx| {
                             this.agent.active = None;
                             this.editing_search = false;
                             window.focus(&this.agent.provider_check_focus);
+                            this.agent.updates = Default::default();
                             this.check_agent_providers(cx);
-                        }),
-                    )
-                    .track_focus(&self.agent.provider_check_focus)
-                    .tab_index(0)
-                    .tab_stop(!self.agent.checking_providers)
-                    .focus(|view| view.border_color(theme.selection)),
+                        })),
                 )
                 .into_any_element(),
-            note(self.t(Key::AgentDiscoveryHelp), &theme),
-            note(self.t(Key::AgentProviderStatusHelp), &theme),
+            note(self.t(Key::AgentProvidersIntro), &theme),
             providers.into_any_element(),
             div()
                 .pt_4()
@@ -829,8 +1061,8 @@ impl SettingsWindow {
                     theme.text,
                 ))
                 .child(div().text_base().child(self.t(Key::AgentApiConnection)))
+                .child(self.agent_provider_status(4))
                 .into_any_element(),
-            self.agent_provider_status(4),
             FormField::new(self.t(Key::AgentProviderLabel))
                 .child(provider_control)
                 .into_any_element(),
@@ -846,7 +1078,11 @@ impl SettingsWindow {
                 .as_ref()
                 .and_then(|status| status.error.as_ref())
         {
-            rows.push(note(error, &theme));
+            rows.push(problem(
+                self.t(Key::AgentProviderUnavailable),
+                error,
+                &theme,
+            ));
         }
         if provider == "ollama" {
             let context = self.agent.prefs.context_tokens.unwrap_or(32768);
@@ -1099,6 +1335,100 @@ mod tests {
         cx.run_until_parked();
         handle
             .read_with(cx, |this, _| assert!(!this.agent.checking_providers))
+            .unwrap();
+    }
+
+    #[test]
+    fn versions_read_as_numbers_whatever_the_cli_prints_around_them() {
+        assert_eq!(short_version("2.1.322 (Claude Code)"), "v2.1.322");
+        assert_eq!(short_version("codex-cli 0.9.0"), "v0.9.0");
+        assert_eq!(short_version("v1.19.1"), "v1.19.1");
+        assert_eq!(short_version("nightly build"), "nightly build");
+    }
+
+    #[gpui::test]
+    fn a_newer_release_is_installed_from_its_row_and_checked_again(cx: &mut TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| this.open_settings(cx));
+        let handle = app.read_with(cx, |this, _| this.settings_window.unwrap());
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+        crate::harness::click("tab-agent", cx);
+        cx.run_until_parked();
+        let available = |command: Option<auris_agent::UpdateCommand>| auris_agent::ProviderStatus {
+            executable: Some("/fixture/claude".into()),
+            version: Some("2.1.0 (Claude Code)".into()),
+            models: Some(5),
+            update: Some(auris_agent::ProviderUpdate::Available("2.2.0".into())),
+            update_command: command,
+            ..Default::default()
+        };
+        handle
+            .update(cx, |this, _, cx| {
+                this.agent.checking_providers = false;
+                this.agent.provider_status[1] = Some(available(Some(auris_agent::UpdateCommand {
+                    program: "/fixture/claude".into(),
+                    args: vec!["update".into()],
+                })));
+                // Codex is out of date too, but installed some way Auris cannot update.
+                this.agent.provider_status[0] = Some(available(None));
+                cx.notify();
+            })
+            .unwrap();
+        cx.run_until_parked();
+        // A release that cannot be installed from here opens the instructions instead.
+        crate::harness::click("agent-provider-update-0", cx);
+        cx.run_until_parked();
+        handle
+            .read_with(cx, |this, _| assert!(this.agent.expanded_providers[0]))
+            .unwrap();
+
+        crate::harness::click("agent-provider-update-1", cx);
+        cx.run_until_parked();
+        handle
+            .read_with(cx, |this, _| {
+                assert!(matches!(
+                    this.agent.updates[1],
+                    ProviderUpdateRun::Running(_)
+                ));
+            })
+            .unwrap();
+        assert!(cx.debug_bounds("agent-provider-updating-1").is_some());
+
+        // A failure keeps the button for another try and opens the details on what it printed.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        handle
+            .update(cx, |this, _, cx| this.watch_agent_update(1, receiver, cx))
+            .unwrap();
+        sender
+            .send(Err("claude update failed: offline".into()))
+            .unwrap();
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(200));
+        cx.run_until_parked();
+        handle
+            .read_with(cx, |this, _| {
+                assert!(matches!(&this.agent.updates[1], ProviderUpdateRun::Failed(error) if error.contains("offline")));
+                assert!(this.agent.expanded_providers[1]);
+            })
+            .unwrap();
+        assert!(cx.debug_bounds("agent-provider-update-1").is_some());
+
+        // Success checks again, so that the row reads the version just installed.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        handle
+            .update(cx, |this, _, cx| this.watch_agent_update(1, receiver, cx))
+            .unwrap();
+        sender.send(Ok(())).unwrap();
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(200));
+        cx.run_until_parked();
+        handle
+            .read_with(cx, |this, _| {
+                assert!(matches!(this.agent.updates[1], ProviderUpdateRun::Done));
+                // The harness's check reports nothing, so the old status is simply gone.
+                assert!(this.agent.provider_status[1].is_none());
+            })
             .unwrap();
     }
 

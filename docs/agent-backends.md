@@ -136,9 +136,24 @@ their endpoint, model and API-key environment variable.
 
 The connection check also compares installed Codex, Claude Code and OpenCode versions
 with each project's latest public stable GitHub release. A newer release appears
-beside the installed version; expand the provider for installation/update guidance.
-Package-manager and managed release channels can lag behind public releases, so follow
-the update instructions for your installation method. Release queries are bounded,
+at the end of the provider's row with an **Update** button, which runs the same
+command a person would type for that installation, then checks again:
+
+| Installed as | Update runs |
+| --- | --- |
+| Claude Code (native, npm) | `claude update` |
+| Claude Code (Homebrew cask) | `brew upgrade --cask claude-code` |
+| OpenCode (any method) | `opencode upgrade` |
+| Codex (npm, pnpm, bun) | `npm install -g @openai/codex@latest` (or `pnpm add -g` / `bun add -g`) |
+| Codex (Homebrew) | `brew upgrade --cask codex` / `brew upgrade codex` |
+
+The method is read off where the executable really lives. When it cannot be (a Codex
+built from source, or a package manager that is not installed), the row offers
+**How to update** instead, which opens the provider's installation and update guide.
+A failed update shows the end of what the command printed in the provider's details;
+`npm install -g` into a system directory, for example, may need a terminal and `sudo`.
+Package-manager and managed release channels can lag behind public releases, so an
+update can finish with the row still showing a newer release. Release queries are bounded,
 unauthenticated and independent of model discovery. An unavailable or unrecognized
 version is reported as unavailable rather than current; preview versions are not
 compared with the stable channel.
