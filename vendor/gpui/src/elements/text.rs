@@ -334,7 +334,7 @@ impl TextLayout {
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
 
-        let mut runs = if let Some(runs) = runs {
+        let runs = if let Some(runs) = runs {
             runs
         } else {
             vec![text_style.to_run(text.len())]
@@ -388,16 +388,18 @@ impl TextLayout {
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                let text = if let Some(truncate_width) = truncate_width {
-                    line_wrapper.truncate_line(
-                        text.clone(),
-                        truncate_width,
-                        &truncation_suffix,
-                        &mut runs,
-                    )
-                } else {
-                    text.clone()
-                };
+                // This closure is asked for a size more than once, at different widths, so the
+                // runs it captured must stay the runs of the whole text. Truncation shortens the
+                // runs to the truncated text; done in place, the next, wider measurement got runs
+                // ending where the previous one had cut, ellipsis included, which in Japanese is
+                // inside a character, and DirectWrite slices the line at run boundaries.
+                let (text, runs) = truncate_for_width(
+                    &mut line_wrapper,
+                    &text,
+                    truncate_width,
+                    &truncation_suffix,
+                    &runs,
+                );
                 let len = text.len();
 
                 let Some(lines) = window
@@ -921,4 +923,25 @@ impl IntoElement for InteractiveText {
     fn into_element(self) -> Self::Element {
         self
     }
+}
+
+/// The text one measurement lays out, and the runs that style it.
+///
+/// `runs` are the runs of the whole of `text`, and are left as they are: the measure closure that
+/// calls this is asked again at other widths, and each answer has to start from the whole text.
+fn truncate_for_width(
+    line_wrapper: &mut crate::LineWrapper,
+    text: &SharedString,
+    truncate_width: Option<Pixels>,
+    truncation_suffix: &str,
+    runs: &[TextRun],
+) -> (SharedString, Vec<TextRun>) {
+    let mut runs = runs.to_vec();
+    let text = match truncate_width {
+        Some(width) => {
+            line_wrapper.truncate_line(text.clone(), width, truncation_suffix, &mut runs)
+        }
+        None => text.clone(),
+    };
+    (text, runs)
 }
