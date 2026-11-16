@@ -172,6 +172,9 @@ uv run tools/eval/accompaniment_parts.py intrinsic takes.jsonl
 uv run tools/eval/accompaniment_parts.py kit corpus/
 cargo run --release -p auris-compose --example dump_parts -- --sweep > sweep.jsonl
 uv run tools/eval/accompaniment_parts.py sweep sweep.jsonl
+cargo run --release -p auris-compose --example dump_parts -- --neutral --seeds 500 > neutral.jsonl
+uv run tools/eval/accompaniment_parts.py corpus neutral.jsonl corpus/
+uv run tools/eval/accompaniment_parts.py together neutral.jsonl
 ```
 
 The instrument for the parts `write_phrase` puts under a tune: the bass, the chords, the pad,
@@ -182,14 +185,19 @@ about how it sounds; run it on the commit before a change to a writer and on the
 and 24 seeds for each pitched part, and eight grooves at three densities and three intensities
 for the kit — 12,102 takes. `--seeds N` changes the run of seeds, and `--sweep` writes the two
 dials that are read as a curve instead, the chords' density from 0.6 to 1.0 and the kit's from
-0.3 to 0.8.
+0.3 to 0.8. `--neutral` writes only what nobody has set — every part with no idiom at the default
+density, the lead among them, the bass again under each groove's kick and the kit in every
+groove — which is the dump to count a share over, at five hundred seeds or a thousand.
 
 `corpus` measures the bass and the kit beside the bass and drum tracks of a folder of MIDI
 files, on one ruler: everything quantised to sixteenths of 4/4 and cut into sixteen-bar windows.
 `intrinsic` reads the pitched takes against the chords they were written over, which the dump
 carries, and is all there is for the chords, the pad and the arpeggio: no score in the corpus
 below carries one of them apart from the tune it accompanies. `kit` prints where a corpus's
-kits put a crash, an open hat and a tom and what their fill bars look like. `sweep` reads the
+kits put a crash, an open hat and a tom and what their fill bars look like. `together` reads
+the `--neutral` dump, which holds a lead beside the parts under it, and prints how they sit
+against each other: what is struck a semitone from the tune or above it, and what is struck
+under the bass. `sweep` reads the
 `--sweep` dump and prints the two dials as curves, which is how a cliff in one shows: the
 chords used to strike 4.2 times a bar at a density of 0.75 and 6.8 at 0.76.
 
@@ -200,26 +208,35 @@ two strokes of a timekeeper, since a tambourine part is not a kit playing time. 
 one with three snare and tom strokes more than the window's commonest bar has — the commonest
 and not the median, which a kit that ghosts a stroke in every second bar lifts by half a stroke,
 enough to hide half its own fills. Unstyled takes
-at the default density, the kit's over its eight grooves, stood here when the tool was written:
+at the default density stand here, over five hundred seeds — 3,000 bass lines and 4,500 kits, the
+kit's over its nine grooves:
 
 | A bass line | Corpus | Takes |
 | --- | --- | --- |
-| Notes in a bar | 5.4 | 5.1 |
-| Onset spacings of an eighth | 46% | 49% |
-| Onset spacings of a dotted quarter | 5% | 9% |
-| Intervals that repeat the note | 42% | 40% |
-| Time sounding | 87% | 92% |
-| Bars that strike their downbeat | 89% | 87% |
-| Bars with the rhythm of the bar before | 39% | 31% |
-| Different bar rhythms in sixteen bars | 5.1 | 3.7 |
+| Notes in a bar | 5.4 (4.8–6.1) | 5.1 |
+| Onset spacings of an eighth | 46% (37–54) | 49% |
+| Onset spacings of a dotted quarter | 5% (3–8) | 12% |
+| Intervals that repeat the note | 42% (34–49) | 47% |
+| Mean pitch | 38.6 (37.4–39.6) | 38.4 |
+| Time sounding | 87% (83–90) | 90% |
+| Bars that strike their downbeat | 89% (85–94) | 94% |
+| Notes tied over a bar line, in sixteen bars | 0.9 (0.3–1.5) | 0.9 |
+| Bars with the rhythm of the bar before | 39% (31–47) | 38% |
+| Different bar rhythms in sixteen bars | 5.1 (4.4–5.8) | 3.5 |
 
 | A kit | Corpus | Takes |
 | --- | --- | --- |
-| Different bars in sixteen | 6.1 | 4.8 |
-| Fill bars in sixteen | 1.5 | 1.5 |
-| Kick strokes in a bar | 3.0 | 3.4 |
-| Sixteen bars that strike a crash | 66% | 67% |
-| Sixteen bars that strike a tom | 39% | 45% |
+| Different bars in sixteen | 6.1 (5.2–7.1) | 5.2 |
+| Bars the same as the bar before | 35% (23–48) | 36% |
+| Fill bars in sixteen | 1.5 (1.0–2.0) | 1.3 |
+| Kick strokes in a bar | 3.0 (2.7–3.5) | 3.2 |
+| Sixteen bars that strike a crash | 66% (51–82) | 68% |
+| Sixteen bars that strike a tom | 39% (24–53) | 45% |
+| Sixteen bars that open a hat | 32% (18–49) | 31% |
+
+The brackets are a 95% interval for the corpus's mean, from drawing its files again with
+replacement. A take's figure inside them is not a difference worth closing; the report marks the
+ones outside.
 
 Three things to know before reading a difference. The corpus is scores somebody transcribed
 and not performances, so a figure from it is a direction and never a target; it carries no
@@ -227,8 +244,9 @@ velocities worth reading at all. A window is cut from the top of the file and do
 with a song's sections, so nothing here says which bar of a phrase a fill or a crash belongs
 in: both come out evenly spread over the bars of a four-bar phrase. And a share needs seeds. A
 take draws its figure once, so 24 seeds are 24 draws however many charts they are multiplied
-by; a crash meant for two takes in three measured nine in ten that way, and the last two rows
-of the kit table are counted over a thousand.
+by; a crash meant for two takes in three measured nine in ten that way, and a bass that
+measured 92 hundredths of the time sounding over 24 seeds measured 94 over five hundred, outside
+the corpus's interval where the first figure had looked inside it.
 
 The corpus stays on the machine that holds it, and so does anything counted from one song.
 
@@ -244,6 +262,12 @@ what the score linter finds in each. No model composes anything, so two builds g
 seeds differ only by what their writers write. Render each with `auris render`, gain-match and
 score them as below, and compare song by song: the pairs are the evidence, not the means.
 These are instrumentals, so SongEval and Audiobox are the scorers to read.
+
+To find which part moved a score, render both builds' projects with `auris render --stems`, sum
+the five stems of a song with one part taken from the other build, gain-match each sum the same
+way, and score those: the sums of a song then differ by one part. Done for the changes of #272
+and #273, the kit accounted for all of SongEval's gain and the kit and the arpeggio for
+Audiobox's loss, and the chords and the bass moved neither.
 
 ## Melody against the lyric's accent
 

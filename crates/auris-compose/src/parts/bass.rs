@@ -18,7 +18,7 @@ use crate::theory::chord_scale::ChordScale;
 use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 
 use super::writer::{
-    band_pushes, bar_stream, density, lift_before, part_grid, phrase_shape, velocity,
+    band_pushes, bar_stream, breath_before, density, lift_before, part_grid, phrase_shape, velocity,
 };
 use super::{Draft, ScoreSettings};
 
@@ -284,18 +284,24 @@ impl Turn {
     }
 }
 
-/// Where a note lets go when the note after it is on a backbeat, as a step of the bar: half
-/// a beat before it, or `None` to hold into it.
+/// How many takes let a note go before the next: see `lift_before` and `breath_before`.
 ///
-/// `lift_before` makes room before a syncopated hit, and a line on the beats has none: every
-/// note of it ran into the next. In the corpus a note a beat from the next is followed by a
-/// rest three times in ten, and sounds for half the beat when it is. Two and four are where:
-/// the snare is struck there, and a bass that lets go just before it leaves the backbeat its
-/// attack. With half the takes lifting, that is one such note in four.
-fn breath_before(grid: crate::rhythm::Grid, here: usize, next: usize) -> Option<usize> {
-    let beat = grid.steps_per_beat().max(1);
-    let half = (beat / 2).max(1);
-    (grid.weight(next) == 2 && next >= here + beat).then(|| next - half)
+/// Half of them was the first figure, and over 24 seeds it measured as it should. Over 3,000
+/// takes a line sounded 94 hundredths of the time, outside what the corpus's lines can be said
+/// to do: 87, and between 83 and 90 whichever of its files are drawn. A lifting take sounds
+/// 88 hundredths and a holding one all of it, so the corpus is mostly lifting takes.
+const LIFTS: f32 = 0.85;
+
+/// Where a bass puts a chord's root: the twelve notes from a fourth above the bottom of its
+/// range, A1 to G♯2 for a bass nobody has moved.
+///
+/// The roots used to sit in the octave the part's octave names, C2 to B2, and a line averaged
+/// E2 where the corpus's lines average D2 and reach G1 — two and a half semitones lower, well
+/// outside the interval on their mean. A bass player takes A and B on the string below, not at
+/// the top of the neck.
+fn root_window(low: i32, high: i32) -> (i32, i32) {
+    let floor = (low + 5).min(high);
+    (floor, (floor + OCTAVE - 1).min(high))
 }
 
 /// What a root-and-fifth line is played on.
@@ -385,7 +391,7 @@ pub(super) fn bass(
     let section_figure = pick_figure(&mut choose, busy, settings.style);
     // Whether this player lets go before a syncopated hit or holds into it: a property of the
     // take, like the figure. See `lift_before`.
-    let lifting = choose.chance(0.5);
+    let lifting = choose.chance(LIFTS);
     // Without a chosen idiom, a take can voice its fifth above or below the root, and keeps
     // that relationship throughout. Styled parts retain the register their vocabulary
     // establishes.
@@ -398,7 +404,12 @@ pub(super) fn bass(
     let mut pushed_in = false;
 
     for (position_in_section, event) in section.events.iter().enumerate() {
-        let root = fold_into(event.chord.bass_class().midi(part.octave), low, high);
+        let (root_low, root_high) = root_window(low, high);
+        let root = fold_into(
+            event.chord.bass_class().midi(part.octave),
+            root_low,
+            root_high,
+        );
         // The chord's own fifth, read off the chord rather than assumed perfect and measured
         // from the chord's root rather than from a slash bass. A blind `root + 7` played F# over
         // a B diminished and a C over a G/F — notes in neither the chord nor the key.
@@ -535,8 +546,7 @@ pub(super) fn bass(
                 .events
                 .get(position_in_section + 1)
                 .is_some_and(|next| {
-                    next.start == event.end()
-                        && band_pushes(&event.chord, &next.chord, settings.mood.syncopation)
+                    next.start == event.end() && band_pushes(event, next, settings.mood.syncopation)
                 })
             && !section.continues_chord(position_in_section + 1);
         let varies = part.rhythm.is_none()
@@ -556,7 +566,10 @@ pub(super) fn bass(
             half
         };
         let pickup = steps - half;
-        let running_up = closing && turn != Turn::Plain && steps > 2 * stride;
+        // Only a bar that would have picked up runs: one that drew a dropped note drops it.
+        // With every turn but the plain one running, 38 bar lines in a hundred were stepped
+        // into, where the corpus's lines step into 26 and no more than 31.
+        let running_up = closing && matches!(turn, Turn::Add | Turn::Move) && steps > 2 * stride;
         if running_up {
             // The run owns the end of the bar: nothing of the figure is struck inside it.
             onsets.retain(|offset| *offset < steps - 2 * stride);
@@ -586,10 +599,13 @@ pub(super) fn bass(
         let approaching = figure == BassFigure::Approach || picking_up;
 
         // Where the next chord's root is, for a line that steps into it.
-        let target = section
-            .events
-            .get(position_in_section + 1)
-            .map(|next| fold_into(next.chord.bass_class().midi(part.octave), low, high));
+        let target = section.events.get(position_in_section + 1).map(|next| {
+            fold_into(
+                next.chord.bass_class().midi(part.octave),
+                root_low,
+                root_high,
+            )
+        });
 
         // The whole walk at once, because a walking bass is a line rather than a series of
         // answers: each beat is chosen by where the last one was and where the next chord is,

@@ -817,9 +817,9 @@ mod tests {
                 assert!(pushed(&write(ClipPreset::Bass, seed * 31, 0.0), 8).is_empty());
             }
         }
-        // Six changes in ten at the top of the dial: some of these forty-two, and not all.
+        // A quarter of all changes at the top of the dial: some of these forty-two, not most.
         assert!(
-            (8..36).contains(&pushed_changes),
+            (2..24).contains(&pushed_changes),
             "{pushed_changes} of {} changes are pushed",
             charts.len() * 7
         );
@@ -1060,7 +1060,7 @@ mod tests {
             ClipPreset::Drums => 0.97,
             ClipPreset::Snare => 0.92,
             // A lone kick answers with a kick on the one offbeat eighth basic-rock leaves free,
-            // or with nothing, so two takes of it are the same line half the time.
+            // in three cells in ten, and which cells is all two takes of it differ by.
             ClipPreset::Kick => 0.995,
             // And the hat has no room at all. It is the pulse: its line spells strokes and
             // never ghosts, the pattern as spelled always plays, and it has no answer because

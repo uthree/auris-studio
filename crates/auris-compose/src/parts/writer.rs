@@ -16,7 +16,7 @@ use crate::frame::{Frame, SectionPlan};
 use crate::rhythm::{Accent, Grid, Pattern};
 use crate::rng::{Key as RngKey, Rng};
 use crate::spec::{PartSpec, Role};
-use crate::theory::chord::Chord;
+use crate::theory::chart::HarmonicEvent;
 
 use super::ScoreSettings;
 
@@ -190,23 +190,33 @@ pub(super) fn bar_stream(
 /// pushes the same change every time it comes round, which is how a band plays one: the
 /// anticipation is part of the tune, into the same chord each time.
 ///
+/// The key is in degrees, not note names: the same progression pushes the same change in
+/// whatever key it is played, and a song that modulates carries its anticipation with it.
+///
 /// The price is that another take of a part cannot change it: which changes push is a fact
 /// about the song. The dial still decides, the same way every time — each change has one
-/// number, and is pushed once the dial is past it. The top of the dial pushes six in ten.
-pub(super) fn band_pushes(from: &Chord, to: &Chord, syncopation: f32) -> bool {
-    let class = |class: crate::theory::pitch::PitchClass| {
-        RngKey::Index(i64::from(class.semitones()).unsigned_abs())
+/// number, and is pushed once the dial is past it. The top of the dial pushes a quarter of
+/// them. It was six in ten, the comp's own old rate, and at the default dial a bass then tied
+/// two notes over a bar line in sixteen bars where the bass lines of a pop and rock score
+/// corpus tie 0.9, and no more than 1.5 whichever of its files are drawn — and those are all
+/// its ties, not only its pushes.
+pub(super) fn band_pushes(from: &HarmonicEvent, to: &HarmonicEvent, syncopation: f32) -> bool {
+    let degree = |event: &HarmonicEvent, class: crate::theory::pitch::PitchClass| {
+        RngKey::Index(i64::from(event.key.tonic.distance_up_to(class)).unsigned_abs())
     };
     let path = [
         RngKey::Word("band"),
         RngKey::Word("push"),
-        class(from.root),
-        class(from.bass_class()),
-        class(to.root),
-        class(to.bass_class()),
+        degree(from, from.chord.root),
+        degree(from, from.chord.bass_class()),
+        degree(to, to.chord.root),
+        degree(to, to.chord.bass_class()),
     ];
-    Rng::stream(0, &path).chance((syncopation * 0.6).clamp(0.0, 0.6))
+    Rng::stream(0, &path).chance((syncopation * PUSHED).clamp(0.0, PUSHED))
 }
+
+/// The share of chord changes the top of the syncopation dial pushes. See [`band_pushes`].
+const PUSHED: f32 = 0.25;
 
 /// Where a note lets go when the note after it is syncopated, as a step of the bar: the last
 /// beat before that note, or `None` to hold into it.
@@ -225,6 +235,20 @@ pub(super) fn lift_before(grid: Grid, here: usize, next: usize) -> Option<usize>
     let beat = grid.steps_per_beat().max(1);
     let boundary = next / beat * beat;
     (boundary > here).then_some(boundary)
+}
+
+/// Where a note lets go when the note after it is on a backbeat, as a step of the bar: half
+/// a beat before it, or `None` to hold into it.
+///
+/// [`lift_before`] makes room before a syncopated hit, and a line on the beats has none: every
+/// note of it ran into the next. In the corpus a bass note a beat from the next is followed by
+/// a rest three times in ten, and sounds for half the beat when it is. Two and four are where:
+/// the snare is struck there, and a part that lets go just before it leaves the backbeat its
+/// attack. The comp breathes by the same rule, for the same reason.
+pub(super) fn breath_before(grid: Grid, here: usize, next: usize) -> Option<usize> {
+    let beat = grid.steps_per_beat().max(1);
+    let half = (beat / 2).max(1);
+    (grid.weight(next) == 2 && next >= here + beat).then(|| next - half)
 }
 
 /// Picks the onsets of one bar, either from a written rhythm or by rolling one.

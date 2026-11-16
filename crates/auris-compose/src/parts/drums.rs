@@ -187,8 +187,12 @@ pub(super) fn drums(
         }
         // The cell's last bar takes the answer, wherever the dial's own strokes left room for
         // it and the fill has not taken the bar over.
+        //
+        // Not every cell: each draws whether it answers. What the answer is belongs to the
+        // take, and when it is said belongs to the cell. See `ANSWERS`.
         if cell + 1 == CELL_BARS
             && let Some((step, accent)) = answer
+            && bar_stream(frame, part, section, "answers", bar / CELL_BARS).chance(ANSWERS)
             && !played[step]
             && !filled_from.is_some_and(|from| step >= from)
         {
@@ -358,6 +362,18 @@ fn answer(
     let (step, accent) = *open.get(pick)?;
     (stays < kept(grid.weight(step), dialled)).then_some((step, accent))
 }
+
+/// How many cells of a voice answer.
+///
+/// Every cell did, in nearly every take, and a kit was then a strict two-bar pattern: the bar
+/// two before and not the bar before 54 times in a hundred on the kick and 64 on the snare,
+/// where the kit tracks of a pop and rock score corpus do that 19 and 15 times and play the bar
+/// before again 60 and 62. Their kits vary, but not on a clock. Deciding once for a take
+/// whether it answered at all could meet one of those figures and not the other: a take that
+/// answers every cell is all two-bar pattern and a take that never does is none. So each cell
+/// draws. Three in ten puts the bar before at about seven in ten and the two-bar pattern at
+/// about two.
+const ANSWERS: f32 = 0.3;
 
 /// What an accent multiplies a drum stroke by.
 ///
@@ -697,11 +713,18 @@ mod tests {
                     for name in ["kick", "snare", "hat"] {
                         let voice = part(&parts, name);
                         for bar in CELL_BARS..8 {
-                            assert_eq!(
-                                bar_steps(&frame, voice, bar),
-                                bar_steps(&frame, voice, bar - CELL_BARS),
+                            // Give or take the answer, which each cell draws for itself: one
+                            // stroke, in the cell's second bar, never on the hat.
+                            let now = bar_steps(&frame, voice, bar);
+                            let before = bar_steps(&frame, voice, bar - CELL_BARS);
+                            let differing =
+                                now.iter().filter(|step| !before.contains(step)).count()
+                                    + before.iter().filter(|step| !now.contains(step)).count();
+                            let allowed = usize::from(name != "hat" && bar % CELL_BARS == 1);
+                            assert!(
+                                differing <= allowed,
                                 "{groove} at {density}, seed {seed}: the {name} of bar {bar} is \
-                                 not the bar two before it"
+                                 {now:?}, and two bars before it {before:?}"
                             );
                         }
                     }

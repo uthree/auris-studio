@@ -7,7 +7,9 @@ from accompaniment_parts import (
     bass_measures,
     bass_row,
     drum_measures,
+    interval,
     read_midi,
+    together_row,
     windows,
 )
 
@@ -165,3 +167,32 @@ def test_a_bass_note_is_named_by_its_place_in_the_chord_under_it() -> None:
     assert row["role fifth"] == 1 / 5
     assert row["role third"] == 1 / 5
     assert row["role non-chord"] == 1 / 5
+
+
+def test_a_corpus_interval_resamples_files_not_windows() -> None:
+    # Two files that disagree, one of them cut into nine windows: the mean of the windows is
+    # 0.9, and the interval still reaches from one file to the other.
+    rows = [(0, {"sounding": 1.0})] * 9 + [(1, {"sounding": 0.0})]
+    low, high = interval(rows)["sounding"]
+    assert low == 0.0
+    assert high == 1.0
+    # One file is no evidence of a spread at all.
+    assert interval([(0, {"sounding": 1.0})] * 9) == {}
+
+
+def test_parts_are_read_against_each_other_where_they_are_struck() -> None:
+    # A tune on E4 for a bar. The chords strike C-E-G under it, then C-F-A: F is a semitone
+    # from the tune. The bass holds C2, and the pad strikes a B1 under it.
+    lead = [[0, 3840, 64, 0.8, ""]]
+    chords = [[0, 1920, pitch, 0.7, ""] for pitch in (48, 52, 55)]
+    chords += [[1920, 1920, pitch, 0.7, ""] for pitch in (48, 53, 57)]
+    bass = [[0, 3840, 36, 0.8, ""]]
+    pad = [[0, 3840, 35, 0.6, ""]]
+    arp = [[0, 480, 72, 0.6, ""], [480, 480, 52, 0.6, ""]]
+    row = together_row(lead, chords, bass, arp, pad)
+    assert row["chords: strikes a semitone from the tune"] == 0.5
+    assert row["chords: strikes with a note above the tune"] == 0.0
+    assert row["pad: strikes with a note under the bass"] == 1.0
+    assert row["chords: strikes with a note under the bass"] == 0.0
+    assert row["arp: strikes with a note above the tune"] == 0.5
+    assert row["arp: notes inside the chords' voicing"] == 0.5
