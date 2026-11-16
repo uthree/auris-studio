@@ -149,6 +149,60 @@ pub fn write_phrase(
     recipe: &ClipRecipe,
     section: Option<(&str, usize)>,
 ) -> Vec<Note> {
+    write_reaching(harmony, start, length, meter, recipe, section, None)
+}
+
+/// The drums one voice of a split kit may reach for, as the notes its kit's map assigns them.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+struct Reach {
+    crash: Option<u8>,
+    tom: Option<u8>,
+}
+
+/// What `voice` of the split kit `kit` reaches for.
+///
+/// A kit becomes its voices the moment somebody edits one of their rhythms, and a voice is
+/// written as a clip of one drum — which reaches for nothing. So the first rewrite after an
+/// edit to the kick's rhythm took the crash and the tom away from a hat and a snare nobody had
+/// touched. The kit's map still says which notes they are, and the hat and the snare are still
+/// the hands that reach: the first voice of each role, and not at all when the kit already has
+/// a voice of its own for that drum, whose strokes somebody wrote.
+fn reached(kit: &ClipRecipe, voice: &auris_core::DrumVoiceRecipe) -> Reach {
+    let mut reach = Reach::default();
+    let Some(map) = &kit.drum_map else {
+        return reach;
+    };
+    let first_of_its_role = kit
+        .drum_voices
+        .iter()
+        .find(|other| other.role == voice.role)
+        .is_some_and(|first| std::ptr::eq(first, voice));
+    for extra in kit_reach(ClipPreset::Drums) {
+        if !first_of_its_role
+            || extra.hand.drum_role() != Some(voice.role)
+            || kit.drum_voices.iter().any(|other| other.role == extra.role)
+        {
+            continue;
+        }
+        let note = map.voices.get(&extra.role).copied();
+        match extra.voice {
+            DrumVoice::Crash => reach.crash = note,
+            _ => reach.tom = note,
+        }
+    }
+    reach
+}
+
+/// [`write_phrase`], with what a split kit's voice reaches for handed in: see [`reached`].
+fn write_reaching(
+    harmony: &Harmony,
+    start: Ticks,
+    length: Ticks,
+    meter: TimeSignature,
+    recipe: &ClipRecipe,
+    section: Option<(&str, usize)>,
+    reach: Option<Reach>,
+) -> Vec<Note> {
     if recipe.preset == ClipPreset::Drums && !recipe.drum_voices.is_empty() {
         let mut notes = Vec::new();
         for voice in &recipe.drum_voices {
@@ -166,7 +220,8 @@ pub fn write_phrase(
                     writer.drum_voices.clear();
                     writer.drum_map = None;
                     writer.drum_note = Some(note.min(127));
-                    write_phrase(harmony, start, length, meter, &writer, section)
+                    let reach = Some(reached(recipe, voice));
+                    write_reaching(harmony, start, length, meter, &writer, section, reach)
                 }
                 None => voice.fixed_notes.clone(),
             };
@@ -174,8 +229,16 @@ pub fn write_phrase(
                 if written.start < Ticks::ZERO || written.start >= length {
                     return None;
                 }
-                written.drum_voice = voice.name.clone();
-                written.pitch = note.min(127);
+                // A drum the voice reached for keeps its own note and its own name; everything
+                // else is the voice's.
+                let reached = written.pitch != note.min(127)
+                    && kit_reach(ClipPreset::Drums)
+                        .iter()
+                        .any(|reach| reach.name == written.drum_voice);
+                if !reached {
+                    written.drum_voice = voice.name.clone();
+                    written.pitch = note.min(127);
+                }
                 written.length = written.length.min(length - written.start).max(Ticks(1));
                 Some(written)
             }));
@@ -273,6 +336,15 @@ pub fn write_phrase(
                 match reach.voice {
                     DrumVoice::Crash => part.crash = note,
                     _ => part.tom = note,
+                }
+            }
+            // One voice of a split kit is a clip of one drum, and reaches for what its kit
+            // says it may.
+            if let Some(reach) = reach {
+                match role {
+                    Role::Hat => part.crash = reach.crash,
+                    Role::Snare => part.tom = reach.tom,
+                    _ => {}
                 }
             }
             // A register somebody asked for, on top of the one the role implies. The one the
@@ -531,6 +603,100 @@ mod tests {
         let kit = pitches(ClipPreset::Drums);
         assert!([36, 38, 42].iter().all(|pitch| kit.contains(pitch)));
         assert!(kit.iter().all(|pitch| [36, 38, 42, 47, 49].contains(pitch)));
+    }
+
+    #[test]
+    fn a_kit_split_into_its_voices_still_reaches_for_the_crash_and_the_tom() {
+        use auris_core::DrumVoiceRecipe;
+        use auris_core::project::{DrumMap, DrumRole};
+        // What editing one rhythm in the grid does to a kit: every part becomes a voice with
+        // a writer of its own. The first rewrite after that used to lose the crash and the
+        // tom, from a hat and a snare nobody had touched.
+        let split = |seed: u64| {
+            let mut kit = ClipRecipe::new(ClipPreset::Drums, seed);
+            kit.fill = 1.0;
+            kit.intensity = 1.0;
+            kit.drum_map = Some(DrumMap::from_voices([
+                (DrumRole::Kick, 36),
+                (DrumRole::Snare, 38),
+                (DrumRole::ClosedHat, 42),
+                (DrumRole::Crash, 49),
+                (DrumRole::Tom, 47),
+            ]));
+            for (name, role, preset, note) in [
+                ("kick", DrumRole::Kick, ClipPreset::Kick, 36),
+                ("snare", DrumRole::Snare, ClipPreset::Snare, 38),
+                ("hat", DrumRole::ClosedHat, ClipPreset::Hat, 42),
+            ] {
+                let mut writer = kit.clone();
+                writer.preset = preset;
+                writer.drum_voices.clear();
+                writer.drum_map = None;
+                writer.drum_note = Some(note);
+                kit.drum_voices.push(DrumVoiceRecipe {
+                    name: name.into(),
+                    role,
+                    note,
+                    recipe: Some(Box::new(writer)),
+                    fixed_notes: Vec::new(),
+                });
+            }
+            kit
+        };
+        let write = |recipe: &ClipRecipe| {
+            write_phrase(&axis(), Ticks::ZERO, BAR * 16, four_four(), recipe, None)
+        };
+        let voices = |notes: &[Note], voice: &str| -> Vec<u8> {
+            let mut pitches: Vec<u8> = notes
+                .iter()
+                .filter(|note| note.drum_voice == voice)
+                .map(|note| note.pitch)
+                .collect();
+            pitches.sort_unstable();
+            pitches.dedup();
+            pitches
+        };
+        let mut travelled = 0;
+        for seed in 0..16u64 {
+            let kit = split(seed);
+            let notes = write(&kit);
+            assert_eq!(voices(&notes, "crash"), vec![49], "seed {seed}");
+            assert_eq!(voices(&notes, "hat"), vec![42]);
+            assert_eq!(voices(&notes, "snare"), vec![38]);
+            travelled += usize::from(voices(&notes, "tom") == vec![47]);
+
+            // A hat whose rhythm somebody wrote plays what was written, and crashes nowhere.
+            let mut authored = kit.clone();
+            authored.drum_voices[2].recipe.as_mut().unwrap().rhythm = Some("x.x.x.x.".into());
+            assert!(voices(&write(&authored), "crash").is_empty());
+
+            // A kit with a crash voice of its own has had its crashes written for it.
+            let mut accented = kit.clone();
+            accented.drum_voices.push(DrumVoiceRecipe {
+                name: "accent".into(),
+                role: DrumRole::Crash,
+                note: 49,
+                recipe: None,
+                fixed_notes: vec![Note::new(49, BAR * 4, Ticks(240))],
+            });
+            let written = write(&accented);
+            assert!(voices(&written, "crash").is_empty(), "seed {seed}");
+            assert_eq!(voices(&written, "accent"), vec![49]);
+
+            // And a map that assigns no tom is a kit without one.
+            let mut small = kit.clone();
+            small
+                .drum_map
+                .as_mut()
+                .unwrap()
+                .voices
+                .remove(&DrumRole::Tom);
+            assert!(voices(&write(&small), "tom").is_empty());
+        }
+        assert!(
+            (3..=13).contains(&travelled),
+            "{travelled} of 16 split kits used the tom"
+        );
     }
 
     #[test]
