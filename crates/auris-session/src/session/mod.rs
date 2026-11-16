@@ -543,6 +543,7 @@ pub struct Session {
     /// The utility visualizer's own transform, longer than the plugin editor's so its lowest
     /// bands have bins to show.
     visualizer_analyzer: auris_dsp::SpectrumAnalyzer,
+    visualizer_chroma_analyzer: auris_dsp::SpectrumAnalyzer,
 
     param_cache: HashMap<String, Arc<Vec<ParamDescriptor>>>,
     /// Which built-in effects listen to a key, by plugin id.
@@ -835,6 +836,9 @@ impl Session {
             motion_track: None,
             analyzer: auris_dsp::SpectrumAnalyzer::new(auris_engine::SCOPE_WINDOW),
             visualizer_analyzer: auris_dsp::SpectrumAnalyzer::new(visualizer::VISUALIZER_FFT),
+            visualizer_chroma_analyzer: auris_dsp::SpectrumAnalyzer::new(
+                visualizer::VISUALIZER_CHROMA_FFT,
+            ),
             param_cache: HashMap::new(),
             keyed_cache: HashMap::new(),
             waveforms: HashMap::new(),
@@ -1291,7 +1295,7 @@ impl Session {
                 low_hz,
                 high_hz,
                 mode: VisualizerSpectrum::Average,
-                fill_narrow_bands: false,
+                interpolate_narrow_bands: false,
             },
             bands,
         );

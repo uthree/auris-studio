@@ -4,7 +4,8 @@ use std::sync::Arc;
 use super::Session;
 use auris_core::TrackId;
 use auris_dsp::{
-    LoudnessMeter, SILENCE_DB, SpectrumAnalyzer, bands_from_bins, bands_from_bins_nearest,
+    LoudnessMeter, SILENCE_DB, SpectrumAnalyzer, bands_from_bins, bands_from_bins_interpolated,
+    chroma_from_bins,
 };
 
 /// Where on a strip the visualizer listens: before its fader and pan, or after them.
@@ -18,10 +19,27 @@ pub(super) const VISUALIZER_HISTORY: usize = 1 << 15;
 
 /// How many samples one visualizer spectrum is taken over: 85 ms at 48 kHz, 12 Hz between bins.
 ///
-/// Four times the plugin editor's window, because the visualizer draws sixth-octave bars down to
-/// 20 Hz and a sixth of an octave there is a few hertz wide. It costs time resolution, which is
+/// Four times the plugin editor's window, because the visualizer draws its curve down to 20 Hz
+/// and a twenty-fourth of an octave there is a hertz wide. It costs time resolution, which is
 /// what the spectrogram beside it is for.
 pub(super) const VISUALIZER_FFT: usize = 4096;
+
+/// How many samples one chromagram column is taken over: 170 ms at 48 kHz, 6 Hz between bins.
+///
+/// Twice the spectrum's window, because a chromagram has to tell neighbouring semitones apart
+/// and they are only 6 Hz apart at 100 Hz; [`auris_dsp::chroma_from_bins`] leaves out every bin
+/// wider than that, and with the spectrum's window that would be everything below 200 Hz — the
+/// bass line, which is where a chord's root usually is.
+pub(super) const VISUALIZER_CHROMA_FFT: usize = 8192;
+
+/// The range a chromagram folds into its twelve rows: from just below G♯2 to D♯8, where the pitched part of a mix
+/// lives. Below it a kick drum's thump is a pitch class it does not have, and above it cymbals
+/// and sibilance are noise that would spread over all twelve.
+pub(super) const VISUALIZER_CHROMA_HZ: (f64, f64) = (100.0, 5_000.0);
+
+/// How far below full scale the loudest pitch class may sit and still be drawn. Below it the
+/// chromagram is reading the noise floor, which has every pitch class equally and so none.
+const VISUALIZER_CHROMA_FLOOR_DB: f32 = -80.0;
 
 /// The loudness of what the visualizer follows, to EBU R128.
 ///
@@ -77,9 +95,10 @@ pub(super) struct SpectrumRequest {
     pub(super) high_hz: f64,
     /// Stereo interpretation to transform.
     pub(super) mode: VisualizerSpectrum,
-    /// Whether a band too narrow for a bin of its own repeats the nearest bin rather than
-    /// reading silence; see [`auris_dsp::bands_from_bins_nearest`].
-    pub(super) fill_narrow_bands: bool,
+    /// Whether a band too narrow for a bin of its own is read off the line between its
+    /// neighbouring bins rather than reading silence; see
+    /// [`auris_dsp::bands_from_bins_interpolated`].
+    pub(super) interpolate_narrow_bands: bool,
 }
 
 /// One coherent window of audio and its measured stereo spectrum.
@@ -97,6 +116,9 @@ pub struct VisualizerFrame {
     pub spectrum: Arc<[f32]>,
     /// Normalized channel correlation; absent when either channel is silent.
     pub correlation: Option<f32>,
+    /// How much of each pitch class is in the mono sum, C first, scaled so the loudest is 1;
+    /// absent when analysis was skipped or the signal is too quiet to have a pitch.
+    pub chroma: Option<[f32; 12]>,
 }
 
 impl Session {
@@ -145,6 +167,7 @@ impl Session {
             right: right.into(),
             sample_rate,
             spectrum: Arc::default(),
+            chroma: None,
         })
     }
 
@@ -237,7 +260,12 @@ impl Session {
         bands: usize,
         spectrum_mode: Option<VisualizerSpectrum>,
     ) -> Option<VisualizerFrame> {
-        let mut left = vec![0.0; auris_engine::SCOPE_HISTORY.max(VISUALIZER_FFT)];
+        let mut left = vec![
+            0.0;
+            auris_engine::SCOPE_HISTORY
+                .max(VISUALIZER_FFT)
+                .max(VISUALIZER_CHROMA_FFT)
+        ];
         let mut right = vec![0.0; left.len()];
         if !self.visualizer_scope.read_stereo(&mut left, &mut right) {
             return None;
@@ -262,11 +290,19 @@ impl Session {
                     low_hz,
                     high_hz,
                     mode,
-                    fill_narrow_bands: true,
+                    interpolate_narrow_bands: true,
                 },
                 &mut spectrum,
             );
         }
+        let chroma = spectrum_mode.and_then(|_| {
+            let mono: Vec<f32> = left
+                .iter()
+                .zip(&right)
+                .map(|(&left, &right)| (left + right) * 0.5)
+                .collect();
+            chroma(&mut self.visualizer_chroma_analyzer, &mono, rate)
+        });
         Some(VisualizerFrame {
             left: left.into(),
             right: right.into(),
@@ -274,8 +310,30 @@ impl Session {
             window_samples,
             spectrum: spectrum.into(),
             correlation,
+            chroma,
         })
     }
+}
+
+/// The pitch classes in `samples`, scaled so the loudest is 1, or nothing when even the loudest
+/// is below [`VISUALIZER_CHROMA_FLOOR_DB`].
+pub(super) fn chroma(
+    analyzer: &mut SpectrumAnalyzer,
+    samples: &[f32],
+    rate: f64,
+) -> Option<[f32; 12]> {
+    let mut bins = vec![SILENCE_DB; analyzer.bin_count()];
+    analyze_channel(analyzer, samples, &mut bins);
+    let (low, high) = VISUALIZER_CHROMA_HZ;
+    let mut chroma = chroma_from_bins(&bins, rate, low, high);
+    let loudest = chroma.iter().copied().fold(0.0f32, f32::max);
+    if loudest <= 10.0f32.powf(VISUALIZER_CHROMA_FLOOR_DB / 10.0) {
+        return None;
+    }
+    for class in &mut chroma {
+        *class /= loudest;
+    }
+    Some(chroma)
 }
 
 fn correlation(left: &[f32], right: &[f32]) -> Option<f32> {
@@ -329,8 +387,8 @@ pub(super) fn stereo_spectrum(
             }
         }
     }
-    if request.fill_narrow_bands {
-        bands_from_bins_nearest(&bins, rate, request.low_hz, request.high_hz, bands);
+    if request.interpolate_narrow_bands {
+        bands_from_bins_interpolated(&bins, rate, request.low_hz, request.high_hz, bands);
     } else {
         bands_from_bins(&bins, rate, request.low_hz, request.high_hz, bands);
     }
@@ -477,7 +535,7 @@ mod tests {
                 low_hz: 30.,
                 high_hz: 18000.,
                 mode: VisualizerSpectrum::Average,
-                fill_narrow_bands: false,
+                interpolate_narrow_bands: false,
             },
             &mut mono,
         );
@@ -490,7 +548,7 @@ mod tests {
                 low_hz: 30.,
                 high_hz: 18000.,
                 mode: VisualizerSpectrum::Average,
-                fill_narrow_bands: false,
+                interpolate_narrow_bands: false,
             },
             &mut anti,
         );
@@ -503,7 +561,7 @@ mod tests {
                 low_hz: 30.,
                 high_hz: 18000.,
                 mode: VisualizerSpectrum::Average,
-                fill_narrow_bands: false,
+                interpolate_narrow_bands: false,
             },
             &mut right,
         );
@@ -511,6 +569,23 @@ mod tests {
         let peak = mono.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         let right_peak = right.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         assert!((peak - right_peak - 3.0103).abs() < 0.01);
+    }
+
+    #[test]
+    fn chroma_names_the_loudest_pitch_class_one_and_silence_nothing() {
+        let mut analyzer = SpectrumAnalyzer::new(VISUALIZER_CHROMA_FFT);
+        let a = auris_dsp::spectrum::sine(440.0, 48_000.0, 0.5, VISUALIZER_CHROMA_FFT);
+        let classes = chroma(&mut analyzer, &a, 48_000.0).expect("a tone has a pitch");
+        assert_eq!(classes[9], 1.0);
+        assert!(classes.iter().all(|&class| (0.0..=1.0).contains(&class)));
+        assert!(classes[8] < 0.01 && classes[10] < 0.01, "{classes:?}");
+        assert_eq!(
+            chroma(&mut analyzer, &[0.0; VISUALIZER_CHROMA_FFT], 48_000.0),
+            None
+        );
+        // A hundred decibels down is the noise floor, not a note.
+        let faint: Vec<f32> = a.iter().map(|sample| sample * 1e-5).collect();
+        assert_eq!(chroma(&mut analyzer, &faint, 48_000.0), None);
     }
 
     #[test]
@@ -531,7 +606,7 @@ mod tests {
                     low_hz: 30.,
                     high_hz: 18000.,
                     mode,
-                    fill_narrow_bands: false,
+                    interpolate_narrow_bands: false,
                 },
                 &mut bands,
             );

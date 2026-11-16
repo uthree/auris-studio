@@ -1,7 +1,8 @@
 //! The analyser: what a strip sounds like, on five plots at once.
 //!
 //! Laid out as the Atelier analyser is — a spectrum beside a loudness meter, a spectrogram beside
-//! a goniometer, an oscilloscope under them all, each a card with its plot on a sunken well — and
+//! a goniometer, a chromagram and an oscilloscope under them all, each a card with its plot on a
+//! sunken well — and
 //! drawn with Atelier's own plots, so a bar, a heat ramp or a trace means the same thing here as
 //! in every other window that uses them.
 //!
@@ -10,7 +11,7 @@
 use super::widgets::{ButtonStyle, button};
 use super::{analyser::FLOOR_DB, paint};
 use crate::{app::AurisApp, theme::Theme};
-use atelier::viz::{Heatmap, Spectrum, Vectorscope, Waveform};
+use atelier::viz::{Heatmap, Spectrum, SpectrumStyle, Vectorscope, Waveform};
 use atelier::{
     Badge, Button, Card, ControlSize, IconName, Label, LevelMeter, METER_FLOOR_DB, SectionHeader,
     Segment, SegmentedControl, Stat, TextColor, TextSize, Tone,
@@ -20,7 +21,7 @@ use auris_session::{
     VisualizerFrame, VisualizerLoudness, VisualizerSpectrum, VisualizerTap, prelude::*,
 };
 use gpui::{
-    AnyElement, Bounds, Hsla, Pixels, Window, canvas, div, point, prelude::*, px, relative, size,
+    AnyElement, Bounds, Hsla, Pixels, Window, canvas, div, point, prelude::*, px, relative,
 };
 use std::{
     collections::VecDeque,
@@ -37,8 +38,14 @@ const SPECTRUM_HIGH_HZ: f64 = SPECTRUM_LOW_HZ * 1024.0;
 /// Octaves across the spectrum, one grid division each.
 const SPECTRUM_OCTAVES: usize = 10;
 
-/// Bands across the spectrum: six to the octave.
-const SPECTRUM_BANDS: usize = SPECTRUM_OCTAVES * 6;
+/// Bands across the spectrum: twenty-four to the octave, a quarter of a semitone each.
+///
+/// Fine enough that the curve through them reads as a line rather than a row of corners at any
+/// width the window is likely to be, and that the spectrogram drawn from the same bands has a row
+/// for every quarter-tone. Below about 300 Hz that is finer than the transform resolves, and the
+/// bands there are read off the line between bins, which the session does with
+/// `auris_dsp::bands_from_bins_interpolated`.
+const SPECTRUM_BANDS: usize = SPECTRUM_OCTAVES * 24;
 
 /// Decibels per horizontal division of the spectrum. [`Spectrum`] draws six, so the floor is
 /// [`FLOOR_DB`].
@@ -47,8 +54,19 @@ const SPECTRUM_DB_STEP: f32 = 12.0;
 /// How long the spectrogram remembers.
 const SPECTROGRAM_SPAN: Duration = Duration::from_secs(3);
 
-/// Columns across the spectrogram, one per 25 ms.
-const SPECTROGRAM_COLUMNS: usize = 120;
+/// Columns across the spectrogram and the chromagram, one per 12.5 ms: about one per repaint.
+const SPECTROGRAM_COLUMNS: usize = 240;
+
+/// The pitch classes as the chromagram names its rows, C first.
+const PITCH_CLASSES: [&str; 12] = [
+    "C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B",
+];
+
+/// How far below the loudest pitch class the chromagram's colour ramp reaches, in decibels.
+///
+/// Twenty-four, so a chord's three notes all read hot and the leakage a semitone either side of
+/// a pure tone, twenty decibels down at least, stays in the cool end rather than lighting up.
+const CHROMA_RANGE_DB: f32 = 24.0;
 
 const CORRELATION_HISTORY: Duration = Duration::from_secs(3);
 const SPECTRUM_AVERAGE_SECONDS: f32 = 0.2;
@@ -216,7 +234,10 @@ pub(crate) struct VisualizerState {
     correlation_history: VecDeque<CorrelationPoint>,
     correlation_negative_peak: Option<f32>,
     /// Past spectra, oldest first, one per [`SPECTROGRAM_SPAN`] / [`SPECTROGRAM_COLUMNS`].
-    spectrogram: VecDeque<Vec<f32>>,
+    spectrogram: VecDeque<std::sync::Arc<[f32]>>,
+    /// Past pitch-class columns, beside [`Self::spectrogram`]; `None` where nothing pitched was
+    /// heard.
+    chromagram: VecDeque<Option<[f32; 12]>>,
     last_column_at: Option<Instant>,
     /// The loudness as last shown; held while the display is frozen.
     loudness: VisualizerLoudness,
@@ -248,6 +269,7 @@ impl Default for VisualizerState {
             correlation_history: VecDeque::new(),
             correlation_negative_peak: None,
             spectrogram: VecDeque::new(),
+            chromagram: VecDeque::new(),
             last_column_at: None,
             loudness: VisualizerLoudness::default(),
             meter_hold: [None; 2],
@@ -297,6 +319,7 @@ impl VisualizerState {
         self.correlation_history.clear();
         self.correlation_negative_peak = None;
         self.spectrogram.clear();
+        self.chromagram.clear();
         self.last_column_at = None;
         self.loudness = VisualizerLoudness::default();
         self.meter_hold = [None; 2];
@@ -335,17 +358,18 @@ impl VisualizerState {
         }
         if !frame.spectrum.is_empty() {
             self.last_spectrum_at = Some(now);
-            let column_every = SPECTROGRAM_SPAN / SPECTROGRAM_COLUMNS as u32;
-            if self
-                .last_column_at
-                .is_none_or(|last| now.saturating_duration_since(last) >= column_every)
-            {
-                self.spectrogram.push_back(frame.spectrum.to_vec());
-                while self.spectrogram.len() > SPECTROGRAM_COLUMNS {
-                    self.spectrogram.pop_front();
-                }
-                self.last_column_at = Some(now);
+            let (due, at) = columns_due(self.last_column_at, now);
+            for _ in 0..due {
+                self.spectrogram.push_back(frame.spectrum.clone());
+                self.chromagram.push_back(frame.chroma);
             }
+            while self.spectrogram.len() > SPECTROGRAM_COLUMNS {
+                self.spectrogram.pop_front();
+            }
+            while self.chromagram.len() > SPECTROGRAM_COLUMNS {
+                self.chromagram.pop_front();
+            }
+            self.last_column_at = at;
         }
 
         while self
@@ -381,13 +405,17 @@ impl VisualizerState {
         self.reference.clear();
         self.last_spectrum_at = None;
         self.spectrogram.clear();
+        self.chromagram.clear();
         self.last_column_at = None;
     }
 
     /// The spectrogram as [`Heatmap`] wants it: row-major, highest band on top, newest column on
     /// the right, and blank columns on the left until three seconds have been heard.
     fn spectrogram_cells(&self) -> (usize, Vec<f32>) {
-        let rows = self.spectrogram.back().map_or(SPECTRUM_BANDS, Vec::len);
+        let rows = self
+            .spectrogram
+            .back()
+            .map_or(SPECTRUM_BANDS, |column| column.len());
         let mut cells = vec![0.0; rows * SPECTROGRAM_COLUMNS];
         let offset = SPECTROGRAM_COLUMNS - self.spectrogram.len().min(SPECTROGRAM_COLUMNS);
         for (index, column) in self.spectrogram.iter().enumerate() {
@@ -398,6 +426,55 @@ impl VisualizerState {
         }
         (rows, cells)
     }
+
+    /// The chromagram as [`Heatmap`] wants it: twelve rows with B on top and C at the bottom, as
+    /// a keyboard stood on end, newest column on the right, and each column's loudest pitch class
+    /// at the top of the ramp.
+    fn chromagram_cells(&self) -> Vec<f32> {
+        let mut cells = vec![0.0; 12 * SPECTROGRAM_COLUMNS];
+        let offset = SPECTROGRAM_COLUMNS - self.chromagram.len().min(SPECTROGRAM_COLUMNS);
+        for (index, column) in self.chromagram.iter().enumerate() {
+            let Some(column) = column else { continue };
+            for (class, &power) in column.iter().enumerate() {
+                cells[(11 - class) * SPECTROGRAM_COLUMNS + offset + index] = chroma_level(power);
+            }
+        }
+        cells
+    }
+
+    /// The pitch class loudest in the newest column, if anything pitched is being heard.
+    fn loudest_pitch_class(&self) -> Option<usize> {
+        let column = (*self.chromagram.back()?)?;
+        (0..12).max_by(|&one, &other| column[one].total_cmp(&column[other]))
+    }
+}
+
+/// How many columns are owed `now`, a column every [`SPECTROGRAM_SPAN`] /
+/// [`SPECTROGRAM_COLUMNS`] since the last, and when the newest of them is due.
+///
+/// Counted from time rather than from repaints, so the history spans what it says it does
+/// whatever the window's frame rate: a repaint that comes late repeats the frame it has across
+/// the columns it missed, and one that comes early adds none. A gap longer than the whole history
+/// starts the clock again at `now` rather than owing a history's worth of one frame.
+fn columns_due(last: Option<Instant>, now: Instant) -> (usize, Option<Instant>) {
+    let every = SPECTROGRAM_SPAN / SPECTROGRAM_COLUMNS as u32;
+    let Some(last) = last else {
+        return (1, Some(now));
+    };
+    let owed = (now.saturating_duration_since(last).as_nanos() / every.as_nanos()) as usize;
+    if owed > SPECTROGRAM_COLUMNS {
+        (SPECTROGRAM_COLUMNS, Some(now))
+    } else {
+        (owed, Some(last + every * owed as u32))
+    }
+}
+
+/// Where a pitch class's power, as a fraction of the loudest, sits on the chromagram's ramp.
+fn chroma_level(power: f32) -> f32 {
+    if power <= 0.0 {
+        return 0.0;
+    }
+    (1.0 + 10.0 * power.log10() / CHROMA_RANGE_DB).clamp(0.0, 1.0)
 }
 
 impl AurisApp {
@@ -584,21 +661,20 @@ impl AurisApp {
                     if spectrum.is_empty() {
                         return;
                     }
+                    // The window's curve in miniature: a shaded line, not a row of bars.
                     let width = bounds.size.width / spectrum.len() as f32;
-                    for (index, db) in spectrum.iter().enumerate() {
-                        let height = bounds.size.height * spectrum_level(*db);
-                        paint::rect(
-                            window,
-                            Bounds {
-                                origin: point(
-                                    bounds.left() + width * index as f32,
-                                    bounds.bottom() - height,
-                                ),
-                                size: size(width, height),
-                            },
-                            theme.accent,
-                        );
-                    }
+                    let points: Vec<_> = spectrum
+                        .iter()
+                        .enumerate()
+                        .map(|(index, db)| {
+                            point(
+                                bounds.left() + width * (index as f32 + 0.5),
+                                bounds.bottom() - bounds.size.height * spectrum_level(*db),
+                            )
+                        })
+                        .collect();
+                    paint::area_under(window, &points, bounds.bottom(), theme.accent.opacity(0.3));
+                    paint::polyline(window, &points, px(1.), theme.accent);
                 },
             )
             .w_full()
@@ -617,6 +693,7 @@ impl AurisApp {
         let spectrum = self.spectrum_card(cx);
         let loudness = self.loudness_card(cx);
         let spectrogram = self.spectrogram_card();
+        let chromagram = self.chromagram_card();
         let stereo = self.stereo_card(cx);
         let oscilloscope = self.oscilloscope_card(cx);
         let two_columns = window.viewport_size().width >= TWO_COLUMNS_FROM;
@@ -656,6 +733,7 @@ impl AurisApp {
                     .p(spacing.lg)
                     .child(pair(spectrum, loudness))
                     .child(pair(spectrogram, stereo))
+                    .child(chromagram)
                     .child(oscilloscope),
             )
             .into_any_element()
@@ -773,10 +851,13 @@ impl AurisApp {
             .copied()
             .map(spectrum_level)
             .collect();
-        let mut plot = Spectrum::new(levels).octaves(SPECTRUM_OCTAVES);
-        if state.peaks && !peaks.is_empty() {
-            plot = plot.peaks(peaks);
-        }
+        // A curve, as an EQ's analyser draws one. Its peak hold is a second, fainter line rather
+        // than Atelier's per-band ticks, which at a quarter-tone a band are a dotted smear.
+        let plot = Spectrum::new(levels)
+            .style(SpectrumStyle::Curve)
+            .octaves(SPECTRUM_OCTAVES);
+        let peaks = (state.peaks && !peaks.is_empty()).then_some(peaks);
+        let peak_color = tokens.colors.text.opacity(0.45);
         let channel = SPECTRUM_CHANNELS
             .iter()
             .position(|&mode| mode == state.spectrum_mode)
@@ -840,13 +921,22 @@ impl AurisApp {
             .flex_1()
             .h_full()
             .child(div().absolute().inset_0().p(spacing.xs).child(plot))
+            .when_some(peaks, |well, peaks| {
+                well.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .p(spacing.xs)
+                        .child(overlay_curve(peaks, peak_color, px(1.))),
+                )
+            })
             .when(!reference.is_empty(), |well| {
                 well.child(
                     div()
                         .absolute()
                         .inset_0()
                         .p(spacing.xs)
-                        .child(reference_curve(reference, reference_color)),
+                        .child(overlay_curve(reference, reference_color, px(1.5))),
                 )
             });
         let scale = div()
@@ -1074,6 +1164,62 @@ impl AurisApp {
                     Label::new(self.t(Key::VisualizerLoud))
                         .size(TextSize::XSmall)
                         .color(TextColor::Faint),
+                ),
+        )
+        .into_any_element()
+    }
+
+    /// Which of the twelve notes are sounding, octaves folded together, over the spectrogram's
+    /// three seconds: a chord is a pattern of rows whatever its voicing.
+    fn chromagram_card(&self) -> AnyElement {
+        let spacing = self.theme.atelier.spacing;
+        let loudest = self.visualizer.loudest_pitch_class();
+        let names = div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .w(px(28.))
+            .py(spacing.xs)
+            .children(PITCH_CLASSES.iter().enumerate().rev().map(|(class, name)| {
+                div().flex().flex_1().items_center().justify_end().child(
+                    Label::new(*name).size(TextSize::XSmall).mono().color(
+                        if loudest == Some(class) {
+                            TextColor::Default
+                        } else {
+                            TextColor::Faint
+                        },
+                    ),
+                )
+            }));
+        visualizer_card_with(
+            "visualizer-chromagram",
+            self.t(Key::VisualizerChromagram),
+            self.t(Key::VisualizerChromagramDescription),
+            loudest.map(|class| {
+                Badge::new(PITCH_CLASSES[class])
+                    .tone(Tone::Accent)
+                    .into_any_element()
+            }),
+        )
+        .w_full()
+        .child(
+            div()
+                .flex()
+                .gap(spacing.sm)
+                .h(px(12. * 14.))
+                .child(names)
+                .child(
+                    plot_well(&self.theme)
+                        .id("visualizer-chromagram-plot")
+                        .debug_selector(|| "visualizer-chromagram-plot".into())
+                        .flex_1()
+                        .h_full()
+                        .p(spacing.xs)
+                        .child(Heatmap::new(
+                            SPECTROGRAM_COLUMNS,
+                            12,
+                            self.visualizer.chromagram_cells(),
+                        )),
                 ),
         )
         .into_any_element()
@@ -1439,8 +1585,9 @@ fn axis_mark(label: Label, at: f32, vertical: bool, inset: Pixels) -> gpui::Div 
     })
 }
 
-/// A line through the saved comparison, drawn over the bars it is compared with.
-fn reference_curve(levels: Vec<f32>, color: Hsla) -> impl IntoElement {
+/// A line through `levels`, at the band centres [`Spectrum`] draws its own curve through, so a
+/// peak hold or a saved comparison lies exactly over the spectrum it is read against.
+fn overlay_curve(levels: Vec<f32>, color: Hsla, width: Pixels) -> impl IntoElement {
     canvas(
         |_, _, _| (),
         move |bounds: Bounds<Pixels>, _, window, _| {
@@ -1458,7 +1605,7 @@ fn reference_curve(levels: Vec<f32>, color: Hsla) -> impl IntoElement {
                     )
                 })
                 .collect();
-            paint::polyline(window, &points, px(1.5), color);
+            paint::polyline(window, &points, width, color);
         },
     )
     .size_full()
@@ -1627,6 +1774,7 @@ fn display_auto_gain(left: &[f32], right: &[f32]) -> f32 {
 mod tests {
     use super::*;
     use crate::{actions, auxiliary_window::Surface, harness};
+    use gpui::size;
 
     #[gpui::test]
     fn toolbar_visualizer_stays_visible_when_utility_window_closes(cx: &mut gpui::TestAppContext) {
@@ -1671,6 +1819,7 @@ mod tests {
             window_samples: 1024,
             spectrum: vec![db; 96].into(),
             correlation: Some(1.),
+            chroma: None,
         }
     }
 
@@ -1777,6 +1926,7 @@ mod tests {
         let loudness = card("visualizer-loudness");
         let spectrogram = card("visualizer-spectrogram");
         let stereo = card("visualizer-stereo");
+        let chromagram = card("visualizer-chromagram");
         let oscilloscope = card("visualizer-oscilloscope");
         assert!(
             loudness.left() > spectrum.right(),
@@ -1785,7 +1935,11 @@ mod tests {
         assert_eq!(loudness.size.width, SIDE_CARD_WIDTH);
         assert_eq!(stereo.size.width, SIDE_CARD_WIDTH);
         assert!(spectrogram.top() > spectrum.bottom());
-        assert!(oscilloscope.top() > spectrogram.bottom());
+        assert!(chromagram.top() > spectrogram.bottom());
+        assert!(chromagram.top() > stereo.bottom());
+        assert_eq!(chromagram.left(), spectrum.left());
+        assert_eq!(chromagram.right(), loudness.right());
+        assert!(oscilloscope.top() > chromagram.bottom());
         assert_eq!(oscilloscope.left(), spectrum.left());
         assert_eq!(oscilloscope.right(), loudness.right());
 
@@ -1956,7 +2110,7 @@ mod tests {
         let mut rising = frame(0.);
         rising.spectrum = (0..4).map(|band| FLOOR_DB + band as f32 * 24.).collect();
         state.accept_at(rising, start);
-        // A repaint 10 ms later is inside the same 25 ms column and adds nothing.
+        // A repaint 10 ms later is inside the same 12.5 ms column and adds nothing.
         state.accept_at(frame(0.), start + Duration::from_millis(10));
         assert_eq!(state.spectrogram.len(), 1);
         let (rows, cells) = state.spectrogram_cells();
@@ -1977,6 +2131,73 @@ mod tests {
             state.accept_at(frame(-6.), start + Duration::from_millis(25 * step as u64));
         }
         assert_eq!(state.spectrogram.len(), SPECTROGRAM_COLUMNS);
+    }
+
+    #[test]
+    fn columns_follow_the_clock_rather_than_the_frame_rate() {
+        let every = SPECTROGRAM_SPAN / SPECTROGRAM_COLUMNS as u32;
+        let start = Instant::now();
+        assert_eq!(columns_due(None, start), (1, Some(start)));
+        // Early: nothing owed, and the clock is not moved.
+        assert_eq!(
+            columns_due(Some(start), start + every / 2),
+            (0, Some(start))
+        );
+        // Two and a half columns late: two owed, and the half carries over to the next.
+        assert_eq!(
+            columns_due(Some(start), start + every * 5 / 2),
+            (2, Some(start + every * 2))
+        );
+        // Longer than the whole history: one history's worth, and the clock starts again.
+        let later = start + SPECTROGRAM_SPAN * 2;
+        assert_eq!(
+            columns_due(Some(start), later),
+            (SPECTROGRAM_COLUMNS, Some(later))
+        );
+
+        // Repainting at 30 Hz still fills the history in its three seconds.
+        let mut state = VisualizerState::default();
+        let mut at = start;
+        while at < start + SPECTROGRAM_SPAN {
+            state.accept_at(frame(-6.), at);
+            at += Duration::from_micros(33_333);
+        }
+        let filled = state.spectrogram.len();
+        assert!(
+            filled.abs_diff(SPECTROGRAM_COLUMNS) <= 3,
+            "{filled} columns after three seconds at 30 Hz"
+        );
+        assert_eq!(state.chromagram.len(), filled);
+    }
+
+    #[test]
+    fn the_chromagram_puts_b_on_top_and_scales_from_the_loudest_class() {
+        let mut state = VisualizerState::default();
+        let start = Instant::now();
+        let mut chord = frame(-6.);
+        // C major: C loudest, E and G six decibels down, everything else nearly nothing.
+        let mut chroma = [0.0f32; 12];
+        chroma[0] = 1.0;
+        chroma[4] = 0.25;
+        chroma[7] = 0.25;
+        chroma[1] = 1e-4;
+        chord.chroma = Some(chroma);
+        state.accept_at(frame(-6.), start);
+        state.accept_at(chord, start + SPECTROGRAM_SPAN / SPECTROGRAM_COLUMNS as u32);
+        assert_eq!(state.loudest_pitch_class(), Some(0));
+        let cells = state.chromagram_cells();
+        assert_eq!(cells.len(), 12 * SPECTROGRAM_COLUMNS);
+        let newest =
+            |class: usize| cells[(11 - class) * SPECTROGRAM_COLUMNS + SPECTROGRAM_COLUMNS - 1];
+        assert_eq!(newest(0), 1.0, "C is the bottom row and the hottest");
+        assert!((newest(4) - 0.75).abs() < 1e-3, "{}", newest(4));
+        assert_eq!(newest(4), newest(7));
+        assert_eq!(newest(1), 0.0, "forty decibels down is off the ramp");
+        // The column before had no pitch at all and is blank, not a guess.
+        let before = SPECTROGRAM_COLUMNS - 2;
+        assert!((0..12).all(|row| cells[row * SPECTROGRAM_COLUMNS + before] == 0.0));
+        assert_eq!(chroma_level(0.0), 0.0);
+        assert_eq!(chroma_level(1.0), 1.0);
     }
 
     #[test]
@@ -2031,6 +2252,7 @@ mod tests {
             assert!(!app.visualizer.frozen);
             assert!(app.visualizer.frame.is_none());
             assert!(app.visualizer.spectrogram.is_empty());
+            assert!(app.visualizer.chromagram.is_empty());
         });
     }
 }
