@@ -59,6 +59,7 @@ pub mod prompt;
 pub(crate) mod provider_logo;
 pub(crate) mod reasoning_picker;
 pub(crate) mod reference_piano_roll;
+pub(crate) mod resonance_view;
 pub(crate) mod rhythm_grid;
 pub mod root;
 pub(crate) mod sample_map;

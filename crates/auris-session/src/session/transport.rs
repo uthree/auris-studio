@@ -32,6 +32,8 @@ use super::Session;
 impl Session {
     /// Starts playback.
     pub fn play(&mut self) {
+        // A chord changed since the last frame was drawn is in tune before the first note.
+        self.retune_resonators();
         self.send(EngineCommand::Play);
     }
 

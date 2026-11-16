@@ -10,6 +10,7 @@ use crate::vocal::Vocal;
 use crate::{
     Analog, AnalogPatch, BoomBass, BoomPatch, Choir, ElectroKit, ElectroStyle, Model, Physical,
 };
+use crate::{BodyResonance, SympatheticStrings};
 
 /// Installs the built-in instruments into a registry.
 ///
@@ -43,6 +44,8 @@ impl PluginPack for SynthPack {
             registry.register_instrument(move || Box::new(ElectroKit::new(style)));
         }
         registry.register_instrument(|| Box::new(Vocal::new()));
+        registry.register_effect(|| Box::new(BodyResonance::new()));
+        registry.register_effect(|| Box::new(SympatheticStrings::new()));
     }
 }
 
@@ -149,8 +152,10 @@ mod tests {
                 "auris.synth.vocal"
             ]
         );
-        assert_eq!(registry.len(), 29);
-        assert_eq!(registry.effects().count(), 0);
+        assert_eq!(registry.instruments().count(), 29);
+        // The two effects made of this crate's bodies, beside the instruments that share them.
+        let effects: Vec<&str> = registry.effects().map(|d| d.id.as_ref()).collect();
+        assert_eq!(effects, ["auris.fx.body", "auris.fx.sympathetic"]);
     }
 
     #[test]
@@ -321,7 +326,7 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, registry.len() - kits.len());
+        assert_eq!(checked, registry.instruments().count() - kits.len());
     }
 
     #[test]

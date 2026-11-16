@@ -1623,6 +1623,8 @@ pub struct AurisApp {
     /// The note-roll video window: whether it is open, its preview and what ffmpeg was found.
     pub(crate) video_export: crate::ui::video_export::VideoExportState,
     pub(crate) physical_view: crate::ui::physical_model::PhysicalView,
+    /// The live picture of a resonating effect's strings or body.
+    pub(crate) resonance_view: crate::ui::resonance_view::ResonanceView,
     pub(crate) track_grid: crate::ui::track_grid::TrackGrid,
     pub(crate) timbre_map: crate::ui::timbre_map::TimbreMapState,
     /// Invalidates results started before a voice or its connection settings changed.
@@ -2097,6 +2099,7 @@ impl AurisApp {
                         this.poll_midi_input(cx);
                         this.poll_visualizer();
                         this.poll_physical_view();
+                        this.poll_resonance_view();
                         this.poll_track_grid();
                         this.poll_mixer_signals();
                         // Separate from `poll` on purpose: that is housekeeping and this writes
@@ -2216,6 +2219,7 @@ impl AurisApp {
             visualizer: Default::default(),
             video_export: Default::default(),
             physical_view: Default::default(),
+            resonance_view: Default::default(),
             track_grid: Default::default(),
             timbre_map: Default::default(),
             sung_preview_generation: 0,

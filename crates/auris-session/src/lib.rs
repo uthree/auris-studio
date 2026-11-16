@@ -115,6 +115,11 @@ pub use auris_core::motion::{
     MOTION_BODY, MOTION_MODES, MOTION_PARTIALS, MOTION_POINTS, MOTION_SCOPE, MOTION_VOICES,
     MotionFrame, MotionGeometry, MotionVoice,
 };
+/// What a resonating effect publishes for a window to draw.
+pub use auris_core::resonance::{
+    RESONANCE_HIGH_HZ, RESONANCE_LOW_HZ, RESONANCE_MODES, RESONANCE_POINTS, RESONANCE_RESPONSE,
+    RESONANCE_STRINGS, ResonanceFrame, ResonanceKind, ResonanceString, response_hz,
+};
 /// A song's genre and usage, re-exported for the presentation crates that word their guidance.
 pub use auris_core::style;
 /// PCM-derived drum measurements, exposed without a frontend DSP dependency.

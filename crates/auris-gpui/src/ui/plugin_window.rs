@@ -350,7 +350,11 @@ impl AurisApp {
             _ => None,
         };
         let wide = host_window.viewport_size().width >= host_window.rem_size() * 48.;
-        let physical = self.physical_model_display(cx);
+        // A resonating effect is drawn the way a physical instrument is: its body beside its
+        // parameters.
+        let physical = self
+            .physical_model_display(cx)
+            .or_else(|| self.resonance_display(subject, cx));
         // The native editor leaves this window open behind it. Building thousands of hidden
         // controls on every meter tick otherwise starves the same UI thread that drives it.
         let body = if let Some(physical) = physical {
@@ -375,6 +379,7 @@ impl AurisApp {
                 .child(
                     div()
                         .id("pw-physical-parameters")
+                        .debug_selector(|| "pw-physical-parameters".into())
                         .flex()
                         .flex_col()
                         .pt(spacing.lg)

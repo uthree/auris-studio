@@ -101,6 +101,7 @@ mod punch;
 mod readiness;
 mod recognition;
 mod record;
+mod resonance;
 mod rhythm;
 mod samples;
 pub mod style_checks;
@@ -530,6 +531,13 @@ pub struct Session {
     /// The live loudness of whatever the visualizer follows, fed every sample its scope publishes.
     visualizer_loudness: visualizer::LoudnessTap,
     motion_monitors: HashMap<TrackId, Arc<auris_core::motion::MotionMonitor>>,
+    /// Readers for the effects that are bodies of some kind, by slot; see [`resonance`].
+    resonance_monitors:
+        HashMap<auris_core::EffectSlotId, Arc<auris_core::resonance::ResonanceMonitor>>,
+    /// The effect slot whose resonator a window is drawing.
+    resonance_slot: Option<auris_core::EffectSlotId>,
+    /// The harmony the engine's effects were last tuned to, when any of them follows it.
+    tuned_harmony: Option<auris_core::harmony::Harmony>,
     overview_scopes: HashMap<TrackId, Arc<auris_engine::Scope>>,
     overview_watched: bool,
     signal_meters: Arc<auris_engine::SignalMeters>,
@@ -828,6 +836,9 @@ impl Session {
             )),
             visualizer_loudness: visualizer::LoudnessTap::default(),
             motion_monitors: HashMap::new(),
+            resonance_monitors: HashMap::new(),
+            resonance_slot: None,
+            tuned_harmony: None,
             overview_scopes: HashMap::new(),
             overview_watched: false,
             signal_meters: Arc::new(auris_engine::SignalMeters::default()),
@@ -1233,6 +1244,7 @@ impl Session {
         if self.engine.latency_is_stale() {
             self.invalidate_graph();
         }
+        self.retune_resonators();
         // A hosted plugin keeps no clock of its own and its window does not repaint without one.
         // This is also where a window the user closed is noticed, and where a plugin that changed
         // itself — a preset loaded in its own window — puts the unsaved mark back on the title
@@ -1816,6 +1828,7 @@ impl Session {
             .filter_map(|track| Some((track.id, track.motion_monitor()?)))
             .collect();
         self.refresh_motion_watches();
+        self.collect_resonance_monitors(&graph);
         // Fresh readers prevent a replaced instrument from inheriting the previous signal.
         for scope in self.overview_scopes.values() {
             scope.watch(auris_engine::ScopeSource::Off);

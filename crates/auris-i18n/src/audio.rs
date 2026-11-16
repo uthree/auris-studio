@@ -243,6 +243,8 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Delay", "ディレイ"),
     ("Distortion", "ディストーション"),
     ("Guitar Amp", "ギターアンプ"),
+    ("Body Resonance", "ボディ共鳴"),
+    ("Sympathetic Strings", "共鳴弦"),
     ("Equalizer", "イコライザー"),
     ("Gain & Pan", "ゲイン & パン"),
     ("Limiter", "リミッター"),
@@ -253,6 +255,14 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
 
 /// Japanese versions of the one-line descriptions shown in the plugin browser.
 const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
+    (
+        "The box of a guitar, violin, cello, piano or speaker cabinet, as a bank of modes",
+        "ギター・バイオリン・チェロ・ピアノ・スピーカーキャビネットの胴の共鳴をモードの集まりとして再現",
+    ),
+    (
+        "Unplayed strings tuned to the song's chords or key, ringing with what is played in tune",
+        "曲のコードやキーに調弦した弦が、同じ音程の音に共鳴して鳴り続ける",
+    ),
     (
         "Bowed strings: stick-slip friction, a section of players, their bodies",
         "弓と弦の摩擦で鳴らす弦楽器。奏者の人数、弓圧と位置、楽器ごとの胴を再現",
@@ -457,6 +467,14 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
 
 /// Japanese names for parameters. Shared across plugins on purpose — see the module note.
 const PARAMETERS: &[(&str, &str)] = &[
+    ("Body", "胴"),
+    ("Size", "大きさ"),
+    ("Tuning", "調弦"),
+    ("Root", "ルート"),
+    ("Scale", "スケール"),
+    ("Strings", "弦の本数"),
+    ("Lowest Octave", "最低オクターブ"),
+    ("Brightness", "明るさ"),
     ("Vowel (Oo / Ah / Ee)", "母音（ウ／ア／イ）"),
     ("Voice Size", "声道サイズ"),
     ("Ensemble Variation", "合唱の揺らぎ"),
@@ -808,6 +826,30 @@ const CHOICES: &[(&str, &str)] = &[
     ("Tubular bell", "チューブラーベル"),
     ("Handbell", "ハンドベル"),
     ("Singing bowl", "シンギングボウル"),
+    ("Guitar", "ギター"),
+    ("Piano soundboard", "ピアノの響板"),
+    ("Dulcimer", "ダルシマー"),
+    ("Speaker cabinet", "スピーカーキャビネット"),
+    ("Song chords", "曲のコード"),
+    ("Song key", "曲のキー"),
+    ("Fixed", "固定"),
+    ("Drone", "ドローン（主音と5度）"),
+    ("Major", "メジャー"),
+    ("Minor", "マイナー"),
+    ("Pentatonic", "ペンタトニック"),
+    // Pitch names read the same in either language.
+    ("C", "C"),
+    ("C#", "C#"),
+    ("D", "D"),
+    ("D#", "D#"),
+    ("E", "E"),
+    ("F", "F"),
+    ("F#", "F#"),
+    ("G", "G"),
+    ("G#", "G#"),
+    ("A", "A"),
+    ("A#", "A#"),
+    ("B", "B"),
 ];
 
 #[cfg(test)]
