@@ -462,6 +462,38 @@ impl Bridge {
             report.measurements["track"].as_u64(),
             report.measurements.clone(),
         )?;
+        let caption = format!(
+            "Historical inspection snapshot, revision {}: start_bar={}, bars={}, duration={} seconds. This may predate edits; inspect again to evaluate changed sound. Image 512x384: top 128 rows show mel power (high frequency at top, black=-90 dB, white=0 dB); bottom 256 rows show authored notes (MIDI 127 at top, 0 at bottom). Time runs left to right across the selected range. Refer to the matching inspect_audio tool result for measurements and score data.",
+            report.revision,
+            report.measurements["start_bar"],
+            report.measurements["bars"],
+            report.measurements["seconds"]
+        );
+        Ok(self.show_picture(presentation, caption))
+    }
+
+    /// A modulation report's text for the model, and its picture for the transcript, the same
+    /// way [`Self::accept_inspection`] hands over a mel image.
+    pub(super) fn accept_modulation(
+        &self,
+        report: &auris_session::modulation::ModulationReport,
+    ) -> Result<(String, serde_json::Value), String> {
+        let presentation = toolbox::modulation::present(report)?;
+        let caption = format!(
+            "Historical modulation spectrogram, revision {}, {} region(s). This may predate edits; measure again to evaluate changed sound. Panels top to bottom follow the matching modulation_spectrum result; in each, octave bands run low (bottom) to high (top) and x is cycles per beat on a log axis from 1/16 to 16; colour is depth on a fixed scale.",
+            report.revision,
+            report.regions.len()
+        );
+        Ok(self.show_picture(presentation, caption))
+    }
+
+    /// Put `presentation`'s picture in front of a model that can see, captioned, keeping the
+    /// two most recent pictures; return the text and the picture in the `result` event's form.
+    fn show_picture(
+        &self,
+        presentation: toolbox::audio_inspection::Presentation,
+        caption: String,
+    ) -> (String, serde_json::Value) {
         let mut text = presentation.text;
         let shown = crate::backends::result_image("image/png", &presentation.png);
         if self.0.vision.load(Ordering::Relaxed) {
@@ -478,7 +510,7 @@ impl Bridge {
             if content.len() >= 4 {
                 content.drain(..content.len() - 2);
             }
-            content.push(rig_core::message::UserContent::text(format!("Historical inspection snapshot, revision {}: start_bar={}, bars={}, duration={} seconds. This may predate edits; inspect again to evaluate changed sound. Image 512x384: top 128 rows show mel power (high frequency at top, black=-90 dB, white=0 dB); bottom 256 rows show authored notes (MIDI 127 at top, 0 at bottom). Time runs left to right across the selected range. Refer to the matching inspect_audio tool result for measurements and score data.", report.revision, report.measurements["start_bar"], report.measurements["bars"], report.measurements["seconds"])));
+            content.push(rig_core::message::UserContent::text(caption));
             content.push(image);
             *stored = Some(Message::User { content });
             text.push_str("\nThe host provides the image in this request's visual context.");
@@ -486,7 +518,7 @@ impl Bridge {
             self.clear_visual();
             text.push_str("\nImage not sent: this model has no confirmed vision capability. Use measurements and score data only.");
         }
-        Ok((text, shown))
+        (text, shown)
     }
     pub(super) fn history<T>(
         &self,

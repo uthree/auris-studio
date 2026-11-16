@@ -601,6 +601,25 @@ pub enum Command {
         /// Optional track ID for solo routing; omit for the mix.
         track: Option<u64>,
     },
+    /// Measure how each register's loudness repeats, in beats: a modulation spectrogram of the rendered mix (or one track), each octave band's envelope resampled onto the score's beat grid and Fourier-transformed again. Peaks say what pulses and how often: 1 cycle per beat is a hit on every beat, 2 eighths in 4/4, 4 sixteenths, 3 triplets, per_bar once a bar. Depth is the envelope's swing as a fraction of its mean (0.1 faint, 0.5 clear, above 1 separated hits); short hits also show at whole multiples of their rate, so the slowest strong peak is the pulse. Choose the region: section (every occurrence, or one with instance), each_section to compare all sections from one render, start_bar with bars, or nothing for the whole song; at most 240 seconds per region. Returns a picture (bands low to high, beat rates on a log axis) and per-band peaks and rhythm depths. Measurement, not listening; changes nothing.
+    ModulationSpectrum {
+        /// A section label exactly as inspect_project lists it, such as サビ.
+        section: Option<String>,
+        /// Which occurrence of section, from 1; omit to measure every occurrence.
+        #[schemars(range(min = 1))]
+        instance: Option<usize>,
+        /// Measure every named section separately, in song order (at most 16).
+        #[serde(default)]
+        each_section: bool,
+        /// First bar of an explicit range, from 1; give bars with it.
+        #[schemars(range(min = 1))]
+        start_bar: Option<u32>,
+        /// Number of bars in the explicit range, 1..256.
+        #[schemars(range(min = 1, max = 256))]
+        bars: Option<u32>,
+        /// Optional track ID for solo routing; omit for the mix.
+        track: Option<u64>,
+    },
     /// Hear the open song yourself: renders 1..8 bars of the unsaved mix (at most 30 seconds, inside the arrangement) and delivers the WAV to you as audio input with your next request. Offered only to a model that accepts audio. To hear an edit, call it again on the same bars with compare_to set to an earlier audition_id: you then receive before, then after, at one common protective gain. Returns audition_id, revision and exact WAV measurements; four IDs are retained. Judge only what you actually hear. No save or Undo.
     Listen {
         /// First bar, starting at 1.
@@ -803,6 +822,7 @@ impl Command {
             | Self::ListVoices { .. }
             | Self::InspectSinger { .. }
             | Self::InspectAudio { .. }
+            | Self::ModulationSpectrum { .. }
             | Self::Listen { .. }
             | Self::ReadNotes { .. }
             | Self::SearchInstruments { .. }
@@ -840,6 +860,7 @@ impl Command {
                 | Self::LoadSample { .. }
                 | Self::ImportMidi { .. }
                 | Self::Checkpoints { .. }
+                | Self::ModulationSpectrum { .. }
         )
     }
 }
@@ -1212,6 +1233,7 @@ impl Session {
             | Command::LoadSample { .. }
             | Command::ImportMidi { .. }
             | Command::Checkpoints { .. }
+            | Command::ModulationSpectrum { .. }
             | Command::Arrangement {
                 operation: crate::arrangement::Operation::Validate { .. },
             }) => {

@@ -332,6 +332,16 @@
 //! measures the actual mix or a selected track's solo routing. A fixed colour scale preserves
 //! gain differences. These representations intentionally answer different questions.
 //!
+//! `modulation_spectrum` is the same pipeline asked a rhythmic question: how each octave band's
+//! loudness repeats. [`crate::modulation`] renders the chosen regions once on an ordinary agent
+//! job ([`crate::live_agent::AgentJob`]), measures every band's envelope with
+//! [`auris_dsp::modulation`], resamples it onto the score's beat grid through the tempo map and
+//! only then transforms it, so the axis is cycles per beat and a tempo change does not smear it.
+//! The region is a section (by label, one occurrence or all), every section in turn, a bar range
+//! or the whole song, because comparing sections is what the measurement is for. The report
+//! travels as the job's text; each door recognises the tool by name and lets
+//! `auris-toolbox` draw its picture, exactly as it does for `inspect_audio`.
+//!
 //! # The music linter
 //!
 //! [`crate::lint`] finds problems with one right answer — a dozen notes struck on one tick, a

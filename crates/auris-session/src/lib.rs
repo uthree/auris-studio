@@ -47,6 +47,7 @@ mod audio_attachment;
 pub mod audio_audition;
 pub mod audio_inspection;
 pub mod choices;
+pub mod modulation;
 pub use audio_attachment::{AudioAttachmentCopy, copy_audio_attachment, prepare_audio_attachment};
 pub mod audio_input;
 pub mod conversation_attachments;

@@ -1019,3 +1019,4 @@ mod tests {
 
 /// Model-facing audio inspection images and captions.
 pub mod audio_inspection;
+pub mod modulation;

@@ -23,6 +23,8 @@ pub enum AgentJob {
     File(Box<FileJob>),
     /// Snapshot serialization, history inspection or prepared restoration.
     History(Box<crate::CheckpointJob>),
+    /// A read-only render measured as a modulation spectrogram.
+    Modulation(Box<crate::modulation::ModulationJob>),
 }
 
 /// A worker result returned to its originating owner for validation and publication.
@@ -41,6 +43,8 @@ pub enum AgentResult {
     File(FileResult),
     /// Prepared history operation awaiting its owner.
     History(Box<crate::CheckpointResult>),
+    /// A modulation report of the document revision it was started from.
+    Modulation(Box<crate::modulation::ModulationReport>),
 }
 
 /// Another worker stage or the completed tool response.
@@ -70,6 +74,9 @@ impl AgentJob {
                 .map(|result| AgentResult::History(Box::new(result))),
             Self::Vocal(job) => job.run(cancelled).map(AgentResult::Vocal),
             Self::File(job) => job.run(cancelled).map(AgentResult::File),
+            Self::Modulation(job) => job
+                .run(cancelled)
+                .map(|report| AgentResult::Modulation(Box::new(report))),
         }
     }
 }
@@ -123,6 +130,24 @@ impl Session {
             } => self
                 .begin_agent_checkpoints(operation, expected_revision)
                 .map(|job| AgentJob::History(Box::new(job))),
+            Command::ModulationSpectrum {
+                section,
+                instance,
+                each_section,
+                start_bar,
+                bars,
+                track,
+            } => {
+                let selection = crate::modulation::Selection {
+                    section,
+                    instance,
+                    start_bar,
+                    bars,
+                    each_section,
+                };
+                self.modulation_job(&selection, track)
+                    .map(|job| AgentJob::Modulation(Box::new(job)))
+            }
             command @ (Command::ListVoices { .. }
             | Command::SetSingerVoice { .. }
             | Command::Sing { .. }) => self
@@ -174,6 +199,11 @@ impl Session {
             AgentResult::File(result) => self
                 .continue_agent_file_job(result, cancelled)
                 .map(AgentStep::Done),
+            // Read-only: the owner checked the revision before handing the result back. The
+            // report travels whole; each door draws its picture with the toolbox's presenter.
+            AgentResult::Modulation(report) => serde_json::to_string(&report)
+                .map(AgentStep::Done)
+                .map_err(|e| e.to_string()),
         }
     }
 }
