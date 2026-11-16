@@ -1794,7 +1794,7 @@ impl Session {
     /// that played through Surge XT. Edits made in the meantime are folded into the one rebuild.
     /// Only a running audio thread brings graphs home, so without one nothing is put off, and a
     /// thread that has stopped answering is waited for no longer than
-    /// [`GRAPH_HANDOVER_PATIENCE`].
+    /// `GRAPH_HANDOVER_PATIENCE`.
     pub fn rebuild_graph(&mut self) {
         self.take_back_graphs();
         let waiting = self
