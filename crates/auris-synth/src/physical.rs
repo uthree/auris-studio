@@ -47,15 +47,15 @@ use crate::{ParamBank, SegmentRenderer, VoiceAllocator, render_segments};
 
 mod bars;
 mod bells;
-mod body;
+pub(crate) mod body;
 mod bowed;
 mod flutes;
 mod hammer;
 mod legato;
 mod plucked;
 mod reeds;
-mod rotors;
-mod strings;
+pub(crate) mod rotors;
+pub(crate) mod strings;
 mod struck;
 mod unison;
 mod waveguide;

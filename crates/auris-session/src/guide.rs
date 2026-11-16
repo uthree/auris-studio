@@ -1566,6 +1566,44 @@ pub mod plugins {
     //! consumed by the note, not held as channel state: a pointer poking at a string never moves
     //! where the song's own notes are played, and nothing reaches the document.
     //!
+    //! # Resonating effects
+    //!
+    //! Two effects are made of the physical instruments' own parts, which is why
+    //! [`SynthPack`](auris_synth::SynthPack) registers them beside the instruments rather than
+    //! `auris-dsp` beside the other effects. [`BodyResonance`](auris_synth::BodyResonance) puts
+    //! a track through an instrument's body — the mode banks the guitar, the bowed strings, the
+    //! piano and the dulcimer sound through, plus a speaker cabinet — and
+    //! [`SympatheticStrings`](auris_synth::SympatheticStrings) hangs a bank of unplayed strings
+    //! beside it. Each publishes a
+    //! [`ResonanceFrame`](auris_core::resonance::ResonanceFrame) through
+    //! [`Effect::resonance_monitor`](auris_core::Effect::resonance_monitor), the effect-side
+    //! twin of the motion monitor above, read by slot through
+    //! [`Session::effect_resonance`](crate::Session::effect_resonance).
+    //!
+    //! The strings tune themselves to the song. An effect that answers
+    //! [`Effect::follows_harmony`](auris_core::Effect::follows_harmony) is handed the document's
+    //! key and chords as a [`HarmonyTimeline`](auris_core::resonance::HarmonyTimeline) laid out in
+    //! frames when the graph is built, and looks the playhead up in it once per control tick on
+    //! the audio thread. Harmony edits still leave the engine alone; it is
+    //! [`Session::poll`](crate::Session::poll), and the start of playback, that notice a graph
+    //! tuned to a harmony the document no longer has and rebuild it. A project with no such
+    //! effect pays nothing for this.
+    //!
+    //! Five more model studio hardware the same way, as the thing that moves rather than the
+    //! curve it is usually reduced to:
+    //! [`PlateReverb`](auris_synth::PlateReverb) (a steel sheet whose bending waves carry the
+    //! top of an attack first), [`SpringReverb`](auris_synth::SpringReverb) (coiled springs that
+    //! carry it last, as a rising chirp), [`TapeEcho`](auris_synth::TapeEcho) (a tape loop with
+    //! wow, flutter, head bump and a Jiles–Atherton oxide), [`TubeStage`](auris_synth::TubeStage)
+    //! (a Koren triode on a load line, with its coupling and cathode capacitors and an output
+    //! transformer, oversampled four times) and [`RotarySpeaker`](auris_synth::RotarySpeaker)
+    //! (a horn and a drum turning with their own inertia, heard through Doppler and their beams).
+    //! They publish the same frame, which carries a free curve, a trace and eight readings
+    //! beside the strings and modes, so the window can draw a hysteresis loop or a load line
+    //! without the frame growing a field per effect. Where a picture is slowed down to be seen
+    //! — the plate's sheet is a coarse thin-plate grid stepped at the control rate — the effect's
+    //! documentation says so.
+    //!
     //! # A key is which note; a pitch is where it sounds
     //!
     //! A note-on carries both, because the document's [`Tuning`](auris_core::Tuning) separates

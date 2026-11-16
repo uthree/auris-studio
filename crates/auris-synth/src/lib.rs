@@ -67,6 +67,7 @@ pub mod pack;
 pub mod params;
 pub mod physical;
 pub mod render;
+pub mod resonators;
 pub mod vocal;
 pub mod voice;
 
@@ -95,6 +96,10 @@ pub use pack::SynthPack;
 pub use params::ParamBank;
 pub use physical::{Model, Physical, Quality};
 pub use render::{SegmentRenderer, render_segments, spread_to_all_channels};
+pub use resonators::{
+    BodyKind, BodyResonance, PlateReverb, RotarySpeaker, SpringReverb, SympatheticStrings,
+    TapeEcho, TubeStage, Tuning,
+};
 pub use vocal::Vocal;
 pub use voice::{MAX_VOICES, VoiceAllocator, VoiceAssignment, VoiceMask, VoiceSlot, VoiceState};
 

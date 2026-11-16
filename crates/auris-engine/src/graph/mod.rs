@@ -221,6 +221,8 @@ pub struct RenderGraph {
     /// render, which is a handful of comparisons against a list that is empty on almost every
     /// project and never longer than [`MONITOR_SLOTS`](crate::MONITOR_SLOTS).
     pub(crate) monitors: Vec<MonitorTap>,
+    /// Whether an effect was handed the song's harmony; see [`Self::follows_harmony`].
+    pub(crate) follows_harmony: bool,
 }
 
 /// A live input joined to the track it is heard through.
@@ -589,6 +591,32 @@ impl RenderGraph {
         let mut master = RenderStrip::from_mixer(&project.master, true, registry, placed, &prepare);
         master.signal_slots = signal_slots(None, &project.master, &signal_meters);
 
+        // The song's key and chords, for the effects tuned to them. Laid out only when one asks,
+        // and once for all of them: every follower shares the one timeline.
+        let follows_harmony = tracks
+            .iter()
+            .map(|track| &track.strip)
+            .chain(std::iter::once(&master))
+            .any(|strip| strip.effects.iter().any(|effect| effect.follows_harmony()));
+        if follows_harmony {
+            let timeline = Arc::new(auris_core::resonance::HarmonyTimeline::of(
+                &project.harmony,
+                &project.tempo_map,
+                sample_rate,
+            ));
+            for strip in tracks
+                .iter_mut()
+                .map(|track| &mut track.strip)
+                .chain(std::iter::once(&mut master))
+            {
+                for effect in &mut strip.effects {
+                    if effect.follows_harmony() {
+                        effect.set_harmony(Arc::clone(&timeline));
+                    }
+                }
+            }
+        }
+
         // Sidechain taps. Resolved after the strips are built rather than while, because only the
         // built effect can say whether it has any use for a key: a slot naming a source in front
         // of an effect that ignores one would otherwise cost a buffer and a copy per block for
@@ -703,7 +731,14 @@ impl RenderGraph {
             visualizer_scope: Arc::new(crate::scope::Scope::new()),
             signal_meters,
             monitors: Vec::new(),
+            follows_harmony,
         }
+    }
+
+    /// Whether any effect in this graph was tuned to the song's harmony when it was built, so
+    /// that a change to the harmony needs a rebuild to reach it.
+    pub fn follows_harmony(&self) -> bool {
+        self.follows_harmony
     }
 
     /// First bounded-resource failure found while flattening this graph.

@@ -703,7 +703,7 @@ impl Session {
         let effects: Vec<_> = self
             .registry()
             .effects()
-            .map(|effect| json!({"id":effect.id,"name":effect.name}))
+            .map(|effect| json!({"id":effect.id,"name":effect.name,"description":effect.description}))
             .collect();
         let next = offset + page.len();
         Ok(

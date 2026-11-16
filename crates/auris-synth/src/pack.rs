@@ -10,6 +10,10 @@ use crate::vocal::Vocal;
 use crate::{
     Analog, AnalogPatch, BoomBass, BoomPatch, Choir, ElectroKit, ElectroStyle, Model, Physical,
 };
+use crate::{
+    BodyResonance, PlateReverb, RotarySpeaker, SpringReverb, SympatheticStrings, TapeEcho,
+    TubeStage,
+};
 
 /// Installs the built-in instruments into a registry.
 ///
@@ -43,6 +47,13 @@ impl PluginPack for SynthPack {
             registry.register_instrument(move || Box::new(ElectroKit::new(style)));
         }
         registry.register_instrument(|| Box::new(Vocal::new()));
+        registry.register_effect(|| Box::new(BodyResonance::new()));
+        registry.register_effect(|| Box::new(SympatheticStrings::new()));
+        registry.register_effect(|| Box::new(PlateReverb::new()));
+        registry.register_effect(|| Box::new(SpringReverb::new()));
+        registry.register_effect(|| Box::new(TapeEcho::new()));
+        registry.register_effect(|| Box::new(TubeStage::new()));
+        registry.register_effect(|| Box::new(RotarySpeaker::new()));
     }
 }
 
@@ -149,8 +160,21 @@ mod tests {
                 "auris.synth.vocal"
             ]
         );
-        assert_eq!(registry.len(), 29);
-        assert_eq!(registry.effects().count(), 0);
+        assert_eq!(registry.instruments().count(), 29);
+        // The effects modelled the way the instruments are, beside the instruments.
+        let effects: Vec<&str> = registry.effects().map(|d| d.id.as_ref()).collect();
+        assert_eq!(
+            effects,
+            [
+                "auris.fx.body",
+                "auris.fx.plate",
+                "auris.fx.rotary",
+                "auris.fx.spring",
+                "auris.fx.sympathetic",
+                "auris.fx.tape",
+                "auris.fx.tube",
+            ]
+        );
     }
 
     #[test]
@@ -321,7 +345,7 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, registry.len() - kits.len());
+        assert_eq!(checked, registry.instruments().count() - kits.len());
     }
 
     #[test]

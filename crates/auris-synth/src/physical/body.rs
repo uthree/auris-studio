@@ -228,7 +228,7 @@ impl BodySpec {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 struct ModeSpec {
     hz: f32,
     q: f32,
@@ -410,6 +410,13 @@ pub(crate) struct Radiator {
     scale: f32,
     rate: f32,
     average: f32,
+    /// Every mode as laid out, at the scale it was laid out for, with its gain already brought
+    /// to the body's average: what [`Radiator::rescale`] moves without laying the body out again.
+    laid: Vec<ModeSpec>,
+    /// The scale [`Radiator::prepare`] laid the modes out at.
+    laid_scale: f32,
+    /// What the bridge radiates by itself, before rescaling moved its band.
+    laid_direct: f32,
 }
 
 /// Silent control ticks after which a body's state is checked for having died away.
@@ -481,15 +488,95 @@ impl Radiator {
         self.scale = scale;
         self.rate = rate;
         self.average = average;
+        self.laid_direct = direct.gain;
+        self.laid = modes;
+        self.laid_scale = scale;
         self.floor_pole = (-TAU * (spec.floor_hz * scale).min(rate * 0.2) / rate).exp();
         self.dry_gain = 1.0;
         self.reset();
     }
 
     /// Modes laid out.
-    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.count
+    }
+
+    /// Moves every mode by `factor` from where [`Radiator::prepare`] laid it, without laying the
+    /// body out again: a box made bigger or smaller. Allocates nothing, so it may be asked for on
+    /// the audio thread; what is ringing keeps ringing, at its new pitch.
+    ///
+    /// Each mode keeps its quality factor, so its width in semitones and its peak are unchanged,
+    /// and the crowd keeps its density on a logarithmic axis — which is why the body's average
+    /// stays where `prepare` put it. A mode moved above the highest frequency a body is laid out
+    /// for falls silent, and one moved back below it sounds again.
+    pub(crate) fn rescale(&mut self, factor: f32) {
+        let Some(spec) = self.spec else {
+            return;
+        };
+        let factor = if factor.is_finite() {
+            factor.clamp(0.05, 20.0)
+        } else {
+            1.0
+        };
+        let scale = self.laid_scale * factor;
+        let rate = self.rate;
+        let limit = (rate * 0.45).min(20_000.0);
+        for (index, mode) in self.laid.iter().enumerate() {
+            let (group, lane) = (index / LANES, index % LANES);
+            let hz = mode.hz * factor;
+            let (cosine, sine, gain) = if hz < limit {
+                let nepers = std::f32::consts::PI * hz / mode.q;
+                let (cosine, sine) = pole(hz, nepers, rate);
+                let radius = cosine.hypot(sine);
+                (cosine, sine, mode.gain * 2.0 * (1.0 - radius))
+            } else {
+                (0.0, 0.0, 0.0)
+            };
+            if let (Some(c), Some(s), Some(g), Some(l)) = (
+                self.cosine.get_mut(group),
+                self.sine.get_mut(group),
+                self.gain.get_mut(group),
+                self.leaning.get_mut(group),
+            ) {
+                c[lane] = cosine;
+                s[lane] = sine;
+                g[lane] = gain;
+                l[lane] = gain * mode.lean;
+            }
+        }
+        let mut direct = Direct::of(spec, scale, rate);
+        direct.gain = self.laid_direct;
+        self.direct = direct;
+        self.scale = scale;
+        self.floor_pole = (-TAU * (spec.floor_hz * scale).min(rate * 0.2) / rate).exp();
+    }
+
+    /// Centre frequency of mode `index` as the body now stands, or zero past the last.
+    pub(crate) fn mode_hz(&self, index: usize) -> f32 {
+        self.laid.get(index).map_or(0.0, |mode| {
+            mode.hz * self.scale / self.laid_scale.max(1.0e-6)
+        })
+    }
+
+    /// The body's level at `hz` in decibels, its floor included, relative to its average: the
+    /// curve a display draws of what the body does to a signal.
+    pub(crate) fn response_db(&self, hz: f32) -> f32 {
+        if self.spec.is_none()
+            || hz.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
+            || hz >= self.rate * 0.5
+        {
+            return -60.0;
+        }
+        let omega = f64::from(TAU) * f64::from(hz) / f64::from(self.rate);
+        let (sin_w, cos_w) = omega.sin_cos();
+        // Each floor stage is `1 - (1 - p) / (1 - p e^{-jω})`, a one-pole high-pass.
+        let pole = f64::from(self.floor_pole);
+        let (den_re, den_im) = (1.0 - pole * cos_w, pole * sin_w);
+        let norm = den_re * den_re + den_im * den_im;
+        let (low_re, low_im) = ((1.0 - pole) * den_re / norm, -(1.0 - pole) * den_im / norm);
+        let floor = (1.0 - low_re).powi(2) + low_im * low_im;
+        let power = self.power_at(hz) * floor * floor;
+        (10.0 * power.max(1.0e-12).log10()) as f32
     }
 
     /// How much louder than the notes beside it this body makes a note at `hz`: the level of
@@ -943,6 +1030,77 @@ pub(crate) const DULCIMER: BodySpec = BodySpec {
     reference: (150.0, 4_000.0),
 };
 
+/// An open-backed guitar speaker cabinet: the cone on the air in the box, the box's panels,
+/// and the cone breaking up at the top before it stops moving air at all.
+///
+/// Not an instrument's body — nothing in the physical instruments is mounted on one — but the
+/// same kind of thing, and what the body effect offers for an electric part. Its modes are far
+/// broader than wood's: paper and a loosely sealed box lose energy quickly, which is why a
+/// cabinet colours a note without being heard to ring after it.
+pub(crate) const CABINET: BodySpec = BodySpec {
+    signature: &[
+        Signature {
+            hz: 95.0,
+            q: 5.0,
+            db: 4.0,
+            lean: 0.0,
+        },
+        Signature {
+            hz: 190.0,
+            q: 9.0,
+            db: 1.0,
+            lean: 0.1,
+        },
+        Signature {
+            hz: 330.0,
+            q: 12.0,
+            db: -2.0,
+            lean: 0.3,
+        },
+        Signature {
+            hz: 520.0,
+            q: 12.0,
+            db: 1.0,
+            lean: -0.3,
+        },
+        Signature {
+            hz: 1_450.0,
+            q: 6.0,
+            db: 3.0,
+            lean: 0.2,
+        },
+        Signature {
+            hz: 2_600.0,
+            q: 5.0,
+            db: 4.0,
+            lean: -0.4,
+        },
+    ],
+    crowd: Crowd {
+        span: (700.0, 5_000.0),
+        spacing: (60.0, 180.0),
+        q: (10.0, 16.0),
+        lean: 0.5,
+        seed: 0x0CAB_1E7A,
+    },
+    tilt: &[
+        (60.0, -18.0),
+        (90.0, -2.0),
+        (200.0, 0.0),
+        (1_200.0, 0.0),
+        (2_800.0, 2.0),
+        (4_200.0, -6.0),
+        (6_000.0, -20.0),
+        (9_000.0, -36.0),
+    ],
+    // A cone radiates by itself only while it moves as one piece; above a kilohertz or so it
+    // is the breakup modes that are heard, and above them nothing much at all.
+    direct_db: -20.0,
+    direct_span: (120.0, 1_200.0),
+    floor_hz: 75.0,
+    reference: (100.0, 4_000.0),
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -973,7 +1131,7 @@ mod tests {
 
     #[test]
     fn every_body_is_stable_and_dies_away_at_every_rate() {
-        for spec in [&SOUNDBOARD, &GUITAR, &VIOLIN, &DULCIMER] {
+        for spec in [&SOUNDBOARD, &GUITAR, &VIOLIN, &DULCIMER, &CABINET] {
             for rate in [8_000.0, 44_100.0, 48_000.0, 96_000.0, 192_000.0] {
                 for scale in [1.0, 0.23] {
                     let mut body = prepared(spec, scale, rate);

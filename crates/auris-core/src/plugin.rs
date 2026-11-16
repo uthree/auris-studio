@@ -638,6 +638,27 @@ pub trait Effect: Parameterized + Send {
     fn latency_frames(&self) -> usize {
         0
     }
+
+    /// Reader for this effect's live observation, for a resonator a window can draw.
+    ///
+    /// Asked on the thread that builds the graph, before it is handed to audio. The default is
+    /// `None`, which is every effect that is not a body of some kind.
+    fn resonance_monitor(&self) -> Option<std::sync::Arc<crate::resonance::ResonanceMonitor>> {
+        None
+    }
+
+    /// Whether this effect wants the song's key and chords — a string bank tuned to the song,
+    /// say. Read when the graph is built, like [`Self::wants_sidechain`].
+    fn follows_harmony(&self) -> bool {
+        false
+    }
+
+    /// Hands over the song's harmony laid out in frames, on the building thread, after
+    /// [`Self::prepare`]. Called only on an effect that [`Self::follows_harmony`]; the default
+    /// ignores it.
+    fn set_harmony(&mut self, harmony: crate::resonance::SharedHarmony) {
+        let _ = harmony;
+    }
 }
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ use auris_core::plugin::{
 use auris_core::project::MixerStrip;
 use auris_core::registry::PluginRegistry;
 use auris_core::{AudioBuffer, ParamId};
+use std::sync::Arc;
 
 use super::MUTE_FADE_MS;
 
@@ -518,6 +519,15 @@ impl RenderStrip {
             .filter(|(_, enabled)| **enabled)
             .map(|(effect, _)| effect.latency_frames())
             .fold(0usize, usize::saturating_add)
+    }
+
+    /// Reader for the live observation of the effect in `slot`, if it is a resonator.
+    /// Call while the graph is owned by the building thread, before handing it to audio.
+    pub fn effect_resonance_monitor(
+        &self,
+        slot: usize,
+    ) -> Option<Arc<auris_core::resonance::ResonanceMonitor>> {
+        self.effects.get(slot)?.resonance_monitor()
     }
 
     /// Writes a parameter on one effect. Out-of-range slots are ignored.
