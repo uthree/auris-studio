@@ -17,6 +17,12 @@
 //! 0.6 to 1.0, where the upper quarter of the dial fills the bar in, and the kit's from 0.3 to
 //! 0.8 round its neutral middle.
 //!
+//! `--neutral` writes only what nobody has set: every part with no idiom at the default
+//! density, the lead among them, the bass again under each groove's kick, and the kit in every
+//! groove. It is the dump to count a share over — `--neutral --seeds 1000` is a thousand draws
+//! of each figure for a fifth of the takes — and the one that puts a lead beside the parts
+//! written under it.
+//!
 //! Development tooling: `docs/evaluation.md` has the account, and no release build carries it.
 
 use auris_compose::write_phrase;
@@ -41,6 +47,7 @@ struct Take<'a> {
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let sweep = arguments.iter().any(|argument| argument == "--sweep");
+    let neutral = arguments.iter().any(|argument| argument == "--neutral");
     let seeds = arguments
         .iter()
         .position(|argument| argument == "--seeds")
@@ -138,30 +145,64 @@ fn main() {
     ];
     let densities = [0.3f32, 0.5, 0.8];
 
+    if neutral {
+        for chart in charts {
+            let harmony = harmony_of(chart);
+            emit_chart(chart, &harmony, length, meter);
+            for preset in [
+                ClipPreset::Lead,
+                ClipPreset::Bass,
+                ClipPreset::Chords,
+                ClipPreset::Pad,
+                ClipPreset::Arp,
+            ] {
+                for seed in 0..seeds {
+                    let recipe = ClipRecipe::new(preset, seed);
+                    write(
+                        &harmony,
+                        Take {
+                            preset,
+                            chart,
+                            style: "none",
+                            groove: "basic-rock",
+                            recipe: &recipe,
+                        },
+                    );
+                }
+            }
+            // The kit does not read the chart, and one chart is enough to hear a bass follow
+            // another groove's kick.
+            if chart != charts[0] {
+                continue;
+            }
+            for groove in grooves.into_iter().chain(["open-rock"]) {
+                for preset in [ClipPreset::Bass, ClipPreset::Drums] {
+                    if preset == ClipPreset::Bass && groove == "basic-rock" {
+                        continue;
+                    }
+                    for seed in 0..seeds {
+                        let mut recipe = ClipRecipe::new(preset, seed);
+                        recipe.groove = groove.to_string();
+                        write(
+                            &harmony,
+                            Take {
+                                preset,
+                                chart,
+                                style: "none",
+                                groove,
+                                recipe: &recipe,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        return;
+    }
+
     for chart in charts {
         let harmony = harmony_of(chart);
-        let chords: Vec<serde_json::Value> = harmony
-            .events_in(Ticks::ZERO, length, &SignatureMap::constant(meter))
-            .iter()
-            .map(|event| {
-                serde_json::json!([
-                    event.start.raw(),
-                    event.length.raw(),
-                    event.chord.root.semitones(),
-                    event.chord.bass_class().semitones(),
-                    event
-                        .chord
-                        .classes()
-                        .iter()
-                        .map(|class| class.semitones())
-                        .collect::<Vec<_>>(),
-                ])
-            })
-            .collect();
-        println!(
-            "{}",
-            serde_json::json!({"kind": "chart", "chart": chart, "chords": chords})
-        );
+        emit_chart(chart, &harmony, length, meter);
 
         for preset in [
             ClipPreset::Bass,
@@ -216,6 +257,33 @@ fn main() {
             }
         }
     }
+}
+
+/// A chart as a line: its chords as `[start, length, root, bass, classes]`, in ticks and
+/// semitones, so that the reader can tell which chord a note was written over.
+fn emit_chart(chart: &str, harmony: &Harmony, length: Ticks, meter: TimeSignature) {
+    let chords: Vec<serde_json::Value> = harmony
+        .events_in(Ticks::ZERO, length, &SignatureMap::constant(meter))
+        .iter()
+        .map(|event| {
+            serde_json::json!([
+                event.start.raw(),
+                event.length.raw(),
+                event.chord.root.semitones(),
+                event.chord.bass_class().semitones(),
+                event
+                    .chord
+                    .classes()
+                    .iter()
+                    .map(|class| class.semitones())
+                    .collect::<Vec<_>>(),
+            ])
+        })
+        .collect();
+    println!(
+        "{}",
+        serde_json::json!({"kind": "chart", "chart": chart, "chords": chords})
+    );
 }
 
 /// One take as a line: what it was written with, and its notes as

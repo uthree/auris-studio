@@ -10,6 +10,8 @@
     uv run tools/eval/accompaniment_parts.py kit corpus/
     cargo run --release -p auris-compose --example dump_parts -- --sweep > sweep.jsonl
     uv run tools/eval/accompaniment_parts.py sweep sweep.jsonl
+    cargo run --release -p auris-compose --example dump_parts -- --neutral --seeds 1000 > neutral.jsonl
+    uv run tools/eval/accompaniment_parts.py together neutral.jsonl
 
 `dump_parts` writes sixteen-bar takes of the bass, the chords, the pad, the arpeggio and the kit
 as JSON lines: six charts, six idioms, three densities and a run of seeds for the pitched parts,
@@ -24,7 +26,8 @@ are, how much of the time a bass sounds, how many bars a kit fills and which dru
 A drum window counts only if it has a kick and a snare in every bar and two strokes of a
 timekeeper: a tambourine part is not a kit playing time.
 A fill bar is one with three snare and tom strokes more than the window's commonest bar
-has.
+has. The corpus's column carries a 95% interval for its mean, from resampling its files, and a
+take's figure outside it is marked `<` or `>`: a corpus of forty files is forty draws.
 
 `intrinsic` needs no corpus. It reads the pitched takes against the chords they were written
 over, which the dump carries: which chord tone a bass note is, which figure a comp plays and
@@ -34,6 +37,13 @@ carries one of them apart from the tune it accompanies.
 
 `kit` prints where a corpus's kits put a crash, an open hat and a tom, and what their fill
 bars look like, which is what the kit's turns were written from.
+
+`together` reads the dump made with `--neutral`, which holds a lead beside the parts under
+it, and prints how they sit against each other: how often an arpeggio or a chord is struck a
+semitone from the tune or above it, how often the tune begins a semitone over a held chord
+note, and how often anything is struck under the bass or within a tone of it. A writer cannot
+read another's notes, so none of this is anything a writer decides; it is what their ranges
+and their chord tones add up to.
 
 `sweep` reads the dump made with `--sweep` and prints two dials as curves: how many times a
 bar the chords strike as their density goes from 0.6 to 1.0, and what a kit's bars do as its
@@ -55,6 +65,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import random
 import statistics
 import sys
 from collections import Counter, defaultdict
@@ -404,7 +415,42 @@ def summarise(rows):
     return out
 
 
-def table(title, columns):
+def interval(rows, draws=1000):
+    """A 95% interval for a corpus's mean of each measure, resampling its files.
+
+    `rows` are (file, measures). Whole files are drawn, not windows: the windows of one song are
+    one song's worth of evidence, and a corpus of forty files is forty draws however many
+    windows they are cut into.
+    """
+    by_file = defaultdict(list)
+    for file, measures in rows:
+        by_file[file].append(measures)
+    files = list(by_file.values())
+    if len(files) < 2:
+        return {}
+    rng = random.Random(0)
+    keys = sorted({key for _, measures in rows for key in measures})
+    means = defaultdict(list)
+    for _ in range(draws):
+        drawn = [window for _ in files for window in rng.choice(files)]
+        for key in keys:
+            values = [w[key] for w in drawn if key in w and w[key] == w[key]]
+            if values:
+                means[key].append(mean(values))
+    out = {}
+    for key, values in means.items():
+        values.sort()
+        out[key] = (
+            values[int(len(values) * 0.025)],
+            values[int(len(values) * 0.975) - 1],
+        )
+    return out
+
+
+def table(title, columns, corpus=None):
+    """Prints one measure a row. With `corpus`, an interval for the first column, that column
+    carries it and every other cell says whether it falls below (`<`) or above (`>`) it."""
+    columns = {name: column for name, column in columns.items() if column}
     print(f"\n## {title}")
     names = list(columns)
     keys = sorted({key for column in columns.values() for key in column})
@@ -412,9 +458,20 @@ def table(title, columns):
     print("|---|" + "---|" * len(names))
     for key in keys:
         cells = []
-        for name in names:
+        bounds = (corpus or {}).get(key)
+        for index, name in enumerate(names):
             value = columns[name].get(key)
-            cells.append(f"{value[0]:.2f} +-{value[1]:.2f}" if value else "-")
+            if not value:
+                cells.append("-")
+            elif index == 0 and bounds:
+                cells.append(f"{value[0]:.2f} [{bounds[0]:.2f}, {bounds[1]:.2f}]")
+            else:
+                mark = ""
+                if bounds and value[0] < bounds[0]:
+                    mark = " <"
+                elif bounds and value[0] > bounds[1]:
+                    mark = " >"
+                cells.append(f"{value[0]:.2f} +-{value[1]:.2f}{mark}")
         print(f"| {key} | " + " | ".join(cells) + " |")
 
 
@@ -435,11 +492,18 @@ def corpus_report(takes_path: Path, corpus: Path) -> None:
             ]
             if take["preset"] == "bass":
                 measured = bass_measures(notes)
-                if measured:
+                # A bass under another groove's kick is a column of its own: the rest are the
+                # default groove's, so that they stay the takes they always were.
+                if measured and take["groove"] != "basic-rock":
+                    if take["style"] == "none" and take["density"] == 0.5:
+                        generated_bass[("groove", take["groove"])].append(measured)
+                elif measured:
                     generated_bass[("all",)].append(measured)
                     generated_bass[(take["style"],)].append(measured)
                     if take["style"] == "none":
                         generated_bass[("none", take["density"])].append(measured)
+                        if take["density"] == 0.5:
+                            generated_bass[("groove", take["groove"])].append(measured)
             elif take["preset"] == "drums":
                 measured = drum_measures(notes)
                 if measured:
@@ -453,7 +517,7 @@ def corpus_report(takes_path: Path, corpus: Path) -> None:
 
     corpus_bass, corpus_drums = [], []
     bass_files = drum_files = 0
-    for tracks in corpus_tracks(corpus):
+    for file, tracks in enumerate(corpus_tracks(corpus)):
         bass_seen = drums_seen = False
         for is_drum, program, notes in tracks:
             if is_drum:
@@ -466,13 +530,13 @@ def corpus_report(takes_path: Path, corpus: Path) -> None:
                         and measured["snare_hits_per_bar"] >= 1
                         and measured["timekeeper_hits_per_bar"] >= 2
                     ):
-                        corpus_drums.append(measured)
+                        corpus_drums.append((file, measured))
                         drums_seen = True
             elif 32 <= program <= 39:
                 for window in windows(notes):
                     measured = bass_measures(window)
                     if measured:
-                        corpus_bass.append(measured)
+                        corpus_bass.append((file, measured))
                         bass_seen = True
         bass_files += bass_seen
         drum_files += drums_seen
@@ -486,7 +550,7 @@ def corpus_report(takes_path: Path, corpus: Path) -> None:
     table(
         "Bass",
         {
-            "corpus": summarise(corpus_bass),
+            "corpus": summarise([measures for _, measures in corpus_bass]),
             "gen all": summarise(generated_bass[("all",)]),
             "none d0.3": summarise(generated_bass[("none", 0.3)]),
             "none d0.5": summarise(generated_bass[("none", 0.5)]),
@@ -494,11 +558,23 @@ def corpus_report(takes_path: Path, corpus: Path) -> None:
             "pop-band": summarise(generated_bass[("pop-band",)]),
             "rock": summarise(generated_bass[("rock",)]),
         },
+        interval(corpus_bass),
     )
+    grooves = sorted(key[1] for key in generated_bass if key[0] == "groove")
+    if len(grooves) > 1:
+        table(
+            "Bass, unstyled at 0.5, by the groove it follows",
+            {"corpus": summarise([measures for _, measures in corpus_bass])}
+            | {
+                groove: summarise(generated_bass[("groove", groove)])
+                for groove in grooves
+            },
+            interval(corpus_bass),
+        )
     table(
         "Drums",
         {
-            "corpus": summarise(corpus_drums),
+            "corpus": summarise([measures for _, measures in corpus_drums]),
             "gen d0.5": summarise(generated_drums[("d0.5",)]),
             "gen d0.3": summarise(generated_drums[("d", 0.3)]),
             "gen d0.8": summarise(generated_drums[("d", 0.8)]),
@@ -509,6 +585,7 @@ def corpus_report(takes_path: Path, corpus: Path) -> None:
             "eight-beat d0.5": summarise(generated_drums[("eight-beat",)]),
             "sixteen-beat d0.5": summarise(generated_drums[("sixteen-beat",)]),
         },
+        interval(corpus_drums),
     )
 
 
@@ -850,7 +927,11 @@ def intrinsic_report(takes_path: Path) -> None:
                 charts[item["chart"]] = item["chords"]
                 continue
             preset = item["preset"]
-            if preset == "drums" or not item["notes"]:
+            # The kit and the lead are not read against the chords, and a bass under another
+            # groove's kick is the corpus report's business.
+            if preset in ("drums", "lead") or not item["notes"]:
+                continue
+            if item["groove"] != "basic-rock":
                 continue
             density = round(item["density"], 2)
             chords = charts[item["chart"]]
@@ -1050,6 +1131,114 @@ def kit_vocabulary(corpus: Path) -> None:
     print("tom direction in a fill:", dict(tom_dir))
 
 
+def sounding_at(notes, tick):
+    """The pitches of `notes` sounding at `tick`, lowest first; notes are [start, length, pitch, ...]."""
+    return sorted(
+        pitch for start, length, pitch, *_ in notes if start <= tick < start + length
+    )
+
+
+def together_row(lead, chords, bass, arp, pad):
+    """What the parts written over one chart at one seed do to each other."""
+    row = {}
+
+    def against_the_lead(name, part):
+        onsets = sorted({note[0] for note in part})
+        heard = rubbing = above = doubled = 0
+        for tick in onsets:
+            tune = sounding_at(lead, tick)
+            if not tune:
+                continue
+            heard += 1
+            top = tune[-1]
+            struck = [pitch for start, _, pitch, *_ in part if start == tick]
+            rubbing += any((pitch - top) % 12 in (1, 11) for pitch in struck)
+            above += max(struck) > top
+            doubled += any(pitch == top for pitch in struck)
+        if heard:
+            row[f"{name}: strikes a semitone from the tune"] = rubbing / heard
+            row[f"{name}: strikes with a note above the tune"] = above / heard
+            row[f"{name}: strikes the tune's own note"] = doubled / heard
+
+    against_the_lead("arp", arp)
+    against_the_lead("chords", chords)
+    against_the_lead("pad", pad)
+    # The tune against what is held under it: a lead note begun a semitone above a sounding
+    # chord note is the avoid note the score linter names.
+    begun = over = 0
+    for tick, _, pitch, *_ in lead:
+        held = sounding_at(chords, tick)
+        if held:
+            begun += 1
+            over += any((pitch - under) % 12 == 1 for under in held)
+    if begun:
+        row["lead: notes begun a semitone over a chord note"] = over / begun
+    # The bottom of the arrangement: a chord, pad or arpeggio note under the bass is an inversion
+    # nobody wrote, and one within a tone of it down there is mud.
+    for name, part in (("chords", chords), ("pad", pad), ("arp", arp)):
+        onsets = sorted({note[0] for note in part})
+        heard = under = close = 0
+        for tick in onsets:
+            floor = sounding_at(bass, tick)
+            if not floor:
+                continue
+            heard += 1
+            lowest = min(pitch for start, _, pitch, *_ in part if start == tick)
+            under += lowest < floor[0]
+            close += 0 < lowest - floor[0] <= 2
+        if heard:
+            row[f"{name}: strikes with a note under the bass"] = under / heard
+            row[f"{name}: strikes within a tone above the bass"] = close / heard
+    # The middle: how much of the time the arpeggio is inside the comp's own voicing.
+    onsets = sorted({note[0] for note in arp})
+    heard = inside = 0
+    for tick in onsets:
+        held = sounding_at(chords, tick)
+        if held:
+            heard += 1
+            struck = [pitch for start, _, pitch, *_ in arp if start == tick]
+            inside += held[0] <= min(struck) <= held[-1]
+    if heard:
+        row["arp: notes inside the chords' voicing"] = inside / heard
+    return row
+
+
+def together_report(takes_path: Path) -> None:
+    """Prints how unstyled parts written over the same chart at the same seed sit together."""
+    parts = defaultdict(dict)
+    with takes_path.open(encoding="utf-8") as lines:
+        for line in lines:
+            take = json.loads(line)
+            if (
+                take.get("kind") != "take"
+                or take["style"] != "none"
+                or take["groove"] != "basic-rock"
+            ):
+                continue
+            if round(take["density"], 2) != 0.5 or take["preset"] == "drums":
+                continue
+            parts[(take["chart"], take["seed"])][take["preset"]] = take["notes"]
+    rows = defaultdict(list)
+    for (chart, _), band in parts.items():
+        if not {"lead", "chords", "bass", "arp", "pad"} <= set(band):
+            continue
+        row = together_row(
+            band["lead"], band["chords"], band["bass"], band["arp"], band["pad"]
+        )
+        rows["all"].append(row)
+        rows[chart].append(row)
+    if not rows:
+        print("no lead in these takes: dump them with --neutral")
+        return
+    print(
+        f"{len(rows['all'])} bands: a lead, chords, a pad, an arpeggio and a bass over one chart at one seed"
+    )
+    show(
+        "together",
+        {name: rows[name] for name in ["all", *sorted(n for n in rows if n != "all")]},
+    )
+
+
 def sweep_report(takes_path: Path) -> None:
     """Prints the chords' strikes a bar and the kit's bars against the density dial."""
     rows = defaultdict(list)
@@ -1128,6 +1317,12 @@ def main() -> None:
     )
     kit = commands.add_parser("kit", help="where a corpus's kits crash, open and fill")
     kit.add_argument("folder", type=Path, help="a folder of MIDI files")
+    together = commands.add_parser(
+        "together", help="how the parts written over one chart sit together"
+    )
+    together.add_argument(
+        "takes", type=Path, help="JSON lines from dump_parts --neutral"
+    )
     sweep = commands.add_parser(
         "sweep", help="the chords' and the kit's density dials as curves"
     )
@@ -1139,6 +1334,8 @@ def main() -> None:
         intrinsic_report(args.takes)
     elif args.command == "sweep":
         sweep_report(args.takes)
+    elif args.command == "together":
+        together_report(args.takes)
     else:
         kit_vocabulary(args.folder)
 
