@@ -383,6 +383,14 @@ pub struct Groove {
     /// [`Pattern::at_in_bar`] needs to lay one over the other, and it is a property of the pattern
     /// rather than of the song, which is why it is written here beside the pattern it describes.
     pub steps_per_beat: usize,
+    /// Whether the hat is left open: every stroke of [`Self::hat`] is struck on the open hat
+    /// when the kit has one, and on the closed one when it has not.
+    ///
+    /// The other way a drummer keeps time on it. In the kit tracks of a pop and rock score
+    /// corpus, four bars in ten that open the hat at all open it on every beat and close it
+    /// nowhere; the rest open one stroke of a closed pattern, which is not a groove's business
+    /// but a turn's, and is the hat part's own.
+    pub open_hat: bool,
 }
 
 impl Groove {
@@ -457,6 +465,7 @@ pub const GROOVES: &[Groove] = &[
         hat: "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~",
         swing: 50,
         steps_per_beat: 4,
+        open_hat: false,
     },
     Groove {
         name: "eight-beat",
@@ -466,6 +475,7 @@ pub const GROOVES: &[Groove] = &[
         hat: "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~",
         swing: 50,
         steps_per_beat: 4,
+        open_hat: false,
     },
     Groove {
         name: "sixteen-beat",
@@ -475,6 +485,7 @@ pub const GROOVES: &[Groove] = &[
         hat: "x x x x x x x x x x x x x x x x",
         swing: 50,
         steps_per_beat: 4,
+        open_hat: false,
     },
     Groove {
         name: "four-on-the-floor",
@@ -484,6 +495,7 @@ pub const GROOVES: &[Groove] = &[
         hat: "~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~",
         swing: 50,
         steps_per_beat: 4,
+        open_hat: false,
     },
     Groove {
         name: "shuffle",
@@ -493,6 +505,7 @@ pub const GROOVES: &[Groove] = &[
         hat: "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~",
         swing: 66,
         steps_per_beat: 4,
+        open_hat: false,
     },
     Groove {
         name: "breakbeat",
@@ -502,6 +515,7 @@ pub const GROOVES: &[Groove] = &[
         hat: "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~",
         swing: 50,
         steps_per_beat: 4,
+        open_hat: false,
     },
     Groove {
         name: "bossa-nova",
@@ -511,6 +525,7 @@ pub const GROOVES: &[Groove] = &[
         hat: "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~",
         swing: 50,
         steps_per_beat: 4,
+        open_hat: false,
     },
     Groove {
         name: "half-time",
@@ -520,6 +535,7 @@ pub const GROOVES: &[Groove] = &[
         hat: "x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~",
         swing: 50,
         steps_per_beat: 4,
+        open_hat: false,
     },
     Groove {
         name: "sparse",
@@ -529,6 +545,17 @@ pub const GROOVES: &[Groove] = &[
         hat: "x ~ ~ ~ ~ ~ ~ ~ x ~ ~ ~ ~ ~ ~ ~",
         swing: 50,
         steps_per_beat: 4,
+        open_hat: false,
+    },
+    Groove {
+        name: "open-rock",
+        description: "A rock beat under a hat left open on every beat, for a chorus played loud",
+        kick: "x ~ ~ ~ ~ ~ x ~ ~ ~ x ~ ~ ~ ~ ~",
+        snare: "~ ~ ~ ~ X ~ ~ ~ ~ ~ ~ ~ X ~ ~ ~",
+        hat: "x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~",
+        swing: 50,
+        steps_per_beat: 4,
+        open_hat: true,
     },
     // The compound ones, counted in eighths of a dotted beat rather than sixteenths of a plain
     // one. Mapping a 4/4 groove onto 6/8 keeps its footing but stays a four-beat idea in a
@@ -542,6 +569,7 @@ pub const GROOVES: &[Groove] = &[
         hat: "x x x x x x",
         swing: 50,
         steps_per_beat: 3,
+        open_hat: false,
     },
     Groove {
         name: "slow-blues",
@@ -551,6 +579,7 @@ pub const GROOVES: &[Groove] = &[
         hat: "x ~ x x ~ x x ~ x x ~ x",
         swing: 50,
         steps_per_beat: 3,
+        open_hat: false,
     },
 ];
 

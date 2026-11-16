@@ -23,6 +23,8 @@ takes: how often a bar's rhythm is the bar before it, what the intervals and the
 are, how much of the time a bass sounds, how many bars a kit fills and which drums it strikes.
 A drum window counts only if it has a kick and a snare in every bar and two strokes of a
 timekeeper: a tambourine part is not a kit playing time.
+A fill bar is one with three snare and tom strokes more than the window's commonest bar
+has.
 
 `intrinsic` needs no corpus. It reads the pitched takes against the chords they were written
 over, which the dump carries: which chord tone a bass note is, which figure a comp plays and
@@ -264,6 +266,17 @@ def bass_measures(notes):
 # ---------------------------------------------------------------- drums
 
 
+def usual_strokes(busy):
+    """How many snare and tom strokes a window's ordinary bar has: the commonest count.
+
+    Not the median. A kit that ghosts a stroke in every second bar has a median half a stroke
+    above its plain bar, and a fill of three strokes over the backbeat then counted in the bars
+    without a ghost and not in the bars with one: the writers' own kits measured 0.63 fill bars
+    in sixteen that way and 1.18 this way, while the corpus's measured 1.53 and 1.50.
+    """
+    return Counter(busy).most_common(1)[0][0]
+
+
 def drum_measures(notes):
     if len(notes) < 32:
         return None
@@ -335,7 +348,7 @@ def drum_measures(notes):
         )
         for bar in range(BARS)
     ]
-    usual = statistics.median(busy)
+    usual = usual_strokes(busy)
     fills = [bar for bar in range(BARS) if busy[bar] >= usual + 3]
     measures["fill_bars"] = len(fills)
     measures["fill_on_fourth_bar"] = (
@@ -924,7 +937,7 @@ def kit_vocabulary(corpus: Path) -> None:
                     )
                     for bar in range(BARS)
                 ]
-                usual = statistics.median(busy)
+                usual = usual_strokes(busy)
                 fills = [bar for bar in range(BARS) if busy[bar] >= usual + 3]
                 fills_per_window.append(len(fills))
                 for bar in fills:

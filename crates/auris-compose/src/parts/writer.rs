@@ -16,6 +16,7 @@ use crate::frame::{Frame, SectionPlan};
 use crate::rhythm::{Accent, Grid, Pattern};
 use crate::rng::{Key as RngKey, Rng};
 use crate::spec::{PartSpec, Role};
+use crate::theory::chord::Chord;
 
 use super::ScoreSettings;
 
@@ -172,36 +173,38 @@ pub(super) fn bar_stream(
     Rng::stream(frame.seed, &path)
 }
 
-/// Whether the band pushes the chord changes of this stretch: each one struck half a beat
-/// early and held over the line.
+/// Whether the band pushes the change from one chord to another: the new chord struck half a
+/// beat early and held over the line.
 ///
 /// The one decision two parts have to make alike and cannot make from a seed. A clip is one
 /// part with a seed of its own, so a comp that drew its push from its own stream pushed alone:
 /// the keyboard came in half a beat early over a bass restriking the old root on the line.
-/// What the clips over one stretch of a timeline do share is the stretch — how many bars, and
-/// which chords where — so that is what the draw is keyed by, and nothing else. Every part
-/// written over the same chords at the same syncopation answers alike, whatever its seed.
+/// What two clips over the same chords do share is the chords, so the draw is keyed by the
+/// change itself — the root and the bass note it leaves, and the ones it arrives at — and by
+/// nothing else. Every part answers alike whatever its seed, and whatever stretch of the
+/// timeline its clip happens to cover.
 ///
-/// The price is that another take of a part cannot change it: whether these eight bars push is
-/// a fact about the song. The dial still decides, and now does so the same way every time —
-/// the draw is one number for the stretch, and the stretch pushes once the dial is past it. The
-/// top of the dial pushes six stretches in ten.
-pub(super) fn band_pushes(section: &SectionPlan, syncopation: f32) -> bool {
-    let mut path = vec![
+/// It was keyed by the whole stretch at first: how many bars, and every chord in them. Then
+/// a bass written over eight bars and a comp written over the same eight as two clips of four
+/// asked different questions and got different answers. Keyed by the change, a progression
+/// pushes the same change every time it comes round, which is how a band plays one: the
+/// anticipation is part of the tune, into the same chord each time.
+///
+/// The price is that another take of a part cannot change it: which changes push is a fact
+/// about the song. The dial still decides, the same way every time — each change has one
+/// number, and is pushed once the dial is past it. The top of the dial pushes six in ten.
+pub(super) fn band_pushes(from: &Chord, to: &Chord, syncopation: f32) -> bool {
+    let class = |class: crate::theory::pitch::PitchClass| {
+        RngKey::Index(i64::from(class.semitones()).unsigned_abs())
+    };
+    let path = [
         RngKey::Word("band"),
         RngKey::Word("push"),
-        RngKey::Index(section.bars as u64),
+        class(from.root),
+        class(from.bass_class()),
+        class(to.root),
+        class(to.bass_class()),
     ];
-    for event in &section.events {
-        for value in [
-            event.start.raw(),
-            event.length.raw(),
-            i64::from(event.chord.root.semitones()),
-            i64::from(event.chord.bass_class().semitones()),
-        ] {
-            path.push(RngKey::Index(value.unsigned_abs()));
-        }
-    }
     Rng::stream(0, &path).chance((syncopation * 0.6).clamp(0.0, 0.6))
 }
 

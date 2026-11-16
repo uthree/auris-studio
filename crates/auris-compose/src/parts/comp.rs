@@ -260,9 +260,10 @@ pub(super) fn comp(
     // over the line, the anticipation every keyboard player owns. A property of the section and
     // not of the chord — a player who pushes, pushes, and a per-change roll would also break the
     // promise that the figure holds through a phrase, since the push lands its strike in the bar
-    // *before* the change. And not of the take either: the bass pushes the same changes, so
-    // the answer is the band's. See `band_pushes`.
-    let pushing = band_pushes(section, settings.mood.syncopation);
+    // *before* the change. That was the comp's own draw, once for the section. It is the
+    // band's now, asked of each change as it comes: the bass pushes the same ones, and a
+    // change that is pushed is pushed every time the progression comes round to it, which
+    // keeps the figure's promise from the other side. See `band_pushes`.
     // Half a felt beat, the distance every push is early by.
     let push_early = grid.step_ticks() * (grid.steps_per_beat() / 2).max(1) as i64;
     // Whether this take lets a chord go before a syncopated strike.
@@ -335,6 +336,11 @@ pub(super) fn comp(
             .unwrap_or(push_early);
         // Only a change is anticipated: restriking a chord that is already sounding half a
         // beat early is a stumble, not a push.
+        let pushing = section.events[..event_index]
+            .last()
+            .is_some_and(|previous| {
+                band_pushes(&previous.chord, &event.chord, settings.mood.syncopation)
+            });
         let push = pushing
             && !section.continues_chord(event_index)
             && !pad

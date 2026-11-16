@@ -97,6 +97,10 @@ def test_a_fill_is_a_bar_three_strokes_busier_and_a_crash_is_counted_on_its_down
     assert measured["uses_toms"] == measured["uses_crash"] == 1.0
     assert measured["bars_with_downbeat_crash"] == 1 / 16
     assert measured["whole_bar_distinct"] == 3
+    # A ghost in every second bar does not hide it: a fill is counted against the commonest
+    # bar, and the median of this kit is half a stroke above that.
+    ghosted = kit + [(bar * STEPS + 7, 1, 38, 40) for bar in range(1, BARS, 2)]
+    assert drum_measures(ghosted)["fill_bars"] == 1
     # Two extra strokes are a pickup, not a fill.
     pickup = rock_kit() + [(7 * STEPS + step, 1, 38, 100) for step in (14, 15)]
     assert drum_measures(pickup)["fill_bars"] == 0

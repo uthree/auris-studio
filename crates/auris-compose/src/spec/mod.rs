@@ -61,6 +61,10 @@ pub struct PartSpec {
     /// The tom a snare part may run the back half of a fill onto, or `None` for a fill that
     /// stays on the snare. See [`Self::crash`].
     pub tom: Option<u8>,
+    /// The open hat a hat part may strike in place of the closed one: every stroke of a groove
+    /// that keeps time on it, and otherwise the one stroke it opens on the way out of a phrase.
+    /// `None` for a hat that stays closed. See [`Self::crash`].
+    pub open_hat: Option<u8>,
     /// Whether a chord part adds the root an octave or more below its voicing.
     ///
     /// Read by the chords and the pad; see [`ClipRecipe::low_root`](auris_core::ClipRecipe::low_root).
@@ -94,6 +98,7 @@ impl PartSpec {
             note: None,
             crash: None,
             tom: None,
+            open_hat: None,
             low_root: false,
             strum: 0,
             centre: None,

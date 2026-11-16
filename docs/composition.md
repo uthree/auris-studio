@@ -82,22 +82,25 @@ over two bars and then again, so a sparser or a busier groove is still a groove 
 drummer gets busier without playing something else. *Which* rhythm it plays is
 still the groove picker, and that is a choice from a drummer's own vocabulary rather than a
 number: `basic-rock`, `eight-beat`, `sixteen-beat`, `four-on-the-floor`, `shuffle`, `breakbeat`,
-`bossa-nova`, `half-time` and `sparse`.
+`bossa-nova`, `half-time`, `sparse` and `open-rock`, which keeps time on the hat left open.
 
 A kit turns where its phrases do. The last bar of a clip runs a fill, as long as **Fill** asks
 for; a clip of eight bars or more may run twice as much of that bar, up to the whole of it, and
 also turns at the end of every second phrase — the eighth bar of sixteen. A whole kit may run
 the back half of a fill onto a tom, and may land on a crash in the bar a fill leads into, the
-clip's first bar included; a section played hard crashes more often than a quiet one. A clip
+clip's first bar included; a section played hard crashes more often than a quiet one. One take
+in four opens a single hat stroke in the bar that closes each phrase. A clip
 that is one drum on a track of its own stays that drum, and a kit whose sound assignment has no
-crash or no tom keeps those strokes on the hat and the snare. With **Fill** at zero the kit does
+crash, no tom or no open hat keeps those strokes on the hat and the snare. With **Fill** at zero the kit does
 none of this and the clip is a loop.
 
 A bass line follows the kick of a groove as well, without reading the kit's notes: a new bass
 clip takes the groove of the generated kit most of it lies under, and keeps it in its own recipe.
-It draws one figure for the section and holds it, plays mostly the root, lets go on the beat
-before a syncopated note in some takes, and in most takes steps into the next bar at the end of
-every second one.
+It draws one figure for the section and holds it, and plays mostly the root. A root-and-fifth
+line is played on the kick, on the beats, or on the two halves of the bar. Every second bar
+turns the figure its own way — a pickup into the next bar, the last note dropped, or the last
+note moved onto the pickup — and the bar that closes a phrase runs up the scale into the next.
+Half the takes let a note go before a syncopated one, or just before a backbeat.
 
 An arpeggio breaks each chord in closed position, led from the chord before it the way the chords
 part is, so the figure stays under the hand while the harmony moves. It runs in one of six
@@ -121,10 +124,11 @@ subdivision entirely, since a groove is written in sixteenths and read by index.
 A chord part picks its figure once for the section and restates it, the way a keyboard player picks
 a feel and keeps it; only the closing bar of a planned phrase can turn it over, and only
 sometimes. Half the takes let a chord go on the beat before a syncopated strike and half hold
-every chord into the next. A stretch may *push*: every chord change struck half a beat early and
-held over the line. Whether it does is read off the chords under the clip and the **Syncopation**
-dial, not off the seed, so the chords and the bass over one stretch push the same changes, and
-another take of either does not change it; turning the dial down stops it. Above 75% density, chords keep their figure and fill in the steps
+every chord into the next. A chord change may be *pushed*: struck half a beat
+early and held over the line. Which changes are is read off the two chords and the
+**Syncopation** dial, not off the seed. So the chords and the bass push the same changes however
+their clips are cut, a progression pushes the same change each time it comes round, and another
+take of either part does not change it; turning the dial down stops it. Above 75% density, chords keep their figure and fill in the steps
 round it.
 At 100%, every step is struck: sixteen attacks per 4/4 bar with a 1/16 subdivision, or
 twenty-four with 1/16 triplets. Foreground-aware arrangement preserves this explicit dense

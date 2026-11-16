@@ -248,7 +248,8 @@ fn answering_hit(onsets: &[usize], steps: usize) -> Option<usize> {
         .position(|offset| *offset > 0 && *offset * 2 >= steps)
 }
 
-/// How many bars a bass line's pickup comes round in.
+/// How many bars a bass line's cell is: the bar that states the figure and the bar that turns
+/// it. See [`Turn`].
 ///
 /// Two, like the kit's cell: a bar that states the figure and a bar that says it again and
 /// steps into what follows. With one figure for the section and nothing else, a bass wrote the
@@ -256,8 +257,73 @@ fn answering_hit(onsets: &[usize], steps: usize) -> Option<usize> {
 /// repeat the bar before them 39 times and the bar *two* before them 52.
 const PICKUP_EVERY: usize = 2;
 
-/// How many takes pick up. The rest play the figure plain, which is a line too.
-const PICKUP: f32 = 0.6;
+/// What the second bar of a bass line's cell does to the first.
+///
+/// One answer for a take — pick up into the next bar, or play the figure plain — left a line
+/// that was its commonest bar 83 times in a hundred and never once dropped a note. The bass
+/// lines of a pop and rock score corpus play their commonest bar 51 times in a hundred, and
+/// the bars that depart from it add notes, drop them and do both about as often as each other:
+/// 14, 14 and 20 in a hundred. So every second bar draws for itself, from those three and from
+/// playing the bar plain.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Turn {
+    /// The figure as it is.
+    Plain,
+    /// The figure, and a pickup on the last half-beat.
+    Add,
+    /// The figure without its last hit, so the one before it rings on.
+    Drop,
+    /// The last hit moved onto the pickup.
+    Move,
+}
+
+impl Turn {
+    fn pick(rng: &mut Rng) -> Self {
+        const TURNS: [Turn; 4] = [Turn::Plain, Turn::Add, Turn::Drop, Turn::Move];
+        TURNS[rng.weighted(&[0.25, 0.22, 0.22, 0.31]).min(TURNS.len() - 1)]
+    }
+}
+
+/// Where a note lets go when the note after it is on a backbeat, as a step of the bar: half
+/// a beat before it, or `None` to hold into it.
+///
+/// `lift_before` makes room before a syncopated hit, and a line on the beats has none: every
+/// note of it ran into the next. In the corpus a note a beat from the next is followed by a
+/// rest three times in ten, and sounds for half the beat when it is. Two and four are where:
+/// the snare is struck there, and a bass that lets go just before it leaves the backbeat its
+/// attack. With half the takes lifting, that is one such note in four.
+fn breath_before(grid: crate::rhythm::Grid, here: usize, next: usize) -> Option<usize> {
+    let beat = grid.steps_per_beat().max(1);
+    let half = (beat / 2).max(1);
+    (grid.weight(next) == 2 && next >= here + beat).then(|| next - half)
+}
+
+/// What a root-and-fifth line is played on.
+///
+/// It was the kick and nothing else, and over the default groove that is one bar: the downbeat,
+/// the half-beat after two and the half-beat after three. A third of all takes had it for
+/// their commonest bar and 22 onset spacings in a hundred were a dotted quarter, where the
+/// corpus lines have five and no such bar among their dozen commonest. What they play instead
+/// is plainer: a note on every beat is the commonest bar of one line in ten, and a note on the
+/// downbeat and the middle of the bar of one in twelve. The kick is still the likeliest
+/// ground, because a rhythm section locked together is worth more than a figure.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Ground {
+    /// Wherever the groove's kick is.
+    Kick,
+    /// Every beat.
+    Beats,
+    /// The downbeat and the middle of the bar: root, then fifth.
+    Halves,
+}
+
+impl Ground {
+    fn pick(rng: &mut Rng, busy: f32) -> Self {
+        const GROUNDS: [Ground; 3] = [Ground::Kick, Ground::Beats, Ground::Halves];
+        let weights = [1.0, 0.5, 0.1 + (1.0 - busy.clamp(0.0, 1.0)) * 0.5];
+        GROUNDS[rng.weighted(&weights).min(GROUNDS.len() - 1)]
+    }
+}
 
 /// The dial setting from which a pulse runs eighths rather than quarters, whatever the idiom.
 ///
@@ -324,13 +390,11 @@ pub(super) fn bass(
     // that relationship throughout. Styled parts retain the register their vocabulary
     // establishes.
     let fifth_above = bar_stream(frame, part, section, "voicing", 0).chance(0.5);
-    // Whether this take's second bar answers its first. See `PICKUP_EVERY`.
-    let picks_up = bar_stream(frame, part, section, "pickup", 0).chance(PICKUP);
+    // What a root-and-fifth line is played on, for the section.
+    let ground = Ground::pick(&mut bar_stream(frame, part, section, "ground", 0), busy);
     // The dial as it was set, for the two things it switches rather than scales.
     let dial = part.density.unwrap_or_else(|| settings.mood.density());
-    // Whether the band pushes this stretch's chord changes, and whether the chord in hand was
-    // pushed into by the one before it. A rhythm somebody wrote says where its notes are.
-    let pushing = part.rhythm.is_none() && band_pushes(section, settings.mood.syncopation);
+    // Whether the chord in hand was pushed into by the one before it. See `band_pushes`.
     let mut pushed_in = false;
 
     for (position_in_section, event) in section.events.iter().enumerate() {
@@ -379,9 +443,26 @@ pub(super) fn bass(
                 // One note under the chord, held: the sound of a bass player staying out of
                 // the way.
                 BassFigure::Root => Vec::new(),
-                // Follow the kick, which is what locks a rhythm section together.
+                // Follow the kick, which is what locks a rhythm section together — or the
+                // beats, or the two halves of the bar. See `Ground`.
                 BassFigure::Fifth | BassFigure::Approach => (0..steps)
-                    .filter(|offset| kick_at(event.start + grid.tick_of(*offset)))
+                    .filter(|offset| {
+                        let at = (first + offset) % per_bar;
+                        let beat = grid.steps_per_beat().max(1);
+                        // Two notes a bar leave an approach figure one root and one way
+                        // out of it, which is not mostly root: it takes the beats instead.
+                        let ground = match (ground, figure) {
+                            (Ground::Halves, BassFigure::Approach) => Ground::Beats,
+                            (ground, _) => ground,
+                        };
+                        match ground {
+                            Ground::Kick => kick_at(event.start + grid.tick_of(*offset)),
+                            Ground::Beats => at.is_multiple_of(beat),
+                            Ground::Halves => {
+                                at == 0 || ((per_bar / beat).is_multiple_of(2) && at * 2 == per_bar)
+                            }
+                        }
+                    })
                     .collect(),
                 // The kick, and the half-beats between it: a busier, walking feel.
                 BassFigure::Octave => (0..steps)
@@ -446,36 +527,56 @@ pub(super) fn bass(
         // comp strikes the same change at the same moment — see `band_pushes` — and a bass
         // that waited for the line would be restriking the old root under the new chord. A
         // walk does not push: it is on every beat by definition.
-        let pushes_out = pushing
+        // A rhythm somebody wrote says where its notes are.
+        let pushes_out = part.rhythm.is_none()
             && figure != BassFigure::Walk
             && steps > half
             && section
                 .events
                 .get(position_in_section + 1)
-                .is_some_and(|next| next.start == event.end())
+                .is_some_and(|next| {
+                    next.start == event.end()
+                        && band_pushes(&event.chord, &next.chord, settings.mood.syncopation)
+                })
             && !section.continues_chord(position_in_section + 1);
-        let picking_up = picks_up
-            && part.rhythm.is_none()
+        let varies = part.rhythm.is_none()
             && (bar % PICKUP_EVERY == PICKUP_EVERY - 1 || closing)
             // A push is already the way into the next bar, and takes the same half-beat.
             && !pushes_out
             && !matches!(figure, BassFigure::Root | BassFigure::Walk)
             && first + steps == per_bar
             && steps > half;
+        // Drawn for the bar, so each second bar of the section turns its own way, and drawn
+        // whether or not the bar can vary, like every roll in this crate.
+        let drawn = Turn::pick(&mut bar_stream(frame, part, section, "vary", bar));
+        let turn = if varies { drawn } else { Turn::Plain };
         let stride = if dial >= QUICK_RUN_FROM {
             (half / 2).max(1)
         } else {
             half
         };
-        let running_up = picking_up && closing && steps > 2 * stride;
+        let pickup = steps - half;
+        let running_up = closing && turn != Turn::Plain && steps > 2 * stride;
         if running_up {
             // The run owns the end of the bar: nothing of the figure is struck inside it.
             onsets.retain(|offset| *offset < steps - 2 * stride);
             onsets.extend([steps - 2 * stride, steps - stride]);
-        } else if picking_up && !onsets.contains(&(steps - half)) {
-            onsets.push(steps - half);
-            onsets.sort_unstable();
+        } else {
+            // The last hit that is neither the chord's own start nor the pickup itself.
+            let last_hit = onsets
+                .iter()
+                .rposition(|offset| *offset != 0 && *offset != pickup);
+            if matches!(turn, Turn::Drop | Turn::Move)
+                && let Some(index) = last_hit
+            {
+                onsets.remove(index);
+            }
+            if matches!(turn, Turn::Add | Turn::Move) && !onsets.contains(&pickup) {
+                onsets.push(pickup);
+                onsets.sort_unstable();
+            }
         }
+        let picking_up = running_up || matches!(turn, Turn::Add | Turn::Move);
         if pushes_out {
             onsets.retain(|offset| *offset < steps - half);
             onsets.push(steps - half);
@@ -521,11 +622,16 @@ pub(super) fn bass(
                 && part.rhythm.is_none()
                 && let Some(next) = onsets.get(position + 1)
                 && let Some(boundary) = lift_before(grid, first + offset, first + next)
+                    .or_else(|| breath_before(grid, first + offset, first + next))
             {
                 length = grid.tick_of(boundary - (first + offset));
             }
             let strong = position == 0 || grid.weight(grid.step_of(at)) >= 2;
-            let answers = answering == Some(position);
+            // On the two halves of the bar the fifth answers once a cell, not once a bar:
+            // root, root, root, fifth. Every bar would be a line standing on its fifth half
+            // of the time.
+            let answers = answering == Some(position)
+                && (ground != Ground::Halves || bar % PICKUP_EVERY == PICKUP_EVERY - 1);
             let pitch = match figure {
                 // Stepping into whatever comes next, on the last hit before it. A bass player
                 // reaching for the next chord is the sound of a line going somewhere, and it is
@@ -647,7 +753,7 @@ mod tests {
         // Drawn again every four bars, not one sixteen-bar take in 432 kept one figure, and
         // four in five put four bars of whole notes beside four bars of something busy. A
         // player picks a line and keeps it: every bar that states the figure is the first bar,
-        // and every bar that picks up is the second. Only a phrase's closing bar may turn.
+        // and every second bar is that bar turned — a hit dropped, a pickup added, or both.
         use crate::fixture::bar_steps;
         for style in [
             None,
@@ -663,11 +769,21 @@ mod tests {
                     section.phrases.len() > 1,
                     "more than one phrase to hold across"
                 );
+                let stated = bar_steps(&frame, bass, 0);
                 for bar in (0..16).filter(|bar| !section.closes_phrase(*bar)) {
-                    assert_eq!(
-                        bar_steps(&frame, bass, bar),
-                        bar_steps(&frame, bass, bar % PICKUP_EVERY),
-                        "{style:?}, seed {seed}: bar {bar} changed its bass figure"
+                    let steps = bar_steps(&frame, bass, bar);
+                    if bar % PICKUP_EVERY == 0 {
+                        assert_eq!(
+                            steps, stated,
+                            "{style:?}, seed {seed}: bar {bar} changed its bass figure"
+                        );
+                        continue;
+                    }
+                    let added: Vec<_> = steps.iter().filter(|s| !stated.contains(s)).collect();
+                    let dropped = stated.iter().filter(|s| !steps.contains(s)).count();
+                    assert!(
+                        added.iter().all(|step| **step == 14) && dropped <= 1,
+                        "{style:?}, seed {seed}: bar {bar} is {steps:?} against {stated:?}"
                     );
                 }
             }
@@ -772,52 +888,59 @@ mod tests {
     }
 
     #[test]
-    fn the_second_bar_steps_into_the_bar_after_it() {
-        // One figure for the section and nothing else was the same bar sixteen times. In the
-        // takes that pick up, every second bar adds the last half-beat and plays it a scale
-        // step under the root it is going to.
+    fn every_second_bar_turns_the_figure_its_own_way() {
+        // One answer for a take left a line that was its commonest bar 83 times in a hundred
+        // and never dropped a note. Each second bar draws for itself: the figure plain, a
+        // pickup added, the last hit dropped, or the last hit moved onto the pickup.
         use crate::fixture::bar_steps;
-        let (mut picking_up, mut plain) = (0, 0);
+        let mut kinds = [0usize; 4];
         for seed in 0..32u64 {
             let (frame, parts) = line(seed, Some(PerformanceStyle::PopBand)).draft();
             let bass = part(&parts, "bass");
             let section = &frame.sections[0];
-            let (first, second) = (bar_steps(&frame, bass, 0), bar_steps(&frame, bass, 1));
-            if first == second {
-                plain += 1;
+            let stated = bar_steps(&frame, bass, 0);
+            // A held root is a player keeping out of the way and a walk approaches every
+            // chord already; neither turns.
+            if stated.len() < 2 || stated == vec![0, 4, 8, 12] {
                 continue;
             }
-            // A walk approaches every chord already, and so never picks up; a walking take
-            // whose bars differ is one whose phrase turned, which is not this test's business.
-            if first == vec![0, 4, 8, 12] {
-                continue;
+            let bar_ticks = frame.grid.bar_ticks();
+            let mut seen = std::collections::BTreeSet::new();
+            for bar in [1usize, 5, 9, 13] {
+                let steps = bar_steps(&frame, bass, bar);
+                let adds = steps.iter().any(|step| !stated.contains(step));
+                let drops = stated.iter().any(|step| !steps.contains(step));
+                let kind = match (adds, drops) {
+                    (false, false) => 0,
+                    (true, false) => 1,
+                    (false, true) => 2,
+                    (true, true) => 3,
+                };
+                kinds[kind] += 1;
+                seen.insert(steps.clone());
+                if adds {
+                    // What is added is the pickup, a scale step under the root it goes to.
+                    let pickup = bass
+                        .notes
+                        .iter()
+                        .find(|note| note.start == bar_ticks * (bar as i64 + 1) - Ticks(480))
+                        .expect("the pickup itself");
+                    let arriving = section
+                        .chord_at(bar_ticks * (bar as i64 + 1))
+                        .expect("a chord in the bar after")
+                        .chord
+                        .bass_class();
+                    let below = PitchClass::new(i32::from(pickup.pitch)).distance_up_to(arriving);
+                    assert!(
+                        (1..=3).contains(&below),
+                        "seed {seed}: the pickup sits {below} semitones under its root"
+                    );
+                }
             }
-            picking_up += 1;
-            assert!(
-                first.iter().all(|step| second.contains(step)),
-                "seed {seed}: the pickup bar lost a note of the figure"
-            );
-            assert!(second.contains(&14), "seed {seed}: bar two is {second:?}");
-            let bar = frame.grid.bar_ticks();
-            let pickup = bass
-                .notes
-                .iter()
-                .find(|note| note.start == bar * 2 - Ticks(480))
-                .expect("the pickup itself");
-            let arriving = section
-                .chord_at(bar * 2)
-                .expect("a chord in bar three")
-                .chord
-                .bass_class();
-            let below = PitchClass::new(i32::from(pickup.pitch)).distance_up_to(arriving);
-            assert!(
-                (1..=3).contains(&below),
-                "seed {seed}: the pickup sits {below} semitones under the root it goes to"
-            );
         }
         assert!(
-            picking_up > 4 && plain > 4,
-            "{picking_up} takes pick up and {plain} play the figure plain"
+            kinds.iter().all(|count| *count >= 4),
+            "plain, added, dropped and moved bars: {kinds:?}"
         );
     }
 
