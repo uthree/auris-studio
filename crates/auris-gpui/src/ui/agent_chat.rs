@@ -7783,7 +7783,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn consecutive_tool_logs_collapse_and_keep_individual_results_accessible(
+    fn consecutive_tool_logs_start_closed_and_keep_individual_results_accessible(
         cx: &mut gpui::TestAppContext,
     ) {
         let (app, cx) = crate::harness::open(cx);
@@ -7810,19 +7810,32 @@ mod tests {
                 .push(ChatEntry::Agent("Visible answer".into()));
         });
         crate::harness::paint(&app, cx);
-        // One frame holds the run, every call a row of its own; the answer follows it.
+        // The run starts closed: its title, and only the call still running under it.
+        let group = chat_view::row(&app, cx, 0, "tool-group");
+        let running = chat_view::bounds(&app, cx, 39, "tool").unwrap();
+        let answer = chat_view::answer_bounds(&app, cx, 40).unwrap();
+        assert!(chat_view::bounds(&app, cx, 0, "tool").is_none());
+        assert!(chat_view::bounds(&app, cx, 38, "tool").is_none());
+        assert!(cx.debug_bounds(group).unwrap().bottom() <= running.origin.y);
+        assert!(running.bottom() <= answer.origin.y);
+
+        // Opened, one frame holds the run, every call a row of its own; the answer follows it.
+        crate::harness::click(group, cx);
+        crate::harness::paint(&app, cx);
         let first = chat_view::bounds(&app, cx, 0, "tool").unwrap();
         let last = chat_view::bounds(&app, cx, 39, "tool").unwrap();
         let answer = chat_view::answer_bounds(&app, cx, 40).unwrap();
         assert!(first.size.height < Metrics::CONTROL_HEIGHT * 2.0);
         assert!(first.origin.y < last.origin.y && last.bottom() <= answer.origin.y);
 
-        let tool = chat_view::row(&app, cx, 39, "tool");
+        // Opening the group leaves the view where it was, so the calls it reveals are the
+        // first ones; each still opens on its own.
+        let tool = chat_view::row(&app, cx, 2, "tool");
         let collapsed = cx.debug_bounds(tool).unwrap().size.height;
         crate::harness::click(tool, cx);
         crate::harness::paint(&app, cx);
         app.read_with(cx, |this, cx| {
-            assert!(this.agent_chat.chat_row_open(39, cx));
+            assert!(this.agent_chat.chat_row_open(2, cx));
             assert!(!this.agent_chat.chat_row_open(0, cx));
         });
         assert!(cx.debug_bounds(tool).unwrap().size.height >= collapsed);
