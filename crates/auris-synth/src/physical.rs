@@ -300,21 +300,22 @@ impl Model {
     ///
     /// Measured, not derived. What an engine puts out is in whatever units its physics is
     /// in, and those have nothing to do with one another: a bridge's velocity, the air at a
-    /// tone hole. Each gain here sets a model's ordinary notes at the level the composer's
-    /// presets are balanced against, and none lets a single note at full velocity past
-    /// -6 dBFS with the level at its default. `examples/physical_probe` prints the levels.
+    /// tone hole. Each gain here sets a model's default patch, playing the crate's standard
+    /// four-bar phrase, at the same integrated loudness as every other built-in instrument —
+    /// `loudness_tests` measures it and holds the band — so that changing a track's sound
+    /// does not also change how loud it is.
     const fn normalization(self) -> f32 {
         match self {
-            Self::Piano => 0.311,
-            Self::HammeredDulcimer => 1.35,
-            Self::Guitar => 0.373,
-            Self::ElectricGuitar => 0.498,
-            Self::Bass => 0.531,
-            Self::Violin => 0.626,
-            Self::Mallet => 0.25,
-            Self::Bell => 0.593,
-            Self::Clarinet => 3.29,
-            Self::TinWhistle => 3.80,
+            Self::Piano => 0.505,
+            Self::HammeredDulcimer => 1.616,
+            Self::Guitar => 0.919,
+            Self::ElectricGuitar => 0.821,
+            Self::Bass => 0.927,
+            Self::Violin => 1.345,
+            Self::Mallet => 0.634,
+            Self::Bell => 0.329,
+            Self::Clarinet => 2.481,
+            Self::TinWhistle => 2.903,
         }
     }
 }

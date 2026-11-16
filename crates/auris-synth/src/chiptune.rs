@@ -391,7 +391,7 @@ fn descriptors() -> Vec<ParamDescriptor> {
         ParamDescriptor::new(P_SPREAD, "spread", "Unison Spread", 0.0, 0.5, 0.08)
             .with_unit(ParamUnit::Semitones),
         ParamDescriptor::new(P_BITS, "bits", "Bit Depth", 1.0, 16.0, 16.0).with_steps(16),
-        ParamDescriptor::decibels(P_LEVEL, "level", "Level", -60.0, 6.0, -6.0),
+        ParamDescriptor::decibels(P_LEVEL, "level", "Level", -60.0, 6.0, -20.0),
     ]
 }
 
@@ -1183,6 +1183,8 @@ mod tests {
             let mut synth = Chiptune::default();
             synth.prepare(&PrepareContext::new(48_000.0, 512, 1));
             synth.set_param(ParamId(P_UNISON), unison as f32);
+            // The level the full-scale margin was measured at; today's default is far quieter.
+            synth.set_param(ParamId(P_LEVEL), -6.0);
 
             let mut out = AudioBuffer::new(1, 48_000, 48_000.0);
             let events = [NoteEvent::note_on(0, 69, 1.0)];

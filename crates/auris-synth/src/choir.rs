@@ -432,7 +432,7 @@ fn descriptors() -> Vec<ParamDescriptor> {
         ParamDescriptor::new(P_RELEASE, "release", "Release", 0.005, 6.0, 0.7)
             .with_unit(ParamUnit::Seconds)
             .with_curve(ParamValueCurve::Power(3.0)),
-        ParamDescriptor::decibels(P_LEVEL, "level", "Level", -60.0, 6.0, -10.0),
+        ParamDescriptor::decibels(P_LEVEL, "level", "Level", -60.0, 6.0, -8.5),
     ]
 }
 

@@ -63,6 +63,8 @@ fn family(instrument: impl Instrument, patches: &[Patch<'_>]) -> SoundFamily {
 ///
 /// Each family's first patch uses the instrument's existing defaults. Other patches override
 /// ordinary exposed controls, and use the same application and saving path as user sounds.
+/// A patch that changes how loud the instrument comes out carries its own `level` as well, set
+/// so that it plays at [`auris_synth::level_reference::REFERENCE_LUFS`] like its family's first.
 pub fn factory_sound_families() -> &'static [SoundFamily] {
     static FAMILIES: OnceLock<Vec<SoundFamily>> = OnceLock::new();
     FAMILIES.get_or_init(|| {
@@ -82,6 +84,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("players", 1.0),
                             ("vibrato", 0.4),
                             ("bow_pressure", 0.45),
+                            ("level", -12.5),
                         ],
                     ),
                     (
@@ -92,6 +95,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("vibrato", 0.4),
                             ("bow_pressure", 0.45),
                             ("release", 0.3),
+                            ("level", -13.0),
                         ],
                     ),
                     (
@@ -103,11 +107,17 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("bow_pressure", 0.5),
                             ("bow_response", 0.06),
                             ("release", 0.35),
+                            ("level", -13.0),
                         ],
                     ),
                     (
                         "Sul ponticello",
-                        &[("position", 0.045), ("bow_pressure", 0.6), ("players", 2.0)],
+                        &[
+                            ("position", 0.045),
+                            ("bow_pressure", 0.6),
+                            ("players", 2.0),
+                            ("level", -13.5),
+                        ],
                     ),
                     (
                         "Sul tasto",
@@ -116,6 +126,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("bow_pressure", 0.25),
                             ("bow_speed", 0.6),
                             ("damping", 0.5),
+                            ("level", -8.5),
                         ],
                     ),
                 ],
@@ -126,10 +137,18 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     ("Grand piano", &[]),
                     (
                         "Felt piano",
-                        &[("hardness", 0.15), ("damping", 0.2), ("sympathetic", 0.4)],
+                        &[
+                            ("hardness", 0.15),
+                            ("damping", 0.2),
+                            ("sympathetic", 0.4),
+                            ("level", -11.0),
+                        ],
                     ),
                     ("Bright piano", &[("hardness", 0.9), ("position", 0.1)]),
-                    ("Honky-tonk piano", &[("detune", 7.0), ("hardness", 0.6)]),
+                    (
+                        "Honky-tonk piano",
+                        &[("detune", 7.0), ("hardness", 0.6), ("level", -9.5)],
+                    ),
                 ],
             ),
             family(
@@ -138,7 +157,12 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     ("Acoustic guitar", &[]),
                     (
                         "Nylon guitar",
-                        &[("hardness", 0.06), ("position", 0.28), ("damping", 0.12)],
+                        &[
+                            ("hardness", 0.06),
+                            ("position", 0.28),
+                            ("damping", 0.12),
+                            ("level", -10.5),
+                        ],
                     ),
                     (
                         "Steel guitar",
@@ -147,6 +171,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("position", 0.22),
                             ("decay", 5.5),
                             ("damping", 0.08),
+                            ("level", -12.5),
                         ],
                     ),
                     (
@@ -156,9 +181,10 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("damping", 0.8),
                             ("decay", 0.55),
                             ("release", 0.06),
+                            ("level", -0.5),
                         ],
                     ),
-                    ("Piezo guitar", &[("pickup", 1.0)]),
+                    ("Piezo guitar", &[("pickup", 1.0), ("level", -14.0)]),
                 ],
             ),
             family(
@@ -171,6 +197,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("tone", 1600.0),
                             ("pickup_position", 0.26),
                             ("hardness", 0.25),
+                            ("level", -10.0),
                         ],
                     ),
                     (
@@ -179,6 +206,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("tone", 6500.0),
                             ("pickup_position", 0.08),
                             ("hardness", 0.75),
+                            ("level", -10.0),
                         ],
                     ),
                 ],
@@ -198,11 +226,17 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("damping", 0.8),
                             ("decay", 0.65),
                             ("release", 0.06),
+                            ("level", 1.0),
                         ],
                     ),
                     (
                         "Upright bass",
-                        &[("body", 1.0), ("hardness", 0.3), ("position", 0.25)],
+                        &[
+                            ("body", 1.0),
+                            ("hardness", 0.3),
+                            ("position", 0.25),
+                            ("level", -11.0),
+                        ],
                     ),
                 ],
             ),
@@ -212,14 +246,30 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     ("Classic bell", &[]),
                     (
                         "Soft bell",
-                        &[("hardness", 0.15), ("damping", 0.35), ("decay", 3.0)],
+                        &[
+                            ("hardness", 0.15),
+                            ("damping", 0.35),
+                            ("decay", 3.0),
+                            ("level", -6.5),
+                        ],
                     ),
-                    ("Bright bell", &[("hardness", 0.95), ("damping", 0.05)]),
-                    ("Tubular bells", &[("bell", 1.0)]),
-                    ("Handbell", &[("bell", 2.0), ("decay", 4.0)]),
+                    (
+                        "Bright bell",
+                        &[("hardness", 0.95), ("damping", 0.05), ("level", -13.0)],
+                    ),
+                    ("Tubular bells", &[("bell", 1.0), ("level", -10.5)]),
+                    (
+                        "Handbell",
+                        &[("bell", 2.0), ("decay", 4.0), ("level", -7.0)],
+                    ),
                     (
                         "Singing bowl",
-                        &[("bell", 3.0), ("hardness", 0.3), ("decay", 14.0)],
+                        &[
+                            ("bell", 3.0),
+                            ("hardness", 0.3),
+                            ("decay", 14.0),
+                            ("level", -4.0),
+                        ],
                     ),
                 ],
             ),
@@ -227,21 +277,53 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                 Physical::new(Model::Mallet),
                 &[
                     ("Marimba", &[]),
-                    ("Vibraphone", &[("bar", 1.0), ("tremolo", 0.3)]),
-                    ("Xylophone", &[("bar", 2.0), ("hardness", 0.7)]),
-                    ("Glockenspiel", &[("bar", 3.0), ("hardness", 0.8)]),
-                    ("Kalimba", &[("bar", 4.0), ("hardness", 0.5), ("body", 0.6)]),
+                    (
+                        "Vibraphone",
+                        &[("bar", 1.0), ("tremolo", 0.3), ("level", -16.0)],
+                    ),
+                    (
+                        "Xylophone",
+                        &[("bar", 2.0), ("hardness", 0.7), ("level", -9.5)],
+                    ),
+                    (
+                        "Glockenspiel",
+                        &[("bar", 3.0), ("hardness", 0.8), ("level", -11.5)],
+                    ),
+                    (
+                        "Kalimba",
+                        &[
+                            ("bar", 4.0),
+                            ("hardness", 0.5),
+                            ("body", 0.6),
+                            ("level", -11.0),
+                        ],
+                    ),
                     (
                         "Music box",
-                        &[("bar", 4.0), ("hardness", 0.85), ("body", 0.2)],
+                        &[
+                            ("bar", 4.0),
+                            ("hardness", 0.85),
+                            ("body", 0.2),
+                            ("level", -11.0),
+                        ],
                     ),
                     (
                         "Hard mallet",
-                        &[("hardness", 0.9), ("decay", 0.8), ("damping", 0.2)],
+                        &[
+                            ("hardness", 0.9),
+                            ("decay", 0.8),
+                            ("damping", 0.2),
+                            ("level", -8.0),
+                        ],
                     ),
                     (
                         "Muted mallet",
-                        &[("hardness", 0.3), ("decay", 0.35), ("damping", 0.8)],
+                        &[
+                            ("hardness", 0.3),
+                            ("decay", 0.35),
+                            ("damping", 0.8),
+                            ("level", 1.0),
+                        ],
                     ),
                 ],
             ),
@@ -252,10 +334,11 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     (
                         "Soft clarinet",
                         &[
-                            ("pressure", 0.3),
+                            ("pressure", 0.38),
                             ("reed_stiffness", 0.32),
                             ("breath_noise", 0.07),
                             ("attack", 0.12),
+                            ("level", 4.5),
                         ],
                     ),
                     (
@@ -265,6 +348,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("reed_stiffness", 0.58),
                             ("breath_noise", 0.5),
                             ("attack", 0.06),
+                            ("level", -10.0),
                         ],
                     ),
                 ],
@@ -280,6 +364,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("position", 0.1),
                             ("damping", 0.08),
                             ("detune", 2.0),
+                            ("level", -8.5),
                         ],
                     ),
                     (
@@ -289,6 +374,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("decay", 1.0),
                             ("damping", 0.7),
                             ("release", 0.06),
+                            ("level", -16.5),
                         ],
                     ),
                 ],
@@ -304,6 +390,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("jet_shape", 0.18),
                             ("breath_noise", 0.05),
                             ("attack", 0.03),
+                            ("level", -6.5),
                         ],
                     ),
                     (
@@ -312,9 +399,17 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("pressure", 0.4),
                             ("jet_shape", 0.28),
                             ("breath_noise", 0.32),
+                            ("level", -9.5),
                         ],
                     ),
-                    ("Recorder", &[("jet_shape", 0.12), ("breath_noise", 0.06)]),
+                    (
+                        "Recorder",
+                        &[
+                            ("jet_shape", 0.12),
+                            ("breath_noise", 0.06),
+                            ("level", -12.5),
+                        ],
+                    ),
                 ],
             ),
             family(
@@ -323,7 +418,12 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     ("Mixed choir", &[]),
                     (
                         "Soprano choir",
-                        &[("voice_size", 0.24), ("tone", 0.3), ("vowel", 1.0)],
+                        &[
+                            ("voice_size", 0.24),
+                            ("tone", 0.3),
+                            ("vowel", 1.0),
+                            ("level", -6.5),
+                        ],
                     ),
                     (
                         "Tenor choir",
@@ -331,7 +431,12 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     ),
                     (
                         "Bass choir",
-                        &[("voice_size", 0.85), ("tone", 0.18), ("vowel", 1.0)],
+                        &[
+                            ("voice_size", 0.85),
+                            ("tone", 0.18),
+                            ("vowel", 1.0),
+                            ("level", -7.0),
+                        ],
                     ),
                 ],
             ),
@@ -341,11 +446,21 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     ("Natural drum kit", &[]),
                     (
                         "Dry drum kit",
-                        &[("hardness", 0.75), ("damping", 0.85), ("decay", 0.6)],
+                        &[
+                            ("hardness", 0.75),
+                            ("damping", 0.85),
+                            ("decay", 0.6),
+                            ("level", 0.0),
+                        ],
                     ),
                     (
                         "Resonant drum kit",
-                        &[("hardness", 0.5), ("damping", 0.12), ("decay", 1.8)],
+                        &[
+                            ("hardness", 0.5),
+                            ("damping", 0.12),
+                            ("decay", 1.8),
+                            ("level", -5.0),
+                        ],
                     ),
                 ],
             ),
@@ -411,5 +526,49 @@ mod tests {
             }
         }
         assert_eq!(names.len(), factory_sounds().len());
+    }
+
+    /// Where a patch's melody sits when its family's register would put it out of its own:
+    /// the low strings and the bass choir lower, the small steel bars higher.
+    fn patch_register(name: &str, id: &str) -> u8 {
+        match name {
+            "Contrabass" => 36,
+            "Cello" | "Bass choir" => 48,
+            "Glockenspiel" | "Music box" => 72,
+            _ => auris_synth::level_reference::register(id),
+        }
+    }
+
+    #[test]
+    fn every_factory_patch_plays_at_the_built_in_reference_loudness() {
+        use auris_synth::level_reference::{REFERENCE_LUFS, beat, melody, phrase_loudness};
+        // The same band as the instruments' own: a patch that changes the sound sets its own
+        // `level` to make up what the change costs or adds, so that picking one never needs the
+        // fader. The soft clarinet is the one whose breath was raised instead, from just under
+        // where the reed barely speaks to just over it.
+        const TOLERANCE_DB: f32 = 1.0;
+        let registry = crate::plugin_catalogue();
+        let mut table = String::new();
+        let mut outliers = Vec::new();
+        for sound in factory_sounds() {
+            let mut instrument = registry.create_instrument(&sound.instrument_id).unwrap();
+            instrument.load_state(&sound.state);
+            let events = if auris_synth::is_drum_kit(&sound.instrument_id) {
+                beat(&sound.instrument_id)
+            } else {
+                melody(patch_register(&sound.name, &sound.instrument_id))
+            };
+            let lufs = phrase_loudness(instrument.as_mut(), &events).unwrap_or(f32::NEG_INFINITY);
+            table.push_str(&format!(
+                "{:24} {lufs:7.2} LUFS ({:+.2})\n",
+                sound.name,
+                lufs - REFERENCE_LUFS
+            ));
+            if (lufs - REFERENCE_LUFS).abs() > TOLERANCE_DB {
+                outliers.push(sound.name);
+            }
+        }
+        println!("{table}");
+        assert!(outliers.is_empty(), "{outliers:?}\n{table}");
     }
 }

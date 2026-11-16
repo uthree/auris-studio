@@ -293,7 +293,7 @@ fn descriptors() -> Vec<ParamDescriptor> {
         )
         .with_unit(ParamUnit::Semitones)
         .with_curve(ParamValueCurve::Power(2.0)),
-        ParamDescriptor::decibels(P_LEVEL, "level", "Level", -60.0, 6.0, -9.0),
+        ParamDescriptor::decibels(P_LEVEL, "level", "Level", -60.0, 6.0, -16.5),
     ]
 }
 

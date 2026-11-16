@@ -227,7 +227,7 @@ fn descriptors() -> Vec<ParamDescriptor> {
             .with_unit(ParamUnit::Seconds)
             .with_curve(ParamValueCurve::Power(3.0)),
         ParamDescriptor::percent(P_SWEEP, "sweep", "Pitch Sweep", 0.6),
-        ParamDescriptor::decibels(P_LEVEL, "level", "Level", -60.0, 6.0, -6.0),
+        ParamDescriptor::decibels(P_LEVEL, "level", "Level", -60.0, 6.0, 1.0),
     ]
 }
 
