@@ -304,7 +304,7 @@ impl DrumKit {
     /// A kit with its default pad balance and a six-decibel output attenuation.
     pub fn new() -> Self {
         let params = ParamBank::new(vec![
-            ParamDescriptor::decibels(0u32, "level", "Level", -60.0, 6.0, -6.0),
+            ParamDescriptor::decibels(0u32, "level", "Level", -60.0, 6.0, -2.5),
             ParamDescriptor::percent(1u32, "hardness", "Beater hardness", 0.65),
             ParamDescriptor::percent(2u32, "position", "Strike position", 0.6),
             ParamDescriptor::percent(3u32, "damping", "Damping", 0.35),
@@ -652,8 +652,14 @@ mod tests {
         NoteEvent::note_on(frame, pitch, 1.0)
     }
 
+    /// The level the absolute amplitudes below were measured at, before the kit's default was
+    /// trimmed to the other instruments' loudness.
+    const MEASURED_LEVEL: f32 = -6.0;
+
     fn rig(block: usize) -> Rig {
-        Rig::new(Box::new(DrumKit::new()), 48_000.0, block, 2)
+        let mut rig = Rig::new(Box::new(DrumKit::new()), 48_000.0, block, 2);
+        rig.set_param("level", MEASURED_LEVEL);
+        rig
     }
 
     fn sound(pitch: u8) -> Vec<f32> {
@@ -678,6 +684,7 @@ mod tests {
     fn ride_keeps_its_ping_without_dominant_low_and_high_plate_modes() {
         for rate in [44_100.0, 48_000.0, 96_000.0] {
             let mut rig = Rig::new(Box::new(DrumKit::new()), rate, 256, 2);
+            rig.set_param("level", MEASURED_LEVEL);
             let audio = rig.render(rate as usize, &[hit(0, 51)]);
             let body = &audio[(rate * 0.05) as usize..(rate * 0.25) as usize];
             let ping = band_amplitude(body, rate, 2_650.0);

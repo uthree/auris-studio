@@ -8,7 +8,9 @@ use crate::{Chiptune, Fm2, Model, Physical, Vocal};
 
 #[test]
 fn bright_instruments_reduce_upper_midrange_without_losing_the_note() {
-    // Each ceiling is below the measured pre-change band/fundamental amplitude ratio.
+    // Each ceiling is below the measured pre-change band/fundamental amplitude ratio. The
+    // minimum fundamentals are absolute amplitudes, so the synths play at the level they were
+    // measured at rather than at today's default, which `loudness_tests` sets.
     type Probe = (Box<dyn Instrument>, u8, bool, f64, f64);
     let cases: [Probe; 9] = [
         // The piano's C6 sits about 9 dB under C4, as measured on a grand.
@@ -45,6 +47,7 @@ fn bright_instruments_reduce_upper_midrange_without_losing_the_note() {
             {
                 let mut synth = Chiptune::new();
                 synth.set_param_by_key("pulse_width", 0.125);
+                synth.set_param_by_key("level", -6.0);
                 Box::new(synth)
             },
             84,
@@ -56,6 +59,7 @@ fn bright_instruments_reduce_upper_midrange_without_losing_the_note() {
             {
                 let mut synth = Chiptune::new();
                 synth.set_param_by_key("waveform", 2.0);
+                synth.set_param_by_key("level", -6.0);
                 Box::new(synth)
             },
             84,
@@ -67,6 +71,7 @@ fn bright_instruments_reduce_upper_midrange_without_losing_the_note() {
             {
                 let mut synth = Fm2::new();
                 synth.set_param_by_key("ratio", 1.0);
+                synth.set_param_by_key("level", -9.0);
                 Box::new(synth)
             },
             84,

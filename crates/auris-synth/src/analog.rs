@@ -222,7 +222,7 @@ impl AnalogPatch {
                 decay: 0.4,
                 sustain: 0.9,
                 release: 0.35,
-                level: -8.0,
+                level: -18.0,
                 ..base
             },
             Self::Pad => Defaults {
@@ -243,7 +243,7 @@ impl AnalogPatch {
                 sustain: 0.85,
                 release: 1.6,
                 vibrato_rate: 4.5,
-                level: -7.0,
+                level: -9.0,
                 ..base
             },
             Self::Lead => Defaults {
@@ -265,7 +265,7 @@ impl AnalogPatch {
                 sustain: 0.85,
                 release: 0.15,
                 glide: 0.05,
-                level: -9.0,
+                level: -17.0,
                 ..base
             },
             Self::Bass => Defaults {
@@ -285,7 +285,7 @@ impl AnalogPatch {
                 decay: 0.3,
                 sustain: 0.8,
                 release: 0.08,
-                level: -6.0,
+                level: -14.0,
                 ..base
             },
             Self::PwmStrings => Defaults {
@@ -310,7 +310,7 @@ impl AnalogPatch {
                 sustain: 0.9,
                 release: 0.8,
                 vibrato_rate: 5.0,
-                level: -10.0,
+                level: -18.5,
                 ..base
             },
             Self::Brass => Defaults {
@@ -331,7 +331,7 @@ impl AnalogPatch {
                 decay: 0.3,
                 sustain: 0.9,
                 release: 0.25,
-                level: -8.0,
+                level: -17.0,
                 ..base
             },
             Self::Pluck => Defaults {
@@ -352,7 +352,7 @@ impl AnalogPatch {
                 decay: 0.6,
                 sustain: 0.0,
                 release: 0.3,
-                level: -7.0,
+                level: -4.0,
                 ..base
             },
         }

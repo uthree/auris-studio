@@ -60,6 +60,7 @@ pub mod choir;
 pub mod drumkit;
 pub mod electro;
 pub mod fm2;
+pub mod level_reference;
 pub mod lfo;
 pub mod noisedrum;
 pub mod oscillator;
@@ -77,6 +78,8 @@ mod presence;
 #[cfg(test)]
 mod test_support;
 
+#[cfg(test)]
+mod loudness_tests;
 #[cfg(test)]
 mod stereo_tests;
 

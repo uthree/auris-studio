@@ -218,7 +218,7 @@ fn descriptors() -> Vec<ParamDescriptor> {
             .with_unit(ParamUnit::Semitones)
             .with_curve(ParamValueCurve::Power(2.0)),
         ParamDescriptor::percent(P_BREATH, "breath", "Breath", 0.06),
-        ParamDescriptor::decibels(P_LEVEL, "level", "Level", -60.0, 6.0, -6.0),
+        ParamDescriptor::decibels(P_LEVEL, "level", "Level", -60.0, 6.0, -5.5),
     ]
 }
 
