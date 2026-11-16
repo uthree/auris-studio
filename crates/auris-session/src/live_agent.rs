@@ -662,13 +662,14 @@ pub enum Command {
     },
     /// Edit authored notes atomically across 1..16 clips at musical positions: bar is the 1-based song bar (as in add_clip, not counted from the clip), beat is 1-based within that bar in the meter's beat (quarter in 4/4, eighth in 6/8), fractional for subdivisions (2.5 offbeat, 2.25 sixteenth, 2.333 triplet), and length_beats counts the same beat. Attacks must sit on a straight subdivision down to an eighth of a beat or a triplet down to a sixth; anything between is refused with the nearest choices, so use swing/humanize performance for feel. Velocity is normalized 0..1, never MIDI 0..127; for example {"pitch":60,"bar":5,"beat":1,"length_beats":1,"velocity":0.75}. Use input {"kind":"inline","edits":[...]} or {"kind":"file","source_path":"/absolute/notes.json"}, never both. Edits are typed objects, not JSON strings; expected_revision belongs at the top level. Read read_notes first and supply its revision. Patch indices address original storage order. Preserves recipes, curves, metadata on updated notes and performance. Identical replacements are no-ops.
     EditNotes {
-        /// Exact content revision from the latest read_notes or inspect_project.
+        /// Exact content revision from the latest read_notes or inspect_project, or from the
+        /// answer of the last command that changed the document.
         expected_revision: String,
         /// One patch or replacement per clip, at most 65536 resulting notes total.
         #[schemars(length(min = 1, max = 16))]
         edits: Vec<note_editing::NoteEdit>,
     },
-    /// Read 1..8 MIDI clip pages in one call. Copy each clip from inspect_project tracks[].clips[].clip or add_clip's clip result, never tracks[].track or add_track's track result. Track IDs and clip IDs are different addresses. Each request is `{clip:<returned clip ID>,offset:0}`; offset defaults to zero. Returns one shared revision and clips containing up to 128 notes each with song bar, beat and length_beats in the same units edit_notes takes (each clip also reports its bars `[first,last]`; on_grid:false marks a stored attack between subdivisions), normalized velocity 0..1, original zero-based storage indices (`index`) and a stable timeline rank (`timeline_index`). Pages remain in storage order so edits address the original indices; sort by `timeline_index` for lyric and phrase work. The rank uses start position then storage index as its tie-break. Follow each clip's next_offset; truncated is explicit. Do not edit between pages. Pass the top-level revision to edit_notes; stale indices are rejected. A clip that carries authored bend or controller lanes also lists them in authored_curves as `{kind,number,points}`, in the shape edit_clip_curve's curve takes; an absent field means the clip has none, so never sweep controller numbers to find them.
+    /// Read 1..8 MIDI clip pages in one call. Copy each clip from inspect_project tracks[].clips[].clip or add_clip's clip result, never tracks[].track or add_track's track result. Track IDs and clip IDs are different addresses. Each request is `{clip:<returned clip ID>,offset:0}`; offset defaults to zero. Returns one shared revision and clips containing up to 128 notes each with song bar, beat and length_beats in the same units edit_notes takes (each clip also reports its bars `[first,last]`; on_grid:false marks a stored attack between subdivisions), normalized velocity 0..1, original zero-based storage indices (`index`) and a stable timeline rank (`timeline_index`). Pages remain in storage order so edits address the original indices; sort by `timeline_index` for lyric and phrase work. The rank uses start position then storage index as its tie-break. Follow each clip's next_offset; truncated is explicit. Do not edit between pages. Pass the top-level revision to edit_notes; stale indices are rejected. Every command that changes the document also answers with the new revision, so an empty clip from add_clip can take edit_notes without being read first. A clip that carries authored bend or controller lanes also lists them in authored_curves as `{kind,number,points}`, in the shape edit_clip_curve's curve takes; an absent field means the clip has none, so never sweep controller numbers to find them.
     ReadNotes {
         /// Up to eight distinct clip pages; omitted offset starts at zero.
         #[schemars(length(min = 1, max = 8))]
@@ -967,8 +968,34 @@ pub struct InstrumentControl {
     pub value: f32,
 }
 
+/// Adds the document revision to a command's JSON object answer, unless it carries one already.
+///
+/// edit_notes and edit_clip_curve take the revision read_notes returns. A command that changed
+/// the document and answered without one left the model a read for nothing but the new hash:
+/// a fifth of all read_notes calls in the workshop logs came straight after add_clip. Commands
+/// that already name a `revision` keep theirs, whatever it means to them.
+fn with_document_revision(
+    text: String,
+    revision: impl FnOnce() -> Result<String, String>,
+) -> String {
+    let Ok(serde_json::Value::Object(mut answer)) = serde_json::from_str(&text) else {
+        return text;
+    };
+    if answer.contains_key("revision") {
+        return text;
+    }
+    let Ok(revision) = revision() else {
+        return text;
+    };
+    answer.insert("revision".into(), revision.into());
+    serde_json::Value::Object(answer).to_string()
+}
+
 impl Session {
     /// Execute a file-free command against this session, preserving ordinary undo semantics.
+    ///
+    /// A command that changes the document answers with its new `revision` when its answer is
+    /// a JSON object, so the next edit_notes need not read the notes again only to learn it.
     pub fn agent_command(&mut self, command: Command) -> Result<String, String> {
         self.agent_command_with_plugin_paths(command, &[])
     }
@@ -992,8 +1019,15 @@ impl Session {
         } else {
             String::new()
         };
-        let result =
-            self.with_agent_history(|session| session.execute_agent_command(command, plugin_paths));
+        let before = self.revision();
+        let result = self
+            .with_agent_history(|session| session.execute_agent_command(command, plugin_paths))
+            .map(|text| {
+                if self.revision() == before {
+                    return text;
+                }
+                with_document_revision(text, || self.agent_document_revision())
+            });
         self.trace_call_end(trace, &name, result.is_ok());
         result
     }
@@ -1685,6 +1719,54 @@ mod tests {
                 &serde_json::json!({"command":{"action":"report_status","status":"Writing"}}),
             )
             .is_ok_and(|op| op.name == "edit_project.report_status" && !op.mutating)
+        );
+    }
+
+    #[test]
+    fn a_command_that_changes_the_document_answers_with_its_revision() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Keys").unwrap();
+        let answer = |text: String| serde_json::from_str::<serde_json::Value>(&text).unwrap();
+        let added = answer(
+            session
+                .agent_command(Command::AddClip {
+                    track: track.0,
+                    name: "Phrase".into(),
+                    start_bar: 1,
+                    bars: 1,
+                    pickup_beats: None,
+                })
+                .unwrap(),
+        );
+        let revision = added["revision"].as_str().unwrap().to_owned();
+        assert_eq!(revision, session.agent_document_revision().unwrap());
+        // The revision is the one edit_notes wants: no read_notes in between.
+        let edited = answer(
+            session
+                .agent_command(Command::EditNotes {
+                    expected_revision: revision.clone(),
+                    edits: vec![note_editing::NoteEdit::Replace {
+                        clip: added["clip"].as_u64().unwrap(),
+                        notes: vec![],
+                    }],
+                })
+                .unwrap(),
+        );
+        assert!(edited["revision"].is_string());
+        // A command that changed nothing says nothing about revisions.
+        let status = answer(
+            session
+                .agent_command(Command::ReportStatus {
+                    status: "Writing".into(),
+                })
+                .unwrap(),
+        );
+        assert!(status.get("revision").is_none(), "{status}");
+        // A non-object answer, and one naming its own revision, pass through untouched.
+        assert_eq!(with_document_revision("ok".into(), || unreachable!()), "ok");
+        assert_eq!(
+            with_document_revision(r#"{"revision":7}"#.into(), || unreachable!()),
+            r#"{"revision":7}"#
         );
     }
 
