@@ -209,9 +209,9 @@ at the default density, the kit's over its eight grooves, stood here when the to
 | Onset spacings of a dotted quarter | 5% | 9% |
 | Intervals that repeat the note | 42% | 40% |
 | Time sounding | 87% | 92% |
-| Bars that strike their downbeat | 89% | 85% |
-| Bars with the rhythm of the bar before | 39% | 52% |
-| Different bar rhythms in sixteen bars | 5.1 | 3.0 |
+| Bars that strike their downbeat | 89% | 87% |
+| Bars with the rhythm of the bar before | 39% | 31% |
+| Different bar rhythms in sixteen bars | 5.1 | 3.7 |
 
 | A kit | Corpus | Takes |
 | --- | --- | --- |
