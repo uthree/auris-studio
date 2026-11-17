@@ -44,6 +44,7 @@ mod batch_editing;
 pub use batch_editing::{InstrumentParamChange, InstrumentParamEdit};
 mod setup_tracks;
 mod sound_search;
+mod soundfont_removal;
 mod sounds;
 pub use setup_tracks::{SetupClip, SetupTrack, SetupTrackKind};
 pub use sound_search::{SoundFilter, SoundLibraryJob, SoundSearch, SoundSource};

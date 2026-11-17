@@ -1764,6 +1764,10 @@ pub mod plugins {
     //! without creating an undo step or making the project dirty. The file itself stays at its
     //! original location; collecting project assets remains the opt-in way to copy it. Missing
     //! library files stay listed as unavailable and never prevent a project from opening.
+    //! [`crate::Session::remove_soundfont`] is the way back off the shelf, and is not an edit
+    //! either: the catalog entry goes, the file stays, and a document keeps a font only while the
+    //! library lists it, one of its tracks plays it, or it was collected into the project folder —
+    //! the rule an opened document is held to as well, so an older song cannot bring it back.
     //! Decoded library samples survive document changes, but document ids are allocated anew.
     //! [`crate::SessionOptions::soundfont_library`] selects the catalog; headless tests disable
     //! it or supply an isolated temporary file.

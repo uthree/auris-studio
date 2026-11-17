@@ -609,6 +609,15 @@ pub enum Question {
     },
     /// Removes an exact saved library entry without changing applied project settings.
     DeleteSound(std::sync::Arc<auris_session::SoundPreset>),
+    /// Takes an imported SoundFont out of the application library; the file stays on disk.
+    RemoveSoundFont {
+        /// The font, by its id in the project that was open when asked.
+        font: SoundFontId,
+        /// Its name, for the result line.
+        name: String,
+        /// How many tracks of that project play it, and so keep it.
+        users: usize,
+    },
     /// Permanently remove one explicitly selected conversation.
     DeleteAgentConversation(String, std::path::PathBuf),
     /// Permanently remove one song conversation from the workshop that asked.
@@ -1551,6 +1560,24 @@ impl AurisApp {
                 );
             }
             (Question::OverwriteSound { .. } | Question::DeleteSound(_), Answer::Deny) => {}
+            (Question::RemoveSoundFont { font, name, users }, Answer::Confirm) => {
+                match self.session.remove_soundfont(font) {
+                    Ok(0) => self.set_status(messages::soundfont_removed(self.language(), &name)),
+                    Ok(kept) => self.set_status(messages::soundfont_removed_kept(
+                        self.language(),
+                        &name,
+                        kept,
+                    )),
+                    Err(error) => {
+                        self.open_prompt(Prompt::ask(
+                            messages::remove_soundfont_title(self.language(), &name),
+                            Question::RemoveSoundFont { font, name, users },
+                        ));
+                        self.reject_prompt(self.failure(Key::RemoveSoundFont, &error));
+                    }
+                }
+            }
+            (Question::RemoveSoundFont { .. }, Answer::Deny) => {}
             (Question::DeleteAgentConversation(id, root), Answer::Confirm) => {
                 if self.agent_conversation_store_is(&root) {
                     self.delete_agent_conversation(id, cx);
@@ -1803,6 +1830,7 @@ impl AurisApp {
                 Question::Recovery(_)
                     | Question::OverwriteSound { .. }
                     | Question::DeleteSound(_)
+                    | Question::RemoveSoundFont { .. }
                     | Question::RemovePluginPath(_)
                     | Question::DeleteAgentConversation(..)
                     | Question::DeleteWorkshopThread { .. }
@@ -1901,6 +1929,7 @@ impl AurisApp {
                                 | Question::DeleteWorkshopThread { .. }
                                 | Question::OverwriteSound { .. }
                                 | Question::DeleteSound(_)
+                                | Question::RemoveSoundFont { .. }
                         ) {
                             ButtonStyle::Danger
                         } else {
@@ -2278,6 +2307,15 @@ impl AurisApp {
             Question::DeleteSound(_) => (
                 self.t(Key::DeleteSoundBody).into(),
                 self.t(Key::DeleteSoundConfirm).into(),
+                None,
+            ),
+            Question::RemoveSoundFont { users, .. } => (
+                if *users == 0 {
+                    self.t(Key::RemoveSoundFontBody).into()
+                } else {
+                    messages::remove_soundfont_body_in_use(self.language(), *users).into()
+                },
+                self.t(Key::RemoveSoundFontConfirm).into(),
                 None,
             ),
             Question::DeleteAgentConversation(..) => (

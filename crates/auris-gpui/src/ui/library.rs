@@ -2034,6 +2034,20 @@ impl AurisApp {
             )
             .item(self.t(Key::DeleteSound), MenuCommand::DeleteSound(sound))
     }
+    /// What can be done to an imported font from its row in the library.
+    fn soundfont_menu(
+        &self,
+        at: gpui::Point<Pixels>,
+        font: SoundFontId,
+        name: String,
+    ) -> crate::ui::context_menu::ContextMenu {
+        use crate::ui::context_menu::{ContextMenu, MenuCommand};
+        ContextMenu::new(at, name.clone()).item(
+            self.t(Key::RemoveSoundFont),
+            MenuCommand::RemoveSoundFont { font, name },
+        )
+    }
+
     /// The effects section: every registered effect, under its category.
     fn effect_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
         let plugins: Vec<(PluginCategory, LibraryPlugin)> = self
@@ -2124,6 +2138,8 @@ impl AurisApp {
 
         for (id, name) in fonts {
             let loaded = self.library_font_loaded(id);
+            let removable = self.session.soundfont_is_removable(id);
+            let menu_name = name.clone();
             let branch = Branch::Font(id);
             self.scroll_library_branch(branch, row_offset + rows.len());
             let open = loaded && self.library_tree().is_open(branch);
@@ -2154,6 +2170,23 @@ impl AurisApp {
                 )
                 .into_any_element(),
             );
+            if removable {
+                // Hung on a wrapper rather than the row, which is shared with banks and
+                // categories that have no menu of their own.
+                let row = rows.pop().expect("the font row was just pushed");
+                rows.push(
+                    div()
+                        .w_full()
+                        .child(row)
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            Self::opens_menu(cx, move |this, at| {
+                                this.soundfont_menu(at, id, menu_name.clone())
+                            }),
+                        )
+                        .into_any_element(),
+                );
+            }
             if !open {
                 continue;
             }

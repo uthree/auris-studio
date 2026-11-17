@@ -1639,9 +1639,11 @@ impl Session {
                 }
             }
         }
-        if let Some(library) = &self.soundfont_library {
-            match crate::library::soundfonts::read(library) {
+        if let Some(library) = self.soundfont_library.clone() {
+            match crate::library::soundfonts::read(&library) {
                 Ok(fonts) => {
+                    let listed: Vec<PathBuf> = fonts.iter().map(|font| font.path.clone()).collect();
+                    self.drop_unlisted_fonts(&listed);
                     for font in fonts {
                         if self.adopt_font(&font.path).is_none() {
                             self.adopt_library_reference(
@@ -1881,7 +1883,7 @@ fn install_library_reference(
 }
 
 /// Recognises existing project references written before library paths were canonicalised.
-fn same_font_file(left: &Path, right: &Path) -> bool {
+pub(super) fn same_font_file(left: &Path, right: &Path) -> bool {
     left == right
         || std::fs::canonicalize(left)
             .ok()
