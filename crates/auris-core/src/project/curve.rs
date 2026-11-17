@@ -85,6 +85,9 @@ impl ClipCurve {
     /// sites would be the same magic number in three crates.
     pub const MODULATION: ClipCurve = ClipCurve::Controller(CC_MODULATION);
 
+    /// The brightness controller, which rests at the middle rather than at zero.
+    pub const BRIGHTNESS: ClipCurve = ClipCurve::Controller(crate::CC_BRIGHTNESS);
+
     /// The controller number, when this is a controller rather than the bend.
     pub fn controller(self) -> Option<u8> {
         match self {

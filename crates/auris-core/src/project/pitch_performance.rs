@@ -2,6 +2,7 @@
 use super::{
     ClipCurve, CurvePoint, MidiClip, Note, NoteTransform, PerformanceContext, performed_notes,
 };
+use crate::rng::{Key, Rng};
 use crate::{Seconds, SignatureMap, TempoMap, Ticks};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -33,6 +34,27 @@ pub struct PitchPerformance {
     /// Duration on each side of a melodic connection, in 0..=250 milliseconds.
     /// Zero disables it. Gaps over 60 ms and intervals over two octaves are not connected.
     pub glide_ms: f32,
+    /// How far soft playing darkens the sound, in 0..=1, through the brightness controller.
+    ///
+    /// A real instrument is not a recording turned down: struck or blown softly it loses its
+    /// upper partials. At 1 a note at velocity 0.5 sits a quarter of the controller's travel
+    /// under its resting middle, and a long note's volume contour moves it with the swell. Read
+    /// on every note, chords included, since brightness is not a pitch gesture.
+    pub brightness: f32,
+    /// How unevenly the vibrato is played, in 0..=1.
+    ///
+    /// A player's vibrato is never a sine: each note's rate and depth differ a little, the depth
+    /// grows into a held note, and the rate drifts. At 1 a note's rate varies by up to ±8% and
+    /// its depth by ±25%, the depth opens from 65% to full across the note, and the rate drifts
+    /// ±4% at 0.7 Hz. Drawn from where the note is, so the same text plays the same vibrato.
+    pub vibrato_variation: f32,
+    /// How much a player's intonation moves each note off equal temperament, in 0..=1.
+    ///
+    /// At 1 every note is up to ±6 cents off, drawn from where it is, and a note approached by
+    /// a rising semitone is played 5 cents sharp and by a falling one 4 cents flat — the
+    /// leading-tone pull string and wind players lean into. Monophonic notes only, as every
+    /// bend gesture is.
+    pub intonation: f32,
 }
 
 impl Default for PitchPerformance {
@@ -49,6 +71,9 @@ impl Default for PitchPerformance {
             fall: 0.0,
             fall_ms: 150.0,
             glide_ms: 0.0,
+            brightness: 0.0,
+            vibrato_variation: 0.0,
+            intonation: 0.0,
         }
     }
 }
@@ -62,6 +87,8 @@ impl PitchPerformance {
             || self.glide_ms > 0.0
             || self.modulation > 0.0
             || self.volume_swell > 0.0
+            || self.brightness > 0.0
+            || self.intonation > 0.0
     }
 }
 
@@ -96,9 +123,13 @@ impl MidiClip {
             .then_some(ClipCurve::Bend)
             .into_iter()
             .chain(
-                [ClipCurve::MODULATION, ClipCurve::Controller(7)]
-                    .into_iter()
-                    .filter(|which| self.has_generated_curve(*which)),
+                [
+                    ClipCurve::MODULATION,
+                    ClipCurve::Controller(7),
+                    ClipCurve::BRIGHTNESS,
+                ]
+                .into_iter()
+                .filter(|which| self.has_generated_curve(*which)),
             )
             .chain(
                 self.curves()
@@ -111,9 +142,16 @@ impl MidiClip {
         let mut stages = Vec::new();
         settings(&self.transforms, None, &mut stages);
         stages.iter().any(|(s, _)| match which {
-            ClipCurve::Bend => s.scoop > 0.0 || s.vibrato > 0.0 || s.fall > 0.0 || s.glide_ms > 0.0,
+            ClipCurve::Bend => {
+                s.scoop > 0.0
+                    || s.vibrato > 0.0
+                    || s.fall > 0.0
+                    || s.glide_ms > 0.0
+                    || s.intonation > 0.0
+            }
             ClipCurve::Controller(1) => s.modulation > 0.0,
             ClipCurve::Controller(7) => s.volume_swell > 0.0,
+            ClipCurve::BRIGHTNESS => s.brightness > 0.0,
             _ => false,
         })
     }
@@ -133,7 +171,8 @@ impl MidiClip {
     }
 
     /// Combined authored and generated curve for one performance pass.
-    /// Modulation adds to authored CC1; volume multiplies authored CC7 (default full volume).
+    /// Modulation adds to authored CC1; volume multiplies authored CC7 (default full volume);
+    /// brightness subtracts from authored CC74 (default the middle).
     pub fn performed_curve_points(
         &self,
         which: ClipCurve,
@@ -193,6 +232,13 @@ impl MidiClip {
             })
             .collect();
         let mut ticks = BTreeSet::from([Ticks::ZERO, span]);
+        if which == ClipCurve::BRIGHTNESS {
+            ticks.extend(
+                notes
+                    .iter()
+                    .flat_map(|n| [(n.start - Ticks(1)).max_zero(), n.start]),
+            );
+        }
         ticks.extend(
             self.curve(which)
                 .iter()
@@ -206,7 +252,7 @@ impl MidiClip {
                 note.end() - Ticks(1),
                 note.end(),
             ]);
-            if which == ClipCurve::Controller(7) {
+            if matches!(which, ClipCurve::Controller(7) | ClipCurve::BRIGHTNESS) {
                 for (style, _) in &stages {
                     ticks.extend(style.volume_contour.points().iter().map(|point| {
                         let fraction =
@@ -231,12 +277,14 @@ impl MidiClip {
         ticks
             .into_iter()
             .map(|at| {
-                let mut value = if which == ClipCurve::Controller(7) && self.curve(which).is_empty()
-                {
-                    1.0
+                let mut value = if self.curve(which).is_empty() {
+                    super::clip::released_value(which)
                 } else {
                     super::curve_at(self.curve(which), at)
                 };
+                if which == ClipCurve::BRIGHTNESS {
+                    value -= darkening(&stages, &notes, &eligible, &starts, &ends, at, seconds(at));
+                }
                 if let Some(i) = notes.iter().position(|n| n.start <= at && at < n.end())
                     && eligible[i]
                 {
@@ -264,7 +312,8 @@ impl MidiClip {
                         let length = ends[i] - starts[i];
                         match which {
                             ClipCurve::Bend => {
-                                value += gesture(style, elapsed, length, previous, next)
+                                let shape = Shape::of(style, &notes, &eligible, &starts, &ends, i);
+                                value += gesture(style, &shape, elapsed, length, previous, next)
                             }
                             ClipCurve::Controller(1) => {
                                 value += style.modulation.clamp(0.0, 1.0)
@@ -312,9 +361,10 @@ impl MidiClip {
             let points =
                 self.performed_curve_points(which, tempo, signatures, pass as u64, offset, span);
             let mut events = super::curve_events(&points, span, step);
-            if which == ClipCurve::Controller(7) {
+            let rest = super::clip::released_value(which);
+            if rest != 0.0 {
                 events.retain(|(at, _)| *at < span);
-                events.push((span, 1.0));
+                events.push((span, rest));
             }
             out.extend(events.into_iter().map(|(at, value)| (at + offset, value)));
         }
@@ -340,8 +390,109 @@ fn vibrato_envelope(s: &PitchPerformance, at: f64, length: f64) -> f32 {
     smooth(after_delay / 0.1) * smooth((length - at) / 0.08)
 }
 
+/// How far below its resting value the brightness controller sits at `at`.
+///
+/// Read from the most recent attack still sounding — or, between notes, the last one struck,
+/// so the controller holds through a release rather than opening on its tail — and, on a long
+/// monophonic note, moved by the volume contour the way the swell moves the level.
+fn darkening(
+    stages: &[(&PitchPerformance, Option<&str>)],
+    notes: &[Note],
+    eligible: &[bool],
+    starts: &[f64],
+    ends: &[f64],
+    at: Ticks,
+    time: f64,
+) -> f32 {
+    let Some(latest) = notes.iter().rposition(|n| n.start <= at) else {
+        return 0.0;
+    };
+    let attack = notes[latest].start;
+    let mut total = 0.0;
+    for (style, voice) in stages {
+        let amount = style.brightness.clamp(0.0, 1.0);
+        if amount <= 0.0 {
+            continue;
+        }
+        let chord = notes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.start == attack && voice.is_none_or(|v| n.drum_voice == v));
+        let Some((index, velocity)) = chord
+            .map(|(i, n)| (i, n.velocity))
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+        else {
+            continue;
+        };
+        let mut level = velocity.clamp(0.0, 1.0);
+        let length = ends[index] - starts[index];
+        let sounding = notes[index].start <= at && at < notes[index].end();
+        if sounding && eligible[index] && length >= 0.6 && style.volume_swell > 0.0 {
+            let elapsed = time - starts[index];
+            level *= 1.0
+                + style.volume_swell.clamp(0.0, 1.0)
+                    * (style.volume_contour.level_at(elapsed / length) - 1.0);
+        }
+        total += amount * 0.5 * (1.0 - level.clamp(0.0, 1.0));
+    }
+    total
+}
+
+/// One note's own vibrato and intonation, drawn from where it is.
+struct Shape {
+    /// Vibrato rate as a multiple of the setting.
+    rate: f64,
+    /// Vibrato depth as a multiple of the setting.
+    depth: f32,
+    /// How unevenly the vibrato is played, from the setting.
+    variation: f32,
+    /// A constant offset from the written pitch, in semitones.
+    offset: f32,
+}
+
+impl Shape {
+    fn of(
+        s: &PitchPerformance,
+        notes: &[Note],
+        eligible: &[bool],
+        starts: &[f64],
+        ends: &[f64],
+        i: usize,
+    ) -> Self {
+        let variation = s.vibrato_variation.clamp(0.0, 1.0);
+        let intonation = s.intonation.clamp(0.0, 1.0);
+        let note = &notes[i];
+        let mut rng = Rng::stream(
+            0,
+            &[
+                Key::Word("vibrato"),
+                Key::Index(note.start.raw().max(0) as u64),
+                Key::Index(u64::from(note.pitch)),
+            ],
+        );
+        // Roll every draw whether its dial is up, so turning one does not move the others.
+        let rate = 1.0 + 0.08 * f64::from(variation) * f64::from(rng.unit() * 2.0 - 1.0);
+        let depth = 1.0 + 0.25 * variation * (rng.unit() * 2.0 - 1.0);
+        let drift = 0.06 * (rng.unit() * 2.0 - 1.0);
+        let approach = (i > 0 && eligible[i - 1] && starts[i] - ends[i - 1] <= 0.25)
+            .then(|| i16::from(note.pitch) - i16::from(notes[i - 1].pitch));
+        let lean = match approach {
+            Some(1) => 0.05,
+            Some(-1) => -0.04,
+            _ => 0.0,
+        };
+        Self {
+            rate,
+            depth,
+            variation,
+            offset: intonation * (drift + lean),
+        }
+    }
+}
+
 fn gesture(
     s: &PitchPerformance,
+    shape: &Shape,
     at: f64,
     length: f64,
     previous: Option<f32>,
@@ -358,9 +509,17 @@ fn gesture(
     };
     let after_delay = (at - f64::from(s.vibrato_delay_ms.clamp(0.0, 1000.0)) / 1000.0).max(0.0);
     let envelope = vibrato_envelope(s, at, length);
-    let sway = (after_delay * f64::from(s.vibrato_hz.clamp(2.0, 9.0)) * std::f64::consts::TAU).sin()
-        as f32;
-    incoming + outgoing + s.vibrato.clamp(0.0, 1.0) * envelope * sway
+    let tau = std::f64::consts::TAU;
+    let rate = f64::from(s.vibrato_hz.clamp(2.0, 9.0)) * shape.rate;
+    // The rate drifts ±4% at 0.7 Hz; the phase is its integral, so the sway stays continuous.
+    let drift =
+        0.04 * f64::from(shape.variation) * (1.0 - (tau * 0.7 * after_delay).cos()) / (tau * 0.7);
+    let sway = (tau * rate * (after_delay + drift)).sin() as f32;
+    // The depth opens into the note: 65% of itself at the start at full variation.
+    let progress = (at / length.max(1e-9)).clamp(0.0, 1.0) as f32;
+    let growth = 1.0 - 0.35 * shape.variation * (1.0 - progress);
+    let depth = s.vibrato.clamp(0.0, 1.0) * shape.depth * growth;
+    incoming + outgoing + depth * envelope * sway + shape.offset
 }
 
 #[cfg(test)]
@@ -801,5 +960,116 @@ mod tests {
             value: 0.7,
         }];
         assert_eq!(points(&clip), clip.bend);
+    }
+
+    fn note(pitch: u8, start: i64, length: i64, velocity: f32) -> Note {
+        Note {
+            velocity,
+            ..Note::new(pitch, Ticks(start), Ticks(length))
+        }
+    }
+
+    #[test]
+    fn soft_attacks_darken_the_brightness_controller_and_it_rests_at_the_middle() {
+        let clip = clip(
+            vec![
+                note(60, 0, 960, 1.0),
+                note(64, 1920, 960, 0.5),
+                note(48, 3840, 960, 0.4),
+                note(67, 3840, 960, 0.8),
+            ],
+            PitchPerformance {
+                brightness: 1.0,
+                ..PitchPerformance::default()
+            },
+        );
+        assert!(clip.has_generated_curve(ClipCurve::BRIGHTNESS));
+        let points = clip.performed_curve_points(
+            ClipCurve::BRIGHTNESS,
+            &TempoMap::constant(120.0),
+            &SignatureMap::default(),
+            0,
+            Ticks::ZERO,
+            clip.length,
+        );
+        let at = |tick| curve_at(&points, Ticks(tick));
+        assert!((at(480) - 0.5).abs() < 1e-6);
+        // Half velocity is a quarter of the travel under the middle, and holds through the rest.
+        assert!((at(2400) - 0.25).abs() < 1e-6);
+        assert!((at(3600) - 0.25).abs() < 1e-6);
+        // A chord is as bright as its loudest note.
+        assert!((at(4000) - 0.4).abs() < 1e-6);
+        let events = clip.sounding_performance_curve_events(
+            ClipCurve::BRIGHTNESS,
+            Ticks(60),
+            &TempoMap::constant(120.0),
+            &SignatureMap::default(),
+        );
+        assert_eq!(events.last(), Some(&(clip.length, 0.5)));
+    }
+
+    #[test]
+    fn intonation_leans_a_rising_semitone_sharp_and_draws_the_rest_from_position() {
+        let clip = clip(
+            vec![note(71, 0, 960, 0.8), note(72, 960, 960, 0.8)],
+            PitchPerformance {
+                intonation: 1.0,
+                ..PitchPerformance::default()
+            },
+        );
+        assert!(clip.has_pitch_performance());
+        let drift = |start: u64, pitch: u64| {
+            let mut rng = Rng::stream(
+                0,
+                &[Key::Word("vibrato"), Key::Index(start), Key::Index(pitch)],
+            );
+            rng.unit();
+            rng.unit();
+            0.06 * (rng.unit() * 2.0 - 1.0)
+        };
+        let bend = points(&clip);
+        let first = curve_at(&bend, Ticks(480));
+        let second = curve_at(&bend, Ticks(1440));
+        assert!((first - drift(0, 71)).abs() < 1e-5, "{first}");
+        assert!((second - (drift(960, 72) + 0.05)).abs() < 1e-5, "{second}");
+        assert!(first.abs() <= 0.06 && second.abs() <= 0.11);
+    }
+
+    #[test]
+    fn vibrato_variation_opens_the_depth_into_the_note_and_zero_is_the_old_sine() {
+        let style = PitchPerformance {
+            vibrato: 0.5,
+            vibrato_delay_ms: 0.0,
+            ..PitchPerformance::default()
+        };
+        let steady = clip(vec![note(60, 0, 7680, 0.8)], style.clone());
+        let tempo = TempoMap::constant(120.0);
+        let bend = points(&steady);
+        // At zero variation the sway is the plain sine at 5.8 Hz.
+        let t = 1.0;
+        let expected = 0.5 * (t * 5.8 * std::f64::consts::TAU).sin() as f32;
+        let at = tempo.seconds_to_ticks(Seconds(t));
+        assert!(
+            (curve_at(&bend, at) - expected).abs() < 0.02,
+            "{}",
+            curve_at(&bend, at)
+        );
+        let varied = clip(
+            vec![note(60, 0, 7680, 0.8)],
+            PitchPerformance {
+                vibrato_variation: 1.0,
+                ..style
+            },
+        );
+        let bend = points(&varied);
+        let peak = |from: i64, to: i64| {
+            bend.iter()
+                .filter(|p| p.at.raw() >= from && p.at.raw() < to)
+                .map(|p| p.value.abs())
+                .fold(0.0_f32, f32::max)
+        };
+        let early = peak(240, 1200);
+        let late = peak(6000, 6960);
+        assert!(late > early * 1.3, "early {early}, late {late}");
     }
 }

@@ -588,9 +588,10 @@ impl MidiClip {
         let mut out = Vec::new();
         for (offset, span) in loop_passes(self.length, self.loop_end) {
             let mut pass = curve_events(self.curve(which), span, step);
-            if which == ClipCurve::Controller(7) && !pass.is_empty() {
+            let rest = released_value(which);
+            if rest != 0.0 && !pass.is_empty() {
                 pass.retain(|(at, _)| *at < span);
-                pass.push((span, 1.0));
+                pass.push((span, rest));
                 out.extend(pass.into_iter().map(|(at, value)| (at + offset, value)));
                 continue;
             }
@@ -1805,10 +1806,12 @@ pub enum JoinRefusal {
 }
 
 /// What a curve reads where nothing has been written: what [`MidiClip::sounding_curve_events`]
-/// lets go to at a clip's end. The channel volume rests at full rather than at silence.
-fn released_value(which: ClipCurve) -> f32 {
+/// lets go to at a clip's end. The channel volume rests at full rather than at silence, and
+/// brightness at the middle, where a sound plays as it was recorded.
+pub(super) fn released_value(which: ClipCurve) -> f32 {
     match which {
         ClipCurve::Controller(7) => 1.0,
+        ClipCurve::BRIGHTNESS => 0.5,
         _ => 0.0,
     }
 }

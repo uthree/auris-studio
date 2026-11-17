@@ -88,6 +88,8 @@ pub enum PerformDial {
     Voicing,
     /// How strongly written-legato connections are played by what they connect to.
     Articulate,
+    /// How far each release is carried towards the next change of the clip's own harmony.
+    Pedal,
 }
 
 /// The sustain dial's steps: sixteenth notes, up to [`SUSTAIN_MAX_TICKS`].
@@ -106,6 +108,7 @@ pub const PERFORM_DIALS: &[PerformDial] = &[
     PerformDial::Swing,
     PerformDial::Gate,
     PerformDial::Sustain,
+    PerformDial::Pedal,
     PerformDial::Articulate,
     PerformDial::Contour,
     PerformDial::Voicing,
@@ -154,6 +157,7 @@ impl PerformDial {
             PerformDial::Contour => Key::PerformContour,
             PerformDial::Voicing => Key::PerformVoicing,
             PerformDial::Articulate => Key::PerformArticulate,
+            PerformDial::Pedal => Key::PerformPedal,
         }
     }
 }
@@ -176,7 +180,7 @@ pub(super) fn rank(transform: &NoteTransform) -> usize {
         // The pedal is the last note stage: it holds what the timing stages left, and stops
         // where the moved strike of the same key lands.
         NoteTransform::Humanize { .. } | NoteTransform::Expression { .. } => 10,
-        NoteTransform::Sustain { .. } => 11,
+        NoteTransform::Sustain { .. } | NoteTransform::Pedal { .. } => 11,
         NoteTransform::Groove { .. } => 0,
         NoteTransform::Transpose { .. } => 1,
         NoteTransform::Gate { .. } => 2,
@@ -209,6 +213,7 @@ fn answers_to(transform: &NoteTransform, dial: PerformDial) -> bool {
             | (NoteTransform::Contour { .. }, PerformDial::Contour)
             | (NoteTransform::Voicing { .. }, PerformDial::Voicing)
             | (NoteTransform::Articulate { .. }, PerformDial::Articulate)
+            | (NoteTransform::Pedal { .. }, PerformDial::Pedal)
     )
 }
 
@@ -263,7 +268,8 @@ pub fn dial_fraction(stack: &[NoteTransform], dial: PerformDial) -> f32 {
         | PerformDial::Slide
         | PerformDial::Contour
         | PerformDial::Voicing
-        | PerformDial::Articulate => stack
+        | PerformDial::Articulate
+        | PerformDial::Pedal => stack
             .iter()
             .find(|transform| answers_to(transform, dial))
             .map(|transform| match transform {
@@ -275,7 +281,8 @@ pub fn dial_fraction(stack: &[NoteTransform], dial: PerformDial) -> f32 {
                 | NoteTransform::Slide { amount }
                 | NoteTransform::Contour { amount }
                 | NoteTransform::Voicing { amount }
-                | NoteTransform::Articulate { amount } => amount.clamp(0.0, 1.0),
+                | NoteTransform::Articulate { amount }
+                | NoteTransform::Pedal { amount } => amount.clamp(0.0, 1.0),
                 _ => 0.0,
             })
             .unwrap_or(0.0),
@@ -485,6 +492,9 @@ pub fn with_dial(
         PerformDial::Articulate => (fraction > 0.0).then_some(NoteTransform::Articulate {
             amount: (fraction * 100.0).round() / 100.0,
         }),
+        PerformDial::Pedal => (fraction > 0.0).then_some(NoteTransform::Pedal {
+            amount: (fraction * 100.0).round() / 100.0,
+        }),
         PerformDial::Humanize => {
             let amount = (fraction * 100.0).round() / 100.0;
             (amount > 0.0).then(|| NoteTransform::Humanize {
@@ -596,7 +606,8 @@ pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> 
         | PerformDial::Slide
         | PerformDial::Contour
         | PerformDial::Voicing
-        | PerformDial::Articulate => format!("{:.0}%", dial_fraction(stack, dial) * 100.0),
+        | PerformDial::Articulate
+        | PerformDial::Pedal => format!("{:.0}%", dial_fraction(stack, dial) * 100.0),
         PerformDial::Humanize => format!("{:.0}%", dial_fraction(stack, dial) * 100.0),
         PerformDial::Swing => match swing_percent(stack) {
             SWING_MIN => straight.to_string(),
@@ -648,6 +659,7 @@ fn dial_element_key(dial: PerformDial) -> usize {
         PerformDial::Contour => 43,
         PerformDial::Voicing => 44,
         PerformDial::Articulate => 45,
+        PerformDial::Pedal => 46,
     }
 }
 
@@ -883,6 +895,7 @@ impl AurisApp {
                         | PerformDial::Contour
                         | PerformDial::Voicing
                         | PerformDial::Articulate
+                        | PerformDial::Pedal
                 )
             {
                 continue;
@@ -1184,6 +1197,17 @@ mod tests {
                 PerformDial::Articulate,
                 0.7,
                 serde_json::json!({"articulation":0.7}),
+            ),
+            (PerformDial::Pedal, 0.8, serde_json::json!({"pedal":0.8})),
+            (
+                PerformDial::Pitch(PitchDial::Brightness),
+                0.4,
+                serde_json::json!({"pitch":{"brightness":0.4}}),
+            ),
+            (
+                PerformDial::Pitch(PitchDial::Intonation),
+                0.5,
+                serde_json::json!({"pitch":{"intonation":0.5}}),
             ),
             (
                 PerformDial::GhostDensity,

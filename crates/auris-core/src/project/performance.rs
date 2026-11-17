@@ -118,6 +118,9 @@ pub fn performed_note_slots(
             NoteTransform::Articulate { amount } => {
                 super::interpretation::articulate(&mut notes, *amount, context)
             }
+            NoteTransform::Pedal { amount } => {
+                super::interpretation::pedal(&mut notes, *amount, context)
+            }
             local => {
                 notes = notes
                     .into_iter()

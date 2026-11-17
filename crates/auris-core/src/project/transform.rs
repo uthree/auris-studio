@@ -186,6 +186,17 @@ pub enum NoteTransform {
         /// repeat, never less than half the written note).
         amount: f32,
     },
+    /// Pedals through each harmony and changes the pedal where the harmony changes.
+    ///
+    /// The harmony is what the clip itself plays: a chord bringing a pitch class the pedal does
+    /// not hold, a different bass, or any note under the bass changes it, and the old pedal's
+    /// notes are damped 30 ms after the new harmony is struck. A note stops where its key is
+    /// struck again and no later than a whole note past its written release.
+    Pedal {
+        /// How far towards the next change each release is carried, from 0 (off) to 1 (all
+        /// the way, a full pedal).
+        amount: f32,
+    },
     /// Holds every note past its written release, the way a sustain pedal keeps a struck string
     /// ringing after the key comes up.
     ///
@@ -230,7 +241,7 @@ pub enum StrokeDirection {
 ///
 /// An empty stack is the identity, bit for bit. This single-note helper applies only local
 /// transforms; expression, strum, stroke, ghost, mute, brush, slide, sustain, contour,
-/// voicing and articulation require
+/// voicing, articulation and pedal require
 /// [`super::performed_notes`] instead.
 pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f64) -> Note {
     for transform in transforms {
@@ -247,7 +258,8 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
             | NoteTransform::Sustain { .. }
             | NoteTransform::Contour { .. }
             | NoteTransform::Voicing { .. }
-            | NoteTransform::Articulate { .. } => note,
+            | NoteTransform::Articulate { .. }
+            | NoteTransform::Pedal { .. } => note,
             NoteTransform::ForDrumVoice { voice, transforms } => {
                 if note.drum_voice == *voice {
                     performed(note, transforms, pass, bpm)

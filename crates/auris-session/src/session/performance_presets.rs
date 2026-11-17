@@ -21,6 +21,7 @@ fn after_scopes(stage: &NoteTransform) -> bool {
         NoteTransform::Humanize { .. }
             | NoteTransform::Expression { .. }
             | NoteTransform::Sustain { .. }
+            | NoteTransform::Pedal { .. }
             | NoteTransform::Pitch { .. }
             | NoteTransform::Octaves { .. }
     )

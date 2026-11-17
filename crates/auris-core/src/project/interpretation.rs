@@ -10,6 +10,8 @@
 //!   sounds a few milliseconds ahead of the rest.
 //! * `articulate` reads each written-legato connection: steps overlap, leaps breathe and a
 //!   repeated key is lifted before it is struck again.
+//! * `pedal` holds a sustain pedal through each harmony and changes it where the harmony
+//!   changes, the harmony being what the clip itself plays.
 //!
 //! The constants are first guesses in the sizes the performance literature reports (the KTH
 //! rule system's high-loud, duration-contrast and final-ritard rules; piano melody lead), and
@@ -51,6 +53,10 @@ const STEP_OVERLAP_MS: f32 = 25.0;
 const LEAP_GAP_MS: f32 = 30.0;
 /// The silence left before the same key is struck again, in milliseconds.
 const REPEAT_GAP_MS: f32 = 40.0;
+
+/// How long after a pedal change the dampers fall on what the old pedal held, in milliseconds.
+/// The change is a legato pedal: lifted as the new harmony is struck, so the two touch.
+const PEDAL_LIFT_MS: f32 = 30.0;
 
 /// Groups of chord indices (into `groups`) that form one phrase: attacks separated by no more
 /// than a quarter note of silence, the split the phrase arch uses.
@@ -392,5 +398,174 @@ mod tests {
         let mut notes = vec![n(60, 0, 60), n(60, 60, 60)];
         articulate(&mut notes, 1.0, with(&signatures));
         assert_eq!(notes[0].length, Ticks(30));
+    }
+}
+
+/// The bit set of pitch classes among `group`'s notes.
+fn classes(notes: &[Note], group: &[usize]) -> u16 {
+    group
+        .iter()
+        .fold(0, |set, &i| set | 1 << (notes[i].pitch % 12))
+}
+
+/// Where the pedal changes: the index of each chord group that begins a new pedal.
+///
+/// The harmony is read from what the clip plays, so a clip needs no chord track to be pedalled
+/// and an imported performance is pedalled from its own notes. A pedal holds a bass and the
+/// pitch classes its chords have struck; a chord bringing a class the pedal does not hold, or a
+/// different bass, changes it, and so does any note under the bass. A single note above the bass
+/// never does — that is a melody over the harmony, which a pedal is meant to blur.
+fn pedal_changes(notes: &[Note], groups: &[Vec<usize>]) -> Vec<usize> {
+    let mut changes = Vec::new();
+    let mut bass = u8::MAX;
+    let mut held = 0_u16;
+    for (g, group) in groups.iter().enumerate() {
+        let low = group.iter().map(|&i| notes[i].pitch).min().unwrap_or(0);
+        let struck = classes(notes, group);
+        let change = g == 0
+            || low < bass
+            || (group.len() >= 2 && (low % 12 != bass % 12 || struck & !held != 0));
+        if change {
+            changes.push(g);
+            bass = low;
+            held = if group.len() >= 2 {
+                struck
+            } else {
+                1 << (low % 12)
+            };
+        } else if group.len() >= 2 {
+            held |= struck;
+        }
+    }
+    changes
+}
+
+/// Holds every note on to the next pedal change, the way a pianist pedals through a harmony.
+///
+/// A note stops where the same key is struck again, no later than a whole note past its own
+/// release, and at the content window's end. `amount` is how much of the way to the change the
+/// release is carried, so a half pedal blurs half as far; notes already held across the change
+/// are left alone.
+pub(super) fn pedal(notes: &mut [Note], amount: f32, context: PerformanceContext<'_>) {
+    let amount = amount.clamp(0.0, 1.0);
+    if amount <= 0.0 {
+        return;
+    }
+    let lift = milliseconds(PEDAL_LIFT_MS, context.bpm);
+    let mut order: Vec<_> = (0..notes.len()).collect();
+    order.sort_by_key(|&i| (notes[i].pitch, notes[i].start));
+    let mut next_strike = vec![None; notes.len()];
+    for pair in order.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        if notes[a].pitch == notes[b].pitch && notes[a].start < notes[b].start {
+            next_strike[a] = Some(notes[b].start);
+        }
+    }
+    let groups = chords(notes);
+    let changes = pedal_changes(notes, &groups);
+    let mut ends = Vec::new();
+    for (k, &first) in changes.iter().enumerate() {
+        let next = changes.get(k + 1).copied();
+        let release = next.map_or(context.length, |next| notes[groups[next][0]].start + lift);
+        for group in &groups[first..next.unwrap_or(groups.len())] {
+            for &i in group {
+                let end = notes[i].end();
+                let mut target = release
+                    .min(end + Ticks(super::SUSTAIN_MAX_TICKS))
+                    .min(context.length);
+                if let Some(strike) = next_strike[i] {
+                    target = target.min(strike);
+                }
+                if target > end {
+                    let carried = ((target - end).raw() as f32 * amount).round() as i64;
+                    ends.push((i, end + Ticks(carried)));
+                }
+            }
+        }
+    }
+    for (i, end) in ends {
+        notes[i].length = end - notes[i].start;
+    }
+}
+
+#[cfg(test)]
+mod pedal_tests {
+    use super::*;
+    use crate::time::SignatureMap;
+
+    fn n(pitch: u8, start: i64, length: i64) -> Note {
+        Note::new(pitch, Ticks(start), Ticks(length))
+    }
+
+    fn with(signatures: &SignatureMap) -> PerformanceContext<'_> {
+        PerformanceContext {
+            bpm: 120.0,
+            pass: 0,
+            start: Ticks::ZERO,
+            length: Ticks(3840 * 4),
+            signatures,
+        }
+    }
+
+    #[test]
+    fn the_pedal_holds_through_a_harmony_and_changes_with_it() {
+        let signatures = SignatureMap::default();
+        // A C major chord, a melody passing tone and a return to C, then F major.
+        let mut notes = vec![
+            n(48, 0, 480),
+            n(64, 0, 480),
+            n(67, 0, 480),
+            n(74, 960, 480), // D above the bass: a melody note, held in the pedal
+            n(72, 1920, 480),
+            n(53, 3840, 480), // F in the bass: a change
+            n(69, 3840, 480),
+            n(72, 3840, 480),
+        ];
+        pedal(&mut notes, 1.0, with(&signatures));
+        // Everything in the C pedal rings until 30 ms (58 ticks) after the F chord, except the
+        // top C, whose key the F chord strikes again.
+        for note in &notes[..4] {
+            assert_eq!(note.end(), Ticks(3840 + 58), "{note:?}");
+        }
+        assert_eq!(notes[4].end(), Ticks(3840));
+        // The last pedal holds a whole note past each release, inside the clip.
+        assert_eq!(notes[5].end(), Ticks(4320 + 3840));
+        assert!(notes.iter().all(|note| note.start.raw() % 480 == 0));
+    }
+
+    #[test]
+    fn a_chord_with_a_new_class_changes_the_pedal_and_repeats_are_damped() {
+        let signatures = SignatureMap::default();
+        let mut notes = vec![
+            n(48, 0, 240),
+            n(64, 0, 240),
+            n(48, 960, 240), // same bass, same classes: no change, but the keys return
+            n(64, 960, 240),
+            n(48, 1920, 240), // same bass, a new class (A): a change
+            n(69, 1920, 240),
+        ];
+        pedal(&mut notes, 1.0, with(&signatures));
+        // The first chord's keys are struck again at 960, so they stop there.
+        assert_eq!(notes[0].end(), Ticks(960));
+        assert_eq!(notes[1].end(), Ticks(960));
+        assert_eq!(notes[2].end(), Ticks(1920));
+        assert_eq!(notes[3].end(), Ticks(1920 + 58));
+    }
+
+    #[test]
+    fn a_half_pedal_carries_half_the_way_and_zero_is_as_written() {
+        let signatures = SignatureMap::default();
+        let written = vec![
+            n(48, 0, 480),
+            n(55, 0, 480),
+            n(50, 1920, 480),
+            n(57, 1920, 480),
+        ];
+        let mut notes = written.clone();
+        pedal(&mut notes, 0.0, with(&signatures));
+        assert_eq!(notes, written);
+        pedal(&mut notes, 0.5, with(&signatures));
+        // Half of the 1440 + 58 ticks between the release and the lift, rounded.
+        assert_eq!(notes[0].end(), Ticks(480 + 749));
     }
 }

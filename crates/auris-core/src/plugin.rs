@@ -385,6 +385,13 @@ impl NoteEvent {
 /// an editor. An editor says [`ClipCurve::MODULATION`](crate::project::ClipCurve::MODULATION).
 pub const CC_MODULATION: u8 = 1;
 
+/// Controller 74: brightness, General MIDI 2's sound controller 5.
+///
+/// Rests at the middle, 0.5, where a sound plays as it was sampled; lower is darker. Named for
+/// the reason [`CC_MODULATION`] is: the SoundFont sampler answers it on its own account, with a
+/// filter of its own, since a font's modulators cannot follow a controller that moves.
+pub const CC_BRIGHTNESS: u8 = 74;
+
 /// The highest controller number MIDI has.
 pub const CONTROLLER_MAX: u8 = 127;
 

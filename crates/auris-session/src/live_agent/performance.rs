@@ -78,6 +78,7 @@ fn family(stage: &NoteTransform) -> Option<ResetStage> {
         NoteTransform::Contour { .. } => ResetStage::Contour,
         NoteTransform::Voicing { .. } => ResetStage::Voicing,
         NoteTransform::Articulate { .. } => ResetStage::Articulation,
+        NoteTransform::Pedal { .. } => ResetStage::Pedal,
         NoteTransform::Slide { .. } => ResetStage::Slide,
         NoteTransform::Pitch { .. } => ResetStage::Pitch,
         NoteTransform::Octaves { .. } => ResetStage::Octaves,
@@ -103,7 +104,8 @@ fn rank(stage: &NoteTransform) -> usize {
         NoteTransform::Strum { .. } | NoteTransform::Stroke { .. } => 8,
         NoteTransform::Lean { .. } | NoteTransform::ForDrumVoice { .. } => 9,
         NoteTransform::Humanize { .. } | NoteTransform::Expression { .. } => 10,
-        NoteTransform::Sustain { .. } => 11,
+        // Both pedals hold what the timing stages left, and stop at the moved strikes.
+        NoteTransform::Sustain { .. } | NoteTransform::Pedal { .. } => 11,
         NoteTransform::Pitch { .. } => 12,
         NoteTransform::Octaves { .. } => 13,
     }
@@ -305,6 +307,10 @@ impl Session {
                 },
                 "articulation": match scalar(ResetStage::Articulation) {
                     Some(NoteTransform::Articulate { amount }) => *amount,
+                    _ => 0.0
+                },
+                "pedal": match scalar(ResetStage::Pedal) {
+                    Some(NoteTransform::Pedal { amount }) => *amount,
                     _ => 0.0
                 },
                 "mute": match scalar(ResetStage::Mute) {
@@ -521,6 +527,9 @@ impl Session {
             (patch.articulation, ResetStage::Articulation, |amount| {
                 NoteTransform::Articulate { amount }
             }),
+            (patch.pedal, ResetStage::Pedal, |amount| {
+                NoteTransform::Pedal { amount }
+            }),
         ] {
             if let Some(amount) = value {
                 replace(&mut stack, kind, (amount > 0.0).then(|| stage(amount)));
@@ -725,7 +734,7 @@ pub(crate) fn mixed_swing(project: &auris_core::Project) -> Option<String> {
 #[serde(default, deny_unknown_fields)]
 pub struct PerformancePatch {
     /// Remove selected stage families before applying the supplied edits.
-    #[schemars(length(max = 16))]
+    #[schemars(length(max = 17))]
     pub reset: Vec<ResetStage>,
     /// Combined timing/velocity wander, 0..1; individual expression fields override it.
     #[schemars(range(min = 0, max = 1))]
@@ -762,6 +771,12 @@ pub struct PerformancePatch {
     /// or more leaves up to 30 ms of silence, a repeated pitch is released up to 40 ms early.
     #[schemars(range(min = 0, max = 1))]
     pub articulation: Option<f32>,
+    /// Harmonic pedal strength, 0..1; 0 removes it. Pedals through each harmony read from the
+    /// clip's own notes and changes where a chord brings a new pitch class or bass: releases are
+    /// carried this fraction of the way to 30 ms after the next change, stopping where the same
+    /// pitch is struck again and at most a whole note past the written release.
+    #[schemars(range(min = 0, max = 1))]
+    pub pedal: Option<f32>,
     /// Muted retrigger strength, 0..1.
     #[schemars(range(min = 0, max = 1))]
     pub mute: Option<f32>,
@@ -926,6 +941,20 @@ pub struct PitchPatch {
     /// Long-note volume contour strength, 0..1.
     #[schemars(range(min = 0, max = 1))]
     pub volume_swell: Option<f32>,
+    /// How far soft playing darkens the sound, 0..1, through controller 74 (brightness). Read on
+    /// every attack, chords included: at 1 a velocity-0.5 attack sits a quarter of the travel
+    /// under the resting middle, and a long note's volume contour moves it with the swell. The
+    /// built-in SoundFont sampler answers it with a low-pass; other instruments may ignore it.
+    #[schemars(range(min = 0, max = 1))]
+    pub brightness: Option<f32>,
+    /// How unevenly vibrato is played, 0..1: per-note rate ±8% and depth ±25%, depth opening
+    /// from 65% into each note and a ±4% rate drift. Needs `vibrato` above zero to be heard.
+    #[schemars(range(min = 0, max = 1))]
+    pub vibrato_variation: Option<f32>,
+    /// Expressive intonation, 0..1: each monophonic note up to ±6 cents off equal temperament,
+    /// a note reached by a rising semitone 5 cents sharp and by a falling one 4 cents flat.
+    #[schemars(range(min = 0, max = 1))]
+    pub intonation: Option<f32>,
 }
 
 /// Reference groove edits; capture is a snapshot, not a live link.
@@ -966,6 +995,8 @@ pub enum ResetStage {
     Voicing,
     /// Remove the contextual articulation stage.
     Articulation,
+    /// Remove the harmonic pedal stage.
+    Pedal,
     /// Remove the slide family, including its legacy representation.
     Slide,
     /// Remove the pitch family, including its legacy representation.
@@ -989,8 +1020,8 @@ fn bounded(name: &str, value: f64, min: f64, max: f64) -> Result<(), String> {
 
 impl PerformancePatch {
     fn validate(&self) -> Result<(), String> {
-        if self.reset.len() > 16 {
-            return Err("reset accepts at most 16 stage families".into());
+        if self.reset.len() > 17 {
+            return Err("reset accepts at most 17 stage families".into());
         }
         let fields = serde_json::to_value(self).map_err(|e| e.to_string())?;
         for name in ["expression", "strum", "ghost", "pitch", "groove"] {
@@ -1014,6 +1045,7 @@ impl PerformancePatch {
             ("PerformancePatch.contour", self.contour),
             ("PerformancePatch.voicing", self.voicing),
             ("PerformancePatch.articulation", self.articulation),
+            ("PerformancePatch.pedal", self.pedal),
         ] {
             if let Some(value) = value {
                 bounded(name, value as f64, 0.0, 1.0)?;
@@ -1170,6 +1202,15 @@ impl PitchPatch {
         }
         if let Some(value) = self.volume_swell {
             bounded("PitchPatch.volume_swell", value as f64, 0.0, 1.0)?;
+        }
+        for (name, value) in [
+            ("PitchPatch.brightness", self.brightness),
+            ("PitchPatch.vibrato_variation", self.vibrato_variation),
+            ("PitchPatch.intonation", self.intonation),
+        ] {
+            if let Some(value) = value {
+                bounded(name, value as f64, 0.0, 1.0)?;
+            }
         }
         Ok(())
     }

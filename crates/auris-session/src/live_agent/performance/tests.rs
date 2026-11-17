@@ -638,7 +638,7 @@ fn invalid_batches_and_unknown_fields_leave_document_and_history_untouched() {
     for settings in [
         json!({}),
         json!({"gate":0.5,"strum":{}}),
-        json!({"reset":vec!["gate";17]}),
+        json!({"reset":vec!["gate";18]}),
         json!({"gate":0.5,"reset":["expression"],"ghost":{"length_ms":500}}),
         json!({"swing_percent":49}),
         json!({"pitch":{"vibrato_hz":12}}),
@@ -948,6 +948,52 @@ fn score_reading_stages_read_back_in_canonical_order_and_reset_alone() {
         stack
             .iter()
             .any(|stage| matches!(stage, NoteTransform::Articulate { .. }))
+    );
+}
+
+#[test]
+fn the_harmonic_pedal_and_the_players_touch_read_back_and_validate() {
+    let (mut session, clip) = fixture();
+    let result = edit(
+        &mut session,
+        clip,
+        json!({
+            "pedal": 0.75,
+            "pitch": {"brightness": 0.5, "vibrato_variation": 0.25, "intonation": 0.5}
+        }),
+        None,
+    )
+    .unwrap();
+    assert_eq!(result["settings"]["pedal"], 0.75);
+    assert_eq!(result["settings"]["pitch"]["brightness"], 0.5);
+    assert_eq!(result["settings"]["pitch"]["vibrato_variation"], 0.25);
+    assert_eq!(result["settings"]["pitch"]["intonation"], 0.5);
+    let target = session.project().midi_clip(clip).unwrap().1.clone();
+    assert!(target.has_generated_curve(auris_core::project::ClipCurve::BRIGHTNESS));
+    assert!(
+        target.controllers.is_empty(),
+        "the curves are generated, not written"
+    );
+    for invalid in [
+        json!({"pedal": 1.5}),
+        json!({"pitch": {"brightness": -0.1}}),
+        json!({"pitch": {"intonation": 2}}),
+    ] {
+        assert!(
+            edit(&mut session, clip, invalid.clone(), None).is_err(),
+            "{invalid}"
+        );
+    }
+    edit(&mut session, clip, json!({"reset":["pedal"]}), None).unwrap();
+    assert!(
+        !session
+            .project()
+            .midi_clip(clip)
+            .unwrap()
+            .1
+            .transforms
+            .iter()
+            .any(|stage| matches!(stage, NoteTransform::Pedal { .. }))
     );
 }
 
