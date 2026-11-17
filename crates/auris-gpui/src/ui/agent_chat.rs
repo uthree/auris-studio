@@ -381,6 +381,9 @@ fn tool_audio(audio: Option<&serde_json::Value>) -> Vec<ToolAudio> {
 
 /// Most pictures one tool row keeps, matching what the worker sends.
 const TOOL_IMAGE_LIMIT: usize = 4;
+/// How wide the model list opens, whatever the panel's width: room for a provider and a model
+/// name side by side.
+const MODEL_POPUP_WIDTH: gpui::Pixels = px(300.0);
 
 /// The pictures of a `result` event: `[{"media_type": …, "data": "<base64>"}]`. One that does not
 /// decode is left out rather than failing the row, whose text still stands.
@@ -5043,8 +5046,9 @@ impl AurisApp {
             .p_1()
             .overflow_y_scroll()
             .track_scroll(&self.agent_chat.model_scroll)
-            .w_full()
-            .min_w_0()
+            // Wide enough to tell `claude-opus-…` from `claude-sonnet-…` even when the panel is
+            // at its narrowest; the popup leaves the panel for the editor to get it (#156).
+            .w(MODEL_POPUP_WIDTH)
             .rounded(Metrics::RADIUS_SM)
             .border_1()
             .border_color(theme.border)
@@ -5172,7 +5176,13 @@ impl AurisApp {
                     .tooltip(crate::ui::tooltip::text_tip(tooltip)),
             );
         }
-        Self::agent_dropdown_popup(list)
+        let toward_editor =
+            if self.panels.dock(crate::dock::Panel::Agent) == crate::dock::Dock::Right {
+                gpui::Corner::BottomRight
+            } else {
+                gpui::Corner::BottomLeft
+            };
+        Self::agent_wide_dropdown_popup(list, toward_editor, theme)
     }
 
     /// Paints a dropdown above the conversation without changing the controls' layout.
@@ -5187,6 +5197,31 @@ impl AurisApp {
                 .min_w_full()
                 .pb_1()
                 .child(list),
+        )
+        .into_any_element()
+    }
+
+    /// A dropdown wider than its trigger, opening from `corner` so it grows into the editor
+    /// rather than past the window, and pushed back inside the window if it would still cross
+    /// an edge.
+    fn agent_wide_dropdown_popup(
+        list: impl IntoElement,
+        corner: gpui::Corner,
+        theme: &Theme,
+    ) -> AnyElement {
+        let frame = div().absolute().bottom_full().pb_1();
+        let frame = if corner == gpui::Corner::BottomRight {
+            frame.right_0()
+        } else {
+            frame.left_0()
+        };
+        gpui::deferred(
+            frame.child(
+                gpui::anchored()
+                    .anchor(corner)
+                    .snap_to_window_with_margin(theme.atelier.spacing.sm)
+                    .child(list),
+            ),
         )
         .into_any_element()
     }
@@ -9388,9 +9423,35 @@ mod tests {
         let option = cx
             .debug_bounds("agent-model-option-0")
             .expect("the long model option is rendered");
+        // Issue #156: at 180px every option read `claude...`. The list now opens wider than the
+        // panel, into the editor beside it, and never past the window.
         assert!(
-            option.left() >= panel.left() && option.right() <= panel.right(),
-            "the long model option remains horizontally bounded: {option:?} outside {panel:?}"
+            option.size.width > panel.size.width,
+            "the model list is wider than the narrow panel: {option:?} inside {panel:?}"
+        );
+        assert!(
+            option.left() >= px(0.0)
+                && option.right() <= px(720.0)
+                && option.right() <= panel.right(),
+            "a right-docked panel's model list grows left, inside the window: {option:?}"
+        );
+        cx.simulate_keystrokes("escape");
+        app.update(cx, |this, _| {
+            this.panels
+                .move_to(crate::dock::Panel::Agent, crate::dock::Dock::Left);
+            this.panels
+                .set_size(crate::dock::Dock::Left, crate::dock::PanelLayout::MIN_SIDE);
+        });
+        crate::harness::paint(&app, cx);
+        let panel = cx.debug_bounds("agent-panel").unwrap();
+        crate::harness::click("agent-model", cx);
+        crate::harness::paint(&app, cx);
+        let option = cx.debug_bounds("agent-model-option-0").unwrap();
+        assert!(
+            option.size.width > panel.size.width
+                && option.left() >= panel.left()
+                && option.right() <= px(720.0),
+            "a left-docked panel's model list grows right, inside the window: {option:?}"
         );
     }
 
