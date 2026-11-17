@@ -6,13 +6,14 @@
 #![warn(missing_docs)]
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, ThreadId};
+use std::time::{Duration, Instant};
 
 use auris_core::buffer::AudioBuffer;
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
@@ -28,6 +29,24 @@ use vst3_host::{
 };
 
 const PARAMETER_POINTS_PER_ID: usize = 64;
+
+/// How long a plugin instance is left alive, deactivated, before it is released.
+///
+/// Ample Guitar M Lite starts four threads of its own with every instance, and releasing an
+/// instance a few milliseconds after its last call reaches its destructor while one of those
+/// threads is still copying out of memory the destructor has just freed: an access violation
+/// inside the plugin that takes the whole process down. The session builds a render instance on
+/// every edit and releases the one before it at once, so with that plugin on a track, adding
+/// notes crashed within a few hundred edits on most runs. Waiting twenty milliseconds before the
+/// release stopped every crash in the measurements; this is ten times that.
+const RELEASE_GRACE: Duration = Duration::from_millis(200);
+
+/// Most retired render instances one thread keeps waiting out [`RELEASE_GRACE`].
+///
+/// An instance can hold a sample library (one Ample Guitar instance is 130 MB) and edits can
+/// come faster than the grace, so past this many the oldest is waited for and released rather
+/// than letting memory grow with the edit rate.
+const MAX_RELEASING: usize = 3;
 
 /// Prefix used for VST3 class ids stored in Auris project files.
 pub const ID_PREFIX: &str = "vst3:";
@@ -303,6 +322,10 @@ struct Shared {
     snapshot: Arc<ParameterSnapshot>,
     active_renderers: Arc<AtomicUsize>,
     render_teardowns: Mutex<Vec<RenderTeardown>>,
+    /// Render instances back from their renderers, deactivated and waiting to be released.
+    releasing: Mutex<Releasing<Plugin>>,
+    /// When the control instance was loaded. It is not released sooner than the grace after.
+    loaded_at: Instant,
     render_failure: Arc<AtomicU32>,
     full_refresh_required: AtomicBool,
     prepare: PrepareContext,
@@ -403,6 +426,90 @@ impl<T> Drop for DeferredOwnerDrop<T> {
     }
 }
 
+/// Retired values waiting out [`RELEASE_GRACE`] before their owner thread releases them.
+///
+/// Each value is released on the thread that retired it, as COM teardown has to be, and a value
+/// whose thread never comes back is leaked rather than released elsewhere: dropping the queue
+/// drops nothing it still holds.
+struct Releasing<T> {
+    waiting: VecDeque<Retired<T>>,
+}
+
+struct Retired<T> {
+    value: ManuallyDrop<T>,
+    owner: ThreadId,
+    due: Instant,
+}
+
+impl<T> Releasing<T> {
+    fn new() -> Self {
+        Self {
+            waiting: VecDeque::new(),
+        }
+    }
+
+    /// Queues `value` for release on this thread once the grace after `now` has passed.
+    ///
+    /// When this thread already has [`MAX_RELEASING`] values waiting, the oldest is waited for
+    /// and released first.
+    fn retire(&mut self, value: T, now: Instant) {
+        let owner = thread::current().id();
+        while self.waiting_on(owner) >= MAX_RELEASING {
+            self.release_oldest_of(owner);
+        }
+        self.waiting.push_back(Retired {
+            value: ManuallyDrop::new(value),
+            owner,
+            due: now + RELEASE_GRACE,
+        });
+    }
+
+    /// Releases this thread's values whose grace has passed by `now`.
+    fn release_due(&mut self, now: Instant) {
+        let owner = thread::current().id();
+        let mut index = 0;
+        while index < self.waiting.len() {
+            let retired = &self.waiting[index];
+            if retired.owner == owner && retired.due <= now {
+                if let Some(retired) = self.waiting.remove(index) {
+                    drop(ManuallyDrop::into_inner(retired.value));
+                }
+            } else {
+                index += 1;
+            }
+        }
+    }
+
+    /// Waits out the grace of every value this thread retired, and releases them.
+    fn release_all(&mut self) {
+        let owner = thread::current().id();
+        while self.waiting_on(owner) > 0 {
+            self.release_oldest_of(owner);
+        }
+    }
+
+    fn waiting_on(&self, owner: ThreadId) -> usize {
+        self.waiting.iter().filter(|r| r.owner == owner).count()
+    }
+
+    fn release_oldest_of(&mut self, owner: ThreadId) {
+        let Some(index) = self.waiting.iter().position(|r| r.owner == owner) else {
+            return;
+        };
+        if let Some(retired) = self.waiting.remove(index) {
+            sleep_until(retired.due);
+            drop(ManuallyDrop::into_inner(retired.value));
+        }
+    }
+}
+
+fn sleep_until(deadline: Instant) {
+    let now = Instant::now();
+    if deadline > now {
+        thread::sleep(deadline - now);
+    }
+}
+
 impl std::fmt::Debug for Vst3Plugin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Vst3Plugin")
@@ -499,6 +606,8 @@ impl Vst3Plugin {
                 snapshot: Arc::new(ParameterSnapshot::new(&initial_values)),
                 active_renderers: Arc::new(AtomicUsize::new(0)),
                 render_teardowns: Mutex::new(Vec::new()),
+                releasing: Mutex::new(Releasing::new()),
+                loaded_at: Instant::now(),
                 render_failure: Arc::new(AtomicU32::new(Vst3RenderFailure::NONE)),
                 full_refresh_required: AtomicBool::new(false),
                 prepare: *prepare,
@@ -811,23 +920,35 @@ impl Vst3Plugin {
         self.shared.active_renderers.load(Ordering::Acquire) == 0
     }
 
+    /// Takes back the render instances returned to this thread, and releases those whose
+    /// [`RELEASE_GRACE`] has passed.
+    ///
+    /// A returned instance is deactivated at once and released only once the grace has passed.
     fn service_teardowns(&self) {
-        let Ok(mut teardowns) = self.shared.render_teardowns.lock() else {
+        let Ok(mut releasing) = self.shared.releasing.lock() else {
             return;
         };
-        let current = thread::current().id();
-        teardowns.retain_mut(|teardown| {
-            if current != teardown.owner_thread {
-                return true;
-            }
-            match teardown.returned.pop() {
-                Some(plugin) => {
-                    drop(ManuallyDrop::into_inner(plugin));
-                    false
+        let now = Instant::now();
+        if let Ok(mut teardowns) = self.shared.render_teardowns.lock() {
+            let current = thread::current().id();
+            teardowns.retain_mut(|teardown| {
+                if current != teardown.owner_thread {
+                    return true;
                 }
-                None => true,
-            }
-        });
+                match teardown.returned.pop() {
+                    Some(plugin) => {
+                        let mut plugin = ManuallyDrop::into_inner(plugin);
+                        if let Err(error) = plugin.stop_processing() {
+                            log::warn!("could not deactivate a retired VST3 instance: {error}");
+                        }
+                        releasing.retire(plugin, now);
+                        false
+                    }
+                    None => true,
+                }
+            });
+        }
+        releasing.release_due(now);
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, Plugin>, Vst3Error> {
@@ -838,6 +959,11 @@ impl Vst3Plugin {
 impl Drop for Vst3Plugin {
     fn drop(&mut self) {
         self.service_teardowns();
+        if let Ok(mut releasing) = self.shared.releasing.lock() {
+            releasing.release_all();
+        }
+        // The control instance goes with `shared`, and no sooner than the grace after its load.
+        sleep_until(self.shared.loaded_at + RELEASE_GRACE);
     }
 }
 
@@ -2105,5 +2231,89 @@ mod tests {
         let returned = returned.pop().expect("render value returns to its owner");
         drop(ManuallyDrop::into_inner(returned));
         assert_eq!(drops.load(Ordering::Relaxed), 1);
+    }
+
+    struct CountedDrop(Arc<AtomicUsize>);
+    impl Drop for CountedDrop {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn counted() -> (Arc<AtomicUsize>, impl Fn() -> CountedDrop) {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let make = {
+            let drops = Arc::clone(&drops);
+            move || CountedDrop(Arc::clone(&drops))
+        };
+        (drops, make)
+    }
+
+    #[test]
+    fn a_retired_instance_is_released_only_once_its_grace_has_passed() {
+        let (drops, make) = counted();
+        let mut releasing = Releasing::new();
+        let retired_at = Instant::now();
+        releasing.retire(make(), retired_at);
+
+        releasing.release_due(retired_at);
+        releasing.release_due(retired_at + RELEASE_GRACE - Duration::from_millis(1));
+        assert_eq!(drops.load(Ordering::Relaxed), 0, "still inside its grace");
+
+        releasing.release_due(retired_at + RELEASE_GRACE);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn retiring_past_the_limit_releases_the_oldest_first() {
+        let (drops, make) = counted();
+        let mut releasing = Releasing::new();
+        // Retired long enough ago that releasing them does not have to wait.
+        let long_ago = Instant::now() - RELEASE_GRACE;
+        for _ in 0..MAX_RELEASING {
+            releasing.retire(make(), long_ago);
+        }
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+
+        releasing.retire(make(), Instant::now());
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+        assert_eq!(releasing.waiting_on(thread::current().id()), MAX_RELEASING);
+    }
+
+    #[test]
+    fn releasing_everything_waits_out_the_grace() {
+        let (drops, make) = counted();
+        let mut releasing = Releasing::new();
+        let retired_at = Instant::now();
+        releasing.retire(make(), retired_at);
+        releasing.retire(make(), retired_at);
+
+        releasing.release_all();
+        assert!(retired_at.elapsed() >= RELEASE_GRACE);
+        assert_eq!(drops.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn an_instance_is_released_only_by_the_thread_that_retired_it() {
+        let (drops, make) = counted();
+        let releasing = Arc::new(Mutex::new(Releasing::new()));
+        let long_ago = Instant::now() - RELEASE_GRACE;
+        {
+            let releasing = Arc::clone(&releasing);
+            let value = make();
+            std::thread::spawn(move || releasing.lock().unwrap().retire(value, long_ago))
+                .join()
+                .unwrap();
+        }
+
+        let mut releasing = Arc::into_inner(releasing).unwrap().into_inner().unwrap();
+        releasing.release_due(Instant::now());
+        releasing.release_all();
+        drop(releasing);
+        assert_eq!(
+            drops.load(Ordering::Relaxed),
+            0,
+            "an instance whose thread is gone is leaked, never released elsewhere"
+        );
     }
 }
