@@ -645,6 +645,9 @@ DuplicateSoundConfirm = "Duplicate"
 DeleteSound = "Delete sound…"
 DeleteSoundConfirm = "Delete sound"
 DeleteSoundBody = "This removes the saved sound from your library. Settings already applied to projects stay unchanged. This cannot be undone."
+RemoveSoundFont = "Remove from Library…"
+RemoveSoundFontConfirm = "Remove"
+RemoveSoundFontBody = "Its sounds will no longer be offered in any project. The file itself stays on disk, so it can be imported again."
 SoundContents = "Replace instrument settings and insert effects"
 UserSoundsEmpty = "Save an instrument and its inserts from the track inspector"
 BrowserEffects = "Effects"
@@ -1804,6 +1807,7 @@ ErrorDuplicateOutput = "the track already has that output, taken at that point"
 ErrorNotABus = "only a bus can be routed into"
 ErrorRoutingLoop = "that would send the signal back into itself"
 ErrorUnknownSoundFont = "that SoundFont is not part of this project"
+ErrorShippedSoundFont = "that SoundFont comes with Auris Studio and cannot be removed"
 ExternalChangeConflict = "The project changed on disk. Accept its changes (Undo keeps your edits), or save your work to another project."
 ErrorLibraryMissing = "the shipped sound library is not installed, so General MIDI sounds are unavailable"
 ErrorGenerationPositionOccupied = "there is already a clip at this position; choose an empty area on the track"
@@ -2395,6 +2399,14 @@ duplicate_sound_title = "Duplicate “{name}”"
 sound_copy_name = "{name} copy"
 # Names the saved sound being deleted.
 delete_sound_title = "Delete “{name}”?"
+# Names the SoundFont being taken out of the application library.
+remove_soundfont_title = "Remove “{name}” from the library?"
+# The removal body when tracks of the open project still play the font, and so keep it.
+remove_soundfont_body_in_use = "Its sounds will no longer be offered in other projects. {count} track(s) in this project still play it, so this project keeps it. The file itself stays on disk."
+# Confirmation that a SoundFont left the library.
+soundfont_removed = "Removed {name} from the library"
+# Confirmation that a SoundFont left the library while tracks of this project keep it.
+soundfont_removed_kept = "Removed {name} from the library; {count} track(s) in this project still play it"
 # Names the exact plugin folder a removal confirmation applies to.
 remove_plugin_folder_title = "Remove plugin folder “{path}”?"
 # Confirms which plugin search folder was removed.

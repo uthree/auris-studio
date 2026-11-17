@@ -695,6 +695,7 @@ fn validate_servers(servers: &Value) -> Result<(), String> {
 async fn receive_turn(rpc: &mut Rpc, bridge: &Bridge, thread: &str) -> Result<String, String> {
     let mut answer = String::new();
     let mut native_items = std::collections::HashMap::<String, Value>::new();
+    let mut usage = TurnUsage::default();
     loop {
         let message = match rpc.deferred.pop_front() {
             Some(message) => message,
@@ -816,10 +817,12 @@ async fn receive_turn(rpc: &mut Rpc, bridge: &Bridge, thread: &str) -> Result<St
                     bridge.emit(json!({"event":"result","call_id":item["id"],"tool":item["tool"],"ok":item["status"] == "completed" && item["error"].is_null() && item["result"]["isError"] != true,"text":text,"images":images}));
                 }
             }
+            "thread/tokenUsage/updated" => usage.add(&params["tokenUsage"]["last"]),
             "turn/completed" => {
                 if params["turn"]["id"].as_str() != rpc.turn.as_deref() {
                     continue;
                 }
+                bridge.emit(usage.event());
                 return match params["turn"]["status"].as_str() {
                     Some("completed") => Ok(answer),
                     Some("interrupted") => {
@@ -838,10 +841,62 @@ async fn receive_turn(rpc: &mut Rpc, bridge: &Bridge, thread: &str) -> Result<St
     }
 }
 
+/// What one turn cost. Codex reports each model response's tokens as `last` in a
+/// `thread/tokenUsage/updated` notification; a turn is the sum of those. Its input count
+/// already includes the cached part, and reasoning is counted inside the output.
+#[derive(Default)]
+struct TurnUsage {
+    input: u64,
+    cached_input: u64,
+    cache_write: u64,
+    output: u64,
+    reasoning: u64,
+}
+
+impl TurnUsage {
+    fn add(&mut self, last: &Value) {
+        let count = |key: &str| last[key].as_u64().unwrap_or(0);
+        self.input += count("inputTokens");
+        self.cached_input += count("cachedInputTokens");
+        self.cache_write += count("cacheWriteInputTokens");
+        self.output += count("outputTokens");
+        self.reasoning += count("reasoningOutputTokens");
+    }
+
+    /// The same shape every backend reports.
+    fn event(&self) -> Value {
+        json!({
+            "event": "usage",
+            "input": self.input,
+            "cached_input": self.cached_input,
+            "cache_write": self.cache_write,
+            "output": self.output,
+            "reasoning": self.reasoning,
+            "cost_usd": null,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio::io::{AsyncBufReadExt, BufReader};
+
+    #[test]
+    fn a_turn_sums_the_tokens_of_each_response() {
+        let mut usage = TurnUsage::default();
+        for last in [
+            json!({"inputTokens":1000,"cachedInputTokens":800,"outputTokens":50,"reasoningOutputTokens":30,"totalTokens":1050}),
+            json!({"inputTokens":1200,"cachedInputTokens":1000,"outputTokens":20,"reasoningOutputTokens":0,"totalTokens":1220}),
+        ] {
+            usage.add(&last);
+        }
+        let event = usage.event();
+        assert_eq!(event["input"], 2200);
+        assert_eq!(event["cached_input"], 1800);
+        assert_eq!(event["output"], 70);
+        assert_eq!(event["reasoning"], 30);
+    }
 
     #[test]
     fn package_manager_scripts_resolve_to_the_native_program() {

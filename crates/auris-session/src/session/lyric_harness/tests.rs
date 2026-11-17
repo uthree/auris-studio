@@ -136,6 +136,31 @@ fn readings_reject_ambiguous_addresses_and_phrase_breaks() {
 }
 
 #[test]
+fn a_reading_cut_into_notes_is_read_as_the_same_phrase() {
+    // write_lyrics takes '|' between notes and note_reading hands it out, so a composer
+    // passes the same grouping back; it must analyse exactly as the plain kana does.
+    let session = session();
+    let reading = |kana: &str| {
+        vec![PhraseReading {
+            phrase: 1,
+            kana: kana.into(),
+        }]
+    };
+    let plain = session
+        .analyze_lyrics("目覚ましより", &reading("めざましより"))
+        .unwrap();
+    let cut = session
+        .analyze_lyrics("目覚ましより", &reading("め|ざ|ま|し| よ|り"))
+        .unwrap();
+    assert_eq!(cut.phrases[0].moras, plain.phrases[0].moras);
+    assert!(cut.complete);
+    let error = session
+        .analyze_lyrics("あ", &reading("あ。い"))
+        .unwrap_err();
+    assert!(error.contains("'。'"), "{error}");
+}
+
+#[test]
 fn a_zero_based_phrase_is_refused_with_the_numbering_spelt_out() {
     // Models number from zero more often than not; the refusal has to say which entry was
     // wrong and where numbering starts, or the retry guesses again.

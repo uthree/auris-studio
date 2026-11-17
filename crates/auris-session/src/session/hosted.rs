@@ -349,6 +349,21 @@ impl HostedPlugins {
         self.retiring.retain_mut(|plugin| !plugin.release());
     }
 
+    /// Whether building a graph now would instantiate a plugin that a short wait would not.
+    ///
+    /// Each slot keeps two instances, one rendering in the graph the engine holds and one spare,
+    /// whose rendering half is in the graph before it. That one comes home only after the audio
+    /// thread has swapped the newer graph in, a callback or two later. A rebuild in between finds
+    /// neither instance free and loads a third — a third of a second for Surge XT — which is what
+    /// a burst of edits paid on every edit. A slot with no live instance yet is not waiting for
+    /// anything: its instance is the first.
+    pub(super) fn handover_pending(&mut self) -> bool {
+        self.slots
+            .values_mut()
+            .chain(self.instruments.values_mut())
+            .any(HostedSlot::handover_pending)
+    }
+
     /// Builds the effect for every hosted slot in `project`.
     ///
     /// Slots the project no longer has are dropped. A slot whose file or plugin cannot be loaded
@@ -785,6 +800,18 @@ impl HostedSlot {
         if let Some(outgoing) = self.live.replace(plugin) {
             self.spare = Some(outgoing);
         }
+    }
+
+    /// Whether the next [`Self::incoming`] would have to instantiate only because neither
+    /// instance's rendering half has come home yet.
+    ///
+    /// Releasing an instance whose half is home is what [`Self::reclaim`] would do next anyway,
+    /// so asking here changes nothing the next build would not.
+    fn handover_pending(&mut self) -> bool {
+        let Some(live) = self.live.as_mut() else {
+            return false;
+        };
+        !live.release() && self.spare.as_mut().is_some_and(|spare| !spare.release())
     }
 
     /// Takes back whichever instances have had their effects dropped.
@@ -1731,6 +1758,42 @@ mod tests {
             "a freed instance is reused rather than added to"
         );
         drop(second);
+    }
+
+    #[test]
+    fn a_handover_is_pending_only_while_both_instances_are_out() {
+        let library = fixture_library();
+        let mut slot = slot();
+        let state = PluginState::empty();
+        let mut graveyard = Vec::new();
+        assert!(
+            !slot.handover_pending(),
+            "nothing to wait for before the first build"
+        );
+
+        let first = slot
+            .take_effect(&library, &state, &prepare(), &mut graveyard)
+            .expect("first");
+        assert!(
+            !slot.handover_pending(),
+            "the second instance is needed whatever the wait: the first is still playing"
+        );
+        let second = slot
+            .take_effect(&library, &state, &prepare(), &mut graveyard)
+            .expect("second");
+        assert!(
+            slot.handover_pending(),
+            "both halves out: building now would load a third instance"
+        );
+
+        drop(first);
+        assert!(!slot.handover_pending(), "the spare came home");
+        let third = slot
+            .take_effect(&library, &state, &prepare(), &mut graveyard)
+            .expect("third");
+        assert!(graveyard.is_empty(), "the spare was reused, not parked");
+        drop(second);
+        drop(third);
     }
 
     #[test]

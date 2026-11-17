@@ -112,6 +112,13 @@ pub enum MenuCommand {
     DuplicateSound(std::sync::Arc<auris_session::SoundPreset>),
     /// Asks to remove the exact saved user sound shown by the menu.
     DeleteSound(std::sync::Arc<auris_session::SoundPreset>),
+    /// Asks to take an imported SoundFont out of the application library.
+    RemoveSoundFont {
+        /// The font, by its id in the open project.
+        font: auris_session::prelude::SoundFontId,
+        /// Its name as the library showed it.
+        name: String,
+    },
     /// Independent note expression, without rewriting the score.
     SetExpressionSettings { clip: ClipId, settings: Expression },
     /// Snapshot a reference MIDI clip's groove.
@@ -1119,6 +1126,14 @@ impl AurisApp {
                 self.open_prompt(Prompt::ask(
                     messages::delete_sound_title(self.language(), &sound.name),
                     crate::ui::prompt::Question::DeleteSound(sound),
+                ));
+            }
+            MenuCommand::RemoveSoundFont { font, name } => {
+                // Counted when asked, so the sheet names what this project will keep.
+                let users = self.session.soundfont_users(font).len();
+                self.open_prompt(Prompt::ask(
+                    messages::remove_soundfont_title(self.language(), &name),
+                    crate::ui::prompt::Question::RemoveSoundFont { font, name, users },
                 ));
             }
             MenuCommand::ConvertTrackToAudio(track) => self.convert_track_to_audio(track, cx),

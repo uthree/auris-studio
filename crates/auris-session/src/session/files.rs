@@ -634,8 +634,7 @@ impl Session {
         // History is cleared, so nothing can bring the old document's audio back; keeping the
         // decoded buffers would hold them for the rest of the process.
         self.clear_sources();
-        self.replace_project(project);
-        self.install_library_fonts();
+        self.replace_project_with_library(project);
         self.mark_saved();
     }
 
@@ -701,8 +700,7 @@ impl Session {
         self.sound_scope = crate::transient_id::transient_id("session");
         self.path = None;
         self.clear_sources();
-        self.replace_project(result.project);
-        self.install_library_fonts();
+        self.replace_project_with_library(result.project);
         // Dirty from the first frame: nothing on disk holds this document, and the `.mid` it came
         // from cannot hold it either.
         self.dirty = true;
@@ -1626,6 +1624,10 @@ impl Session {
     ///
     /// Only files already available on disk are read here. A font acquired later arrives through
     /// [`Self::install_shipped_soundfont`].
+    ///
+    /// The graph is not rebuilt here: every caller rebuilds once afterwards, and a second rebuild
+    /// straight after the first loads each hosted plugin again, because the first graph still holds
+    /// the instances it was given — two Surge XTs added over half a second to opening a song.
     pub(super) fn install_library_fonts(&mut self) {
         let dirty = self.dirty;
         let mut installed_any = false;
@@ -1637,9 +1639,11 @@ impl Session {
                 }
             }
         }
-        if let Some(library) = &self.soundfont_library {
-            match crate::library::soundfonts::read(library) {
+        if let Some(library) = self.soundfont_library.clone() {
+            match crate::library::soundfonts::read(&library) {
                 Ok(fonts) => {
+                    let listed: Vec<PathBuf> = fonts.iter().map(|font| font.path.clone()).collect();
+                    self.drop_unlisted_fonts(&listed);
                     for font in fonts {
                         if self.adopt_font(&font.path).is_none() {
                             self.adopt_library_reference(
@@ -1657,7 +1661,7 @@ impl Session {
         }
         self.dirty = dirty;
         if installed_any {
-            self.invalidate_graph();
+            self.sync_singer_clip_names();
         }
     }
 
@@ -1879,7 +1883,7 @@ fn install_library_reference(
 }
 
 /// Recognises existing project references written before library paths were canonicalised.
-fn same_font_file(left: &Path, right: &Path) -> bool {
+pub(super) fn same_font_file(left: &Path, right: &Path) -> bool {
     left == right
         || std::fs::canonicalize(left)
             .ok()
