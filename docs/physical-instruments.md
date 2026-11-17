@@ -98,7 +98,13 @@ for the next one. On the strings, **Bow Position** moves the bow at once.
 
 MIDI CC7 is channel volume. CC11 is expression: level, and also bow speed and breath. CC1
 deepens the vibrato of the bowed and blown instruments. CC64 lifts the piano's dampers and the
-vibraphone's; pressing it after a key has come up catches a note that is already fading.
+vibraphone's; pressing it after a key has come up catches a note that is already fading. It is
+read as a depth, not a switch: the first quarter of its travel is free play, and between a
+quarter and three quarters the dampers rise off the strings, so a half pedal shortens a released
+note without stopping it. CC66 is the piano's sostenuto, holding up only the dampers that were up
+as it went down. CC67 is its soft pedal: a note struck with it down meets two strings of three,
+with softer felt, and comes out quieter and darker. CC68 is the legato footswitch: on the
+strings, reeds and whistles it slurs as the **Legato** control does, for as long as it is down.
 Pitch bend reaches sounding notes, up to two octaves either way. On the piano **Release** is
 the damper: the time it takes to remove 80 dB, longer in the bass, and the keys above F6 have
 none.

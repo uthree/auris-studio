@@ -247,8 +247,11 @@ struct Voice {
     contact: f32,
     sounding: bool,
     held: bool,
+    /// Released, but kept from the damper bar by the pedal.
     deferred: bool,
-    damped: bool,
+    /// How much of the damper bar is on this bar, from none (0) to all of it (1). A pedal half
+    /// down lets the felt brush the bar, and a released note between the two.
+    damped: f32,
     /// Frames the mallet is still on the bar, for the picture.
     touching: usize,
     /// How long the mallet stayed on the bar, in seconds, and how hard it came down.
@@ -331,18 +334,21 @@ impl Bars {
                 // with the tubes as they are by default, which is how a marimba is measured.
                 nepers *= (1.0 + 0.6 * settings.tubes) / (1.0 + 0.6 * TUBES);
             }
-            if voice.damped {
-                nepers += decay_rate(settings.release);
-            }
+            nepers += voice.damped * decay_rate(settings.release);
             voice.nepers[mode] = nepers;
         }
     }
 
-    fn damp(&mut self, index: usize) {
-        if let Some(voice) = self.voices.get_mut(index)
-            && !voice.damped
-        {
-            voice.damped = true;
+    /// Lowers or lifts the damper bar on `index` to where its key and the pedal now put it.
+    fn settle_damper(&mut self, index: usize) {
+        let damping = self.performance.damping();
+        let Some(voice) = self.voices.get_mut(index) else {
+            return;
+        };
+        let target = if voice.held { 0.0 } else { damping };
+        voice.deferred = !voice.held && target < 0.5;
+        if (target - voice.damped).abs() > 1.0e-6 {
+            voice.damped = target;
             self.set_rates(index);
             let rate = self.rate;
             let voice = &mut self.voices[index];
@@ -442,7 +448,7 @@ impl Engine for Bars {
         voice.pan_now = note.pan * pan_width;
         voice.held = true;
         voice.deferred = false;
-        voice.damped = false;
+        voice.damped = 0.0;
         voice.sounding = true;
         voice.touching = (seconds * rate) as usize;
         voice.blow = (seconds, amplitude);
@@ -485,7 +491,6 @@ impl Engine for Bars {
     }
 
     fn stop(&mut self, index: usize) {
-        let pedal = self.performance.pedal;
         let Some(voice) = self.voices.get_mut(index) else {
             return;
         };
@@ -493,11 +498,7 @@ impl Engine for Bars {
             return;
         }
         voice.held = false;
-        if pedal {
-            voice.deferred = true;
-        } else {
-            self.damp(index);
-        }
+        self.settle_damper(index);
     }
 
     fn silence(&mut self, index: usize) {
@@ -511,7 +512,7 @@ impl Engine for Bars {
 
     fn perform(&mut self, performance: &Performance) {
         let bent = performance.bend != self.performance.bend;
-        let lifted = self.performance.pedal && !performance.pedal;
+        let pedalled = performance.lift() != self.performance.lift();
         self.performance = *performance;
         if bent {
             let (cents, rate) = (performance.bend * 100.0, self.rate);
@@ -519,11 +520,11 @@ impl Engine for Bars {
                 voice.retune(cents, rate);
             }
         }
-        if lifted {
+        if pedalled {
+            // Like a piano's, the damper bar comes off a note already fading.
             for index in 0..self.voices.len() {
-                if self.voices[index].sounding && self.voices[index].deferred {
-                    self.voices[index].deferred = false;
-                    self.damp(index);
+                if self.voices[index].sounding && !self.voices[index].held {
+                    self.settle_damper(index);
                 }
             }
         }

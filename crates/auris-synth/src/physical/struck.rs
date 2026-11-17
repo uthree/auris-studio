@@ -290,9 +290,13 @@ struct Voice {
     knock: f32,
     sounding: bool,
     held: bool,
-    /// Released, but kept from its damper by the pedal.
+    /// Released, but kept from its damper by a pedal.
     deferred: bool,
-    damped: bool,
+    /// How much of its damper is on the strings, from none (0) to all of it (1). A half pedal
+    /// leaves a released note between the two.
+    damped: f32,
+    /// Struck with the soft pedal down: one string of a three-string unison is left out.
+    shifted: bool,
     pan: f32,
     pan_now: f32,
     declick: Declick,
@@ -339,6 +343,13 @@ const FREE_POLE: f32 = 0.3;
 /// its default this leaves a note under the pedal two or three decibels fuller a second on,
 /// which is about what the pedal does.
 const FREE_COUPLING: f32 = 0.5;
+/// What a string with its damper resting on it keeps of itself each time round: a fifth, gone
+/// in a moment.
+const DAMPED_KEEPS: f32 = 0.2;
+/// How much softer the hammer is where the soft pedal shifts it to, against where it usually
+/// strikes. The strings groove the felt they meet, compacting it; the shift brings the
+/// shoulders of the hammer, which they have not, under them.
+const SHIFTED_FELT: f32 = 0.7;
 /// Below this a free string is taken to have stopped.
 const FREE_FLOOR: f32 = 1.0e-7;
 
@@ -353,6 +364,8 @@ struct Free {
     period: f32,
     /// What it keeps of itself each time round while its damper is up.
     ring: f32,
+    /// What it keeps of itself each time round as its damper now stands.
+    keeps: f32,
     /// What it takes of the bridge's motion each time round.
     takes: f32,
     low: f32,
@@ -376,6 +389,8 @@ struct Sympathetic {
     busy: [u8; KEYS],
     /// Keys that are down, whose dampers are up whether or not their note still sounds.
     down: [bool; KEYS],
+    /// Keys whose dampers the sostenuto pedal caught up when it went down.
+    caught: [bool; KEYS],
     any: bool,
 }
 
@@ -386,6 +401,7 @@ impl Default for Sympathetic {
             strings: [Free::default(); KEYS],
             busy: [0; KEYS],
             down: [false; KEYS],
+            caught: [false; KEYS],
             any: false,
         }
     }
@@ -416,6 +432,7 @@ impl Sympathetic {
         }
         self.busy = [0; KEYS];
         self.down = [false; KEYS];
+        self.caught = [false; KEYS];
         self.any = false;
     }
 
@@ -443,14 +460,22 @@ impl Sympathetic {
         }
     }
 
-    /// Lifts or lowers each damper as the pedal and the keys now stand.
-    fn update(&mut self, pedal: bool, amount: f32) {
+    /// Lifts or lowers each damper as the pedals and the keys now stand. `damping` is how much
+    /// of its grip the sustain pedal leaves a damper, as `Performance::damping` has it.
+    fn update(&mut self, damping: f32, amount: f32) {
         let mut any = false;
         for (key, string) in self.strings.iter_mut().enumerate() {
             let has_damper = key + usize::from(LOWEST_KEY) <= usize::from(HIGHEST_DAMPER);
-            let free = pedal || self.down[key] || !has_damper;
+            let clear = self.down[key] || self.caught[key] || !has_damper;
+            // A damper that only brushes the string takes that share of what one resting on
+            // it would, each time round.
+            string.keeps = if clear {
+                string.ring
+            } else {
+                string.ring * DAMPED_KEEPS.powf(damping)
+            };
             // A key that is itself sounding is its own strings, already there.
-            string.open = amount > 0.0 && free && self.busy[key] == 0;
+            string.open = amount > 0.0 && (clear || damping < 1.0) && self.busy[key] == 0;
             any |= string.open || string.moving;
         }
         self.any = any;
@@ -484,8 +509,11 @@ impl Sympathetic {
                 let older = (newer + string.size - 1) % string.size;
                 let back = line[newer] + part * (line[older] - line[newer]);
                 string.low += (1.0 - FREE_POLE) * (back - string.low);
-                // A damped string keeps a fifth of itself each time round: gone in a moment.
-                let kept = if string.open { string.ring } else { 0.2 };
+                let kept = if string.open {
+                    string.keeps
+                } else {
+                    DAMPED_KEEPS
+                };
                 let fed = if string.open { coupling * heard } else { 0.0 };
                 line[string.cursor] = kept * string.low + fed;
                 string.cursor = (string.cursor + 1) % string.size;
@@ -700,7 +728,9 @@ impl Struck {
         self.stretch = stretch;
     }
 
-    fn stringing(&self, fundamental: f32, uneven: f32) -> Stringing {
+    /// The unison of the note at `fundamental`. `shifted` is the soft pedal: the hammer misses
+    /// one string of three, which rings only by what the bridge passes it.
+    fn stringing(&self, fundamental: f32, uneven: f32, shifted: bool) -> Stringing {
         let detune = f64::from(self.settings.detune);
         let uneven = UNEVEN * f64::from(uneven);
         // A tuner leaves a treble unison beating no faster than it would lower down.
@@ -721,6 +751,14 @@ impl Struck {
         if !self.is_piano() {
             return if fundamental < 110.0 { pair } else { triple };
         }
+        let triple = if shifted {
+            Stringing {
+                shares: [1.0 + uneven, 1.0, 0.0],
+                ..triple
+            }
+        } else {
+            triple
+        };
         if fundamental < 65.0 {
             // One wound string, and the plane it does not mostly move in.
             let [weight, share, offset] = POLARISATION;
@@ -742,7 +780,7 @@ impl Struck {
         if self.is_piano() && fundamental < 65.0 {
             1.0
         } else {
-            self.stringing(fundamental, 1.0).strings as f32
+            self.stringing(fundamental, 1.0, false).strings as f32
         }
     }
 
@@ -825,9 +863,9 @@ impl Struck {
         let (key, fundamental, stiffness) =
             (f32::from(voice.key), voice.fundamental, voice.stiffness);
         let (partials, contact, damped) = (voice.partials, voice.contact, voice.damped);
-        let stringing = self.stringing(fundamental, voice.uneven);
+        let stringing = self.stringing(fundamental, voice.uneven, voice.shifted);
         let strings = stringing.strings;
-        let damper = if damped { self.damper(key) } else { 0.0 };
+        let damper = self.damper(key) * damped;
         let drive = DRIVE / rate;
         for n in 0..partials {
             let order = (n + 1) as f32;
@@ -891,27 +929,40 @@ impl Struck {
         self.performance.bend * 100.0
     }
 
-    fn lower_damper(&mut self, index: usize) {
+    /// How much of its damper `index` should have on its strings, as the keys and pedals stand.
+    fn damper_target(&self, index: usize) -> f32 {
+        let Some(voice) = self.voices.get(index) else {
+            return 0.0;
+        };
+        if voice.held {
+            return 0.0;
+        }
+        if !self.is_piano() {
+            return 1.0;
+        }
+        let caught = Sympathetic::key(voice.key).is_some_and(|key| self.sympathetic.caught[key]);
+        if voice.key > HIGHEST_DAMPER || caught {
+            0.0
+        } else {
+            self.performance.damping()
+        }
+    }
+
+    /// Lowers or lifts the damper of `index` to where the keys and pedals now put it.
+    fn settle_damper(&mut self, index: usize) {
+        let target = self.damper_target(index);
         let Some(voice) = self.voices.get(index) else {
             return;
         };
-        if voice.damped || (self.is_piano() && voice.key > HIGHEST_DAMPER) {
-            return;
+        let has_damper = !(self.is_piano() && voice.key > HIGHEST_DAMPER);
+        let (change, key) = (target - voice.damped, f32::from(voice.key));
+        let (damper, rate) = (self.damper(key), self.rate);
+        let voice = &mut self.voices[index];
+        voice.deferred = !voice.held && has_damper && target < 0.5;
+        if change.abs() > 1.0e-6 {
+            voice.damped = target;
+            voice.damp(damper * change, rate);
         }
-        let (damper, rate) = (self.damper(f32::from(voice.key)), self.rate);
-        let voice = &mut self.voices[index];
-        voice.damped = true;
-        voice.damp(damper, rate);
-    }
-
-    fn lift_damper(&mut self, index: usize) {
-        let Some(voice) = self.voices.get(index).filter(|voice| voice.damped) else {
-            return;
-        };
-        let (damper, rate) = (self.damper(f32::from(voice.key)), self.rate);
-        let voice = &mut self.voices[index];
-        voice.damped = false;
-        voice.damp(-damper, rate);
     }
 
     fn free_amount(&self) -> f32 {
@@ -925,7 +976,7 @@ impl Struck {
     fn update_sympathetic(&mut self) {
         if self.is_piano() {
             self.sympathetic
-                .update(self.performance.pedal, self.free_amount());
+                .update(self.performance.damping(), self.free_amount());
         }
     }
 
@@ -979,7 +1030,7 @@ impl Engine for Struck {
             voice.sounding = false;
             voice.held = false;
             voice.deferred = false;
-            voice.damped = false;
+            voice.damped = 0.0;
             voice.declick = Declick::default();
             voice.mute.open();
             voice.last = 0.0;
@@ -1042,8 +1093,16 @@ impl Engine for Struck {
         let string = super::nearest_key(note.pitch);
         let fundamental = hertz(key + self.stretch[usize::from(string)] / 100.0);
         let stiffness = self.inharmonicity(key);
-        let strings = self.stringing(fundamental, 1.0).strings;
+        let strings = self.stringing(fundamental, 1.0, false).strings;
         let struck = self.struck_strings(fundamental);
+        // The soft pedal shifts a grand's action sideways: the hammer meets two strings of a
+        // three-string unison, and meets them with felt the strings have not compacted.
+        let shifted = self.is_piano() && self.performance.soft;
+        let met = if shifted && strings == 3 {
+            struck - 1.0
+        } else {
+            struck
+        };
         let budget = match quality {
             Quality::Draft => 64,
             Quality::Standard => 192,
@@ -1077,8 +1136,9 @@ impl Engine for Struck {
         } else {
             (0.0, 0.0)
         };
-        let felt =
-            10.0_f32.powf(2.0 * (settings.hardness - 0.5) + voiced) * FELT_PIVOT.powf(-shape);
+        let felt = 10.0_f32.powf(2.0 * (settings.hardness - 0.5) + voiced)
+            * FELT_PIVOT.powf(-shape)
+            * if shifted { SHIFTED_FELT } else { 1.0 };
         // A felt hammer's blow grows a little faster than its speed, and a key's velocity
         // is asked for nearly the square of the speed: together they are the range of touch
         // a piano has, twice as wide in decibels as an instrument that is simply louder.
@@ -1087,7 +1147,7 @@ impl Engine for Struck {
         } else {
             FULL_SPEED * note.velocity
         };
-        let impedance = self.impedance(key) * struck;
+        let impedance = self.impedance(key) * met;
         // A dulcimer player strikes the courses the box favours a little more lightly. A
         // piano's keys are evened out by whoever regulates it, and by its soundboard.
         // Below its lowest course, G2, a dulcimer has no strings: a note written there is
@@ -1128,7 +1188,8 @@ impl Engine for Struck {
         voice.pan_now = note.pan * self.performance.width;
         voice.held = true;
         voice.deferred = false;
-        voice.damped = false;
+        voice.damped = 0.0;
+        voice.shifted = shifted;
         voice.sounding = true;
         voice.moving = 0.0;
         voice.loudest = 0.0;
@@ -1139,7 +1200,7 @@ impl Engine for Struck {
             Blow {
                 speed,
                 mass: across_keys(grand::MASS, key) * struck,
-                stiffness: across_keys(grand::STIFFNESS, key) * struck * felt,
+                stiffness: across_keys(grand::STIFFNESS, key) * met * felt,
                 exponent: across_keys(grand::EXPONENT, key)
                     + 0.4 * (settings.hardness - 0.5)
                     + shape,
@@ -1192,7 +1253,6 @@ impl Engine for Struck {
     }
 
     fn stop(&mut self, index: usize) {
-        let pedal = self.performance.pedal && self.is_piano();
         let Some(voice) = self.voices.get_mut(index) else {
             return;
         };
@@ -1200,11 +1260,7 @@ impl Engine for Struck {
             return;
         }
         voice.held = false;
-        if pedal {
-            voice.deferred = true;
-        } else {
-            self.lower_damper(index);
-        }
+        self.settle_damper(index);
         self.update_sympathetic();
     }
 
@@ -1231,7 +1287,19 @@ impl Engine for Struck {
 
     fn perform(&mut self, performance: &Performance) {
         let bent = performance.bend != self.performance.bend;
-        let pedalled = performance.pedal != self.performance.pedal;
+        let pedalled = performance.lift() != self.performance.lift()
+            || performance.sostenuto != self.performance.sostenuto;
+        if performance.sostenuto && !self.performance.sostenuto {
+            // The sostenuto rod catches every damper that is up as it goes down: the keys held,
+            // and every one the sustain pedal is holding off.
+            let all = self.performance.lift() >= 0.5;
+            let sympathetic = &mut self.sympathetic;
+            for (caught, down) in sympathetic.caught.iter_mut().zip(sympathetic.down) {
+                *caught = all || down;
+            }
+        } else if !performance.sostenuto {
+            self.sympathetic.caught = [false; KEYS];
+        }
         self.performance = *performance;
         if bent {
             let (cents, rate) = (self.bend_cents(), self.rate);
@@ -1240,18 +1308,11 @@ impl Engine for Struck {
             }
         }
         if pedalled && self.is_piano() {
+            // The pedal lifts every damper, and catches a note already fading.
             for index in 0..self.voices.len() {
                 let voice = &self.voices[index];
-                if !voice.sounding {
-                    continue;
-                }
-                if !performance.pedal && voice.deferred {
-                    self.voices[index].deferred = false;
-                    self.lower_damper(index);
-                } else if performance.pedal && !voice.held && voice.damped {
-                    // The pedal lifts every damper, and catches a note already fading.
-                    self.lift_damper(index);
-                    self.voices[index].deferred = true;
+                if voice.sounding && !voice.held {
+                    self.settle_damper(index);
                 }
             }
             self.update_sympathetic();
