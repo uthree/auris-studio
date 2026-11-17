@@ -1793,3 +1793,90 @@ fn a_vibraphone_pedal_half_down_lets_the_felt_brush_the_bars() {
         "a quarter of a second after release, up {up} dB, half {half} dB, down {down} dB"
     );
 }
+
+#[test]
+fn a_palm_at_the_bridge_shortens_a_held_note_and_takes_its_top_first() {
+    // An open low string, held throughout: only the palm (controller 75 below its middle)
+    // shortens it.
+    let pluck = |model: Model, key: u8, decay: f32| {
+        let mut guitar = rig(model, 48_000.0);
+        let audio = guitar.render(24_000, &[controller(0, 75, decay), on(key, 0.8)]);
+        let (early, late) = (&audio[..4_800], &audio[14_400..19_200]);
+        // The fundamental's own fall, beneath what little the body and the attack leave.
+        let fall = 20.0 * (partial(early, hz(key), 1.0) / partial(late, hz(key), 1.0)).log10();
+        // The tone after the pick's click, which the palm does not touch.
+        let after = &audio[1_200..6_000];
+        let upper: f64 = (6..=10)
+            .map(|n| partial(after, hz(key), f64::from(n)))
+            .sum();
+        let bright = 20.0 * (upper / partial(after, hz(key), 1.0)).log10();
+        (fall, bright)
+    };
+    for (model, key, least) in [
+        (Model::Guitar, 40, 60.0),
+        (Model::ElectricGuitar, 40, 60.0),
+        (Model::Bass, 28, 25.0),
+    ] {
+        let (open, open_bright) = pluck(model, key, 0.5);
+        let (half, _) = pluck(model, key, 0.25);
+        let (muted, muted_bright) = pluck(model, key, 0.0);
+        assert!(open < 15.0, "{model:?} rang only {open} dB down");
+        assert!(muted > least, "{model:?} under the palm fell {muted} dB");
+        assert!(
+            open + 5.0 < half && half + 5.0 < muted,
+            "{model:?}: {half} dB half muted"
+        );
+        assert!(
+            muted_bright < open_bright - 10.0,
+            "{model:?}: top {open_bright} dB, under the palm {muted_bright} dB"
+        );
+        // Above the middle the controller leaves the string as it is.
+        assert!((pluck(model, key, 1.0).0 - open).abs() < 0.1);
+    }
+}
+
+#[test]
+fn a_palm_laid_on_a_ringing_string_stops_it_and_lifted_lets_the_next_ring() {
+    let mut guitar = rig(Model::Guitar, 48_000.0);
+    let e3 = hz(52);
+    guitar.render(9_600, &[on(52, 0.8)]);
+    let ringing = guitar.render(4_800, &[]);
+    let laid = guitar.render(19_200, &[controller(0, 75, 0.0)]);
+    let fall = 20.0 * (partial(&ringing, e3, 1.0) / partial(&laid[14_400..], e3, 1.0)).log10();
+    assert!(fall > 40.0, "the palm took {fall} dB off");
+    guitar.render(48_000, &[controller(0, 75, 0.5), off(0, 52)]);
+    let next = guitar.render(19_200, &[on(52, 0.8)]);
+    let rings =
+        20.0 * (partial(&next[..4_800], e3, 1.0) / partial(&next[14_400..], e3, 1.0)).log10();
+    assert!(rings < 15.0, "lifted, the next note fell {rings} dB");
+}
+
+#[test]
+fn letting_a_fretted_note_go_mutes_it_from_the_top_down() {
+    // The fretting finger eases off and lies on the string: a released note stops within its
+    // release time, and its upper partials go before its fundamental.
+    let mut guitar = rig(Model::Guitar, 48_000.0);
+    let e3 = hz(52);
+    let held = guitar.render(24_000, &[on(52, 0.8)]);
+    guitar.instrument.reset();
+    let let_go = guitar.render(24_000, &[on(52, 0.8), off(4_800, 52)]);
+    let fall = |audio: &[f32], n: f64| {
+        20.0 * (partial(&audio[..4_800], e3, n) / partial(&audio[9_600..14_400], e3, n)).log10()
+    };
+    assert!(
+        fall(&held, 1.0) < 10.0,
+        "held, it fell {} dB",
+        fall(&held, 1.0)
+    );
+    assert!(
+        fall(&let_go, 1.0) > 40.0,
+        "let go, it fell {} dB",
+        fall(&let_go, 1.0)
+    );
+    assert!(
+        fall(&let_go, 6.0) > fall(&let_go, 1.0) + 5.0,
+        "the sixth partial fell {} dB, the fundamental {} dB",
+        fall(&let_go, 6.0),
+        fall(&let_go, 1.0)
+    );
+}

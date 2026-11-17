@@ -105,6 +105,11 @@ note without stopping it. CC66 is the piano's sostenuto, holding up only the dam
 as it went down. CC67 is its soft pedal: a note struck with it down meets two strings of three,
 with softer felt, and comes out quieter and darker. CC68 is the legato footswitch: on the
 strings, reeds and whistles it slurs as the **Legato** control does, for as long as it is down.
+CC75, the General MIDI 2 decay-time controller, rests at its middle; below it the guitars and
+the bass hear a palm laid on the strings at the bridge. It shortens notes that are held, the
+upper partials first, so at the bottom a note is its pick's click and a short, dark thump. It
+reaches notes already sounding, and the open strings too. Above the middle it does nothing.
+Letting a key go is the fretting hand easing off: the note stops within **Release**.
 Pitch bend reaches sounding notes, up to two octaves either way. On the piano **Release** is
 the damper: the time it takes to remove 80 dB, longer in the bass, and the keys above F6 have
 none.

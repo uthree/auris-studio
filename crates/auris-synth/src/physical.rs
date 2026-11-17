@@ -372,6 +372,10 @@ pub(crate) struct Performance {
     /// Controller 68: the legato footswitch. While it is down, a note played before the last
     /// is let go moves the sounding string or air column to it instead of starting another.
     pub legato: bool,
+    /// Controller 75, the decay time of the General MIDI 2 sound controllers: resting at the
+    /// middle, and shorter below it. A plucked string hears it as a palm laid on the strings at
+    /// the bridge, which is how a guitarist shortens a note while it is held.
+    pub decay: f32,
     /// The stereo width control.
     pub width: f32,
 }
@@ -400,6 +404,12 @@ impl Performance {
         let resting = 1.0 - self.lift();
         resting * resting
     }
+
+    /// How hard a palm is laid on the strings: none with controller 75 at or above its middle,
+    /// all the way at the bottom of it.
+    pub fn palm(&self) -> f32 {
+        ((0.5 - self.decay) * 2.0).clamp(0.0, 1.0)
+    }
 }
 
 impl Default for Performance {
@@ -412,6 +422,7 @@ impl Default for Performance {
             sostenuto: false,
             soft: false,
             legato: false,
+            decay: 0.5,
             width: 1.0,
         }
     }
@@ -983,6 +994,7 @@ impl SegmentRenderer for Physical {
                     }
                     64 => self.performance.pedal = value,
                     66 => self.performance.sostenuto = value >= 0.5,
+                    75 => self.performance.decay = value,
                     67 => self.performance.soft = value >= 0.5,
                     68 => {
                         let legato = value >= 0.5;
