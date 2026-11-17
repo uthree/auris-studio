@@ -938,7 +938,8 @@ impl Struck {
             return 0.0;
         }
         if !self.is_piano() {
-            return 1.0;
+            // A cimbalom's damper pedal: down, its dampers stay off every course.
+            return self.performance.damping();
         }
         let caught = Sympathetic::key(voice.key).is_some_and(|key| self.sympathetic.caught[key]);
         if voice.key > HIGHEST_DAMPER || caught {
@@ -1136,7 +1137,8 @@ impl Engine for Struck {
         } else {
             (0.0, 0.0)
         };
-        let felt = 10.0_f32.powf(2.0 * (settings.hardness - 0.5) + voiced)
+        let hardness = self.performance.hardness(settings.hardness);
+        let felt = 10.0_f32.powf(2.0 * (hardness - 0.5) + voiced)
             * FELT_PIVOT.powf(-shape)
             * if shifted { SHIFTED_FELT } else { 1.0 };
         // A felt hammer's blow grows a little faster than its speed, and a key's velocity
@@ -1201,9 +1203,7 @@ impl Engine for Struck {
                 speed,
                 mass: across_keys(grand::MASS, key) * struck,
                 stiffness: across_keys(grand::STIFFNESS, key) * met * felt,
-                exponent: across_keys(grand::EXPONENT, key)
-                    + 0.4 * (settings.hardness - 0.5)
-                    + shape,
+                exponent: across_keys(grand::EXPONENT, key) + 0.4 * (hardness - 0.5) + shape,
                 loss: dial(dials::FELT_LOSS, 0.1),
                 impedance,
                 period: 1.0 / fundamental,
@@ -1307,7 +1307,7 @@ impl Engine for Struck {
                 voice.retune(cents, rate);
             }
         }
-        if pedalled && self.is_piano() {
+        if pedalled {
             // The pedal lifts every damper, and catches a note already fading.
             for index in 0..self.voices.len() {
                 let voice = &self.voices[index];

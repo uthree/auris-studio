@@ -384,6 +384,10 @@ pub(crate) struct Performance {
     pub portamento: bool,
     /// Controller 5: the portamento time, from nothing to all the way up.
     pub portamento_time: f32,
+    /// Controller 2, the breath controller: how hard a wind player blows, under the expression
+    /// pedal. It rests all the way up, so a part that never sends it is blown as the expression
+    /// says; a wind controller sends it, and with no breath a pipe is silent.
+    pub breath: f32,
     /// The stereo width control.
     pub width: f32,
 }
@@ -393,6 +397,8 @@ pub(crate) struct Performance {
 const DAMPERS_LEAVE: f32 = 0.25;
 /// Pedal travel at which the dampers are clear of the strings.
 const DAMPERS_CLEAR: f32 = 0.75;
+/// The breath controller's travel below which a pipe no longer speaks.
+const BREATH_SPEAKS: f32 = 0.1;
 /// The quickest and slowest portamento, as the time constant of a slide, in seconds.
 const PORTAMENTO_FASTEST: f32 = 0.02;
 const PORTAMENTO_SLOWEST: f32 = 1.5;
@@ -440,6 +446,19 @@ impl Performance {
         })
     }
 
+    /// How much of a pipe's threshold the breath controller still reaches: all of it above the
+    /// bottom tenth of its travel, where the breath gives out and the pipe stops speaking.
+    pub fn speaking(&self) -> f32 {
+        (self.breath / BREATH_SPEAKS).clamp(0.0, 1.0)
+    }
+
+    /// How hard the next blow, strike or pluck is: the instrument's own `control`, moved by
+    /// controller 74 — a harder mallet, hammer or pick above its middle, a softer one below,
+    /// as far as half the control's range either way.
+    pub fn hardness(&self, control: f32) -> f32 {
+        (control + self.brightness.clamp(0.0, 1.0) - 0.5).clamp(0.0, 1.0)
+    }
+
     /// How hard a palm is laid on the strings: none with controller 75 at or above its middle,
     /// all the way at the bottom of it.
     pub fn palm(&self) -> f32 {
@@ -461,6 +480,7 @@ impl Default for Performance {
             brightness: 0.5,
             portamento: false,
             portamento_time: 0.0,
+            breath: 1.0,
             width: 1.0,
         }
     }
@@ -1036,6 +1056,7 @@ impl SegmentRenderer for Physical {
                     74 => self.performance.brightness = value,
                     65 => self.performance.portamento = value >= 0.5,
                     5 => self.performance.portamento_time = value,
+                    2 => self.performance.breath = value,
                     67 => self.performance.soft = value >= 0.5,
                     68 => {
                         let legato = value >= 0.5;

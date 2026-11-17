@@ -311,7 +311,7 @@ impl Bars {
             return 1.0;
         }
         // A disc across the mouth shuts the tube off; turning, it opens and shuts.
-        let open = 1.0 - self.settings.tremolo * (0.5 - 0.5 * (TAU * self.motor).cos());
+        let open = 1.0 - self.motor_depth() * (0.5 - 0.5 * (TAU * self.motor).cos());
         1.0 + 2.5 * self.settings.tubes * open
     }
 
@@ -337,6 +337,14 @@ impl Bars {
             nepers += voice.damped * decay_rate(settings.release);
             voice.nepers[mode] = nepers;
         }
+    }
+
+    /// How far the motor's discs shut the tubes: the Tremolo control, or the modulation wheel
+    /// where that is further up — the wheel is the motor, as it is a vibrato elsewhere.
+    fn motor_depth(&self) -> f32 {
+        self.settings
+            .tremolo
+            .max(self.performance.modulation.clamp(0.0, 1.0))
     }
 
     /// Lowers or lifts the damper bar on `index` to where its key and the pedal now put it.
@@ -423,7 +431,7 @@ impl Engine for Bars {
         // A small bar throws the mallet back sooner, and no mallet a player would choose stays
         // on a bar for longer than it takes the bar to swing back.
         let seconds = (0.002_5
-            * 0.06_f32.powf(settings.hardness)
+            * 0.06_f32.powf(self.performance.hardness(settings.hardness))
             * note.velocity.max(0.05).powf(-0.2)
             * (REFERENCE_HZ / fundamental).clamp(0.1, 8.0).powf(0.6))
         .min(0.45 / fundamental);
@@ -536,7 +544,7 @@ impl Engine for Bars {
         if tick {
             self.motor =
                 (self.motor + self.settings.tremolo_rate * TICK as f32 / self.rate).fract();
-            let turning = self.settings.tremolo > 0.0;
+            let turning = self.motor_depth() > 0.0;
             for index in 0..self.voices.len() {
                 if !self.voices[index].sounding {
                     continue;

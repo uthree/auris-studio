@@ -298,7 +298,10 @@ impl Flutes {
         let fundamental = hertz(voice.pitch + cents / 100.0).clamp(LOWEST_HZ, internal * 0.2);
         let corner = (4_500.0 * (fundamental / 600.0).powf(0.3)).max(2.5 * fundamental);
         let pole = lowpass_pole(corner, internal);
-        let breath = settings.pressure * (0.1 + 0.9 * voice.velocity) * (0.25 + 0.75 * expression);
+        let breath = settings.pressure
+            * (0.1 + 0.9 * voice.velocity)
+            * (0.25 + 0.75 * expression)
+            * performance.breath.clamp(0.0, 1.0);
         let time = if voice.held {
             settings.attack
         } else {
@@ -322,7 +325,7 @@ impl Flutes {
             breath: if voice.held { breath } else { 0.0 },
             ramp: 1.0 - (-1.0 / (time.max(0.001) * internal)).exp(),
             offset,
-            gain: threshold * (1.05 + 0.25 * breath * breath) * chiff,
+            gain: threshold * (1.05 + 0.25 * breath * breath) * chiff * performance.speaking(),
             // No jet is perfectly smooth, and it is the roughness that starts a pipe sounding.
             // Smoothing takes most of white noise away, and the gain here puts back what is
             // left of it at the level the control names.

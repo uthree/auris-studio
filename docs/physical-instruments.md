@@ -116,6 +116,15 @@ ponticello, glassy). Below it the bow goes out over the end of the fingerboard, 
 far, with a lighter stroke (sul tasto, veiled). CC65 turns portamento on for the strings, reeds
 and whistles: a slurred note slides to the next instead of moving the finger at once, taking the
 time CC5 gives, from a fiftieth of a second to a second and a half. Pitch bend is not slowed.
+On everything struck or plucked (the pianos, guitars, bass, mallets and bells), CC74 is how hard
+the next hammer, pick, mallet or beater is: harder above its middle and softer below it, by up
+to half of the instrument's own hardness control. A soft mallet high on a xylophone is already
+off the bar as fast as the bar throws it back, so there it can only go harder. CC2, the breath
+controller, blows the reeds and whistles beneath the expression pedal. It rests all the way up;
+a wind controller sends it, and in the bottom tenth of its travel the pipe stops speaking. On the
+vibraphone the modulation wheel turns the motor, wherever it is further up than **Tremolo**.
+CC64 is also the damper pedal of the tubular chimes and of the hammered strings, like a
+cimbalom's.
 Pitch bend reaches sounding notes, up to two octaves either way. On the piano **Release** is
 the damper: the time it takes to remove 80 dB, longer in the bass, and the keys above F6 have
 none.

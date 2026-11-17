@@ -616,7 +616,7 @@ impl Engine for Plucked {
             None => (settings.position * fret * wobble).clamp(0.02, 0.5),
         };
         let pickup = (settings.pickup_position * fret).clamp(0.02, 0.9);
-        let hardness = settings.hardness * (0.55 + 0.45 * note.velocity);
+        let hardness = self.performance.hardness(settings.hardness) * (0.55 + 0.45 * note.velocity);
         let corner = 500.0 * 24.0_f32.powf(hardness);
         let budget = match quality {
             Quality::Draft => 40,

@@ -313,7 +313,10 @@ impl Reeds {
         // third harmonic, or the top of the instrument would not speak at all.
         let corner = 2_400.0_f32.max(3.2 * fundamental);
         let pole = lowpass_pole(corner, internal);
-        let breath = settings.pressure * (0.15 + 0.85 * voice.velocity) * (0.4 + 0.6 * expression);
+        let breath = settings.pressure
+            * (0.15 + 0.85 * voice.velocity)
+            * (0.4 + 0.6 * expression)
+            * performance.breath.clamp(0.0, 1.0);
         let time = if voice.held {
             settings.attack
         } else {
@@ -346,7 +349,13 @@ impl Reeds {
             voice.mouth = TONGUED * threshold;
         }
         voice.wind = Wind {
-            mouth: if voice.held { threshold + over } else { 0.0 },
+            // The breath controller blows over the threshold, as the pedal does, until at the
+            // bottom of its travel there is no breath left to reach it.
+            mouth: if voice.held {
+                (threshold + over) * performance.speaking()
+            } else {
+                0.0
+            },
             ramp: 1.0 - (-1.0 / (time.max(0.001) * internal)).exp(),
             embouchure,
             noise: settings.noise * 0.5,

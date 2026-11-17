@@ -192,7 +192,9 @@ struct Voice {
     contact: f32,
     sounding: bool,
     held: bool,
-    damped: bool,
+    /// How much of a hand or a damper is on the bell, from none (0) to all of it (1). Tubular
+    /// chimes have a damper pedal, which leaves a released chime between the two.
+    damped: f32,
     touching: usize,
     /// How long the clapper stayed on the bell, in seconds, and how hard it came down.
     blow: (f32, f32),
@@ -255,10 +257,26 @@ impl Bells {
         for (slot, partial) in voice.nepers.iter_mut().zip(table) {
             let mut nepers = decay_rate(seconds * partial.2)
                 * (1.0 + 6.0 * settings.damping * partial.0 / highest);
-            if voice.damped {
-                nepers += decay_rate(settings.release);
-            }
+            nepers += voice.damped * decay_rate(settings.release);
             *slot = nepers;
+        }
+    }
+}
+
+impl Bells {
+    /// Lays the damper on a released bell, or lifts it, as the damper pedal now stands: the
+    /// pedal of a set of tubular chimes, which holds every damper off while it is down.
+    fn settle_damper(&mut self, index: usize) {
+        let damping = self.performance.damping();
+        let Some(voice) = self.voices.get_mut(index) else {
+            return;
+        };
+        let target = if voice.held { 0.0 } else { damping };
+        if (target - voice.damped).abs() > 1.0e-6 {
+            voice.damped = target;
+            self.set_rates(index);
+            let (cents, rate) = (self.performance.bend * 100.0, self.rate);
+            self.voices[index].retune(cents, rate);
         }
     }
 }
@@ -321,7 +339,7 @@ impl Engine for Bells {
         // A harder clapper and a harder blow both shorten the contact; a bigger bell holds
         // its clapper longer.
         let seconds = bell.contact()
-            * 6.0_f32.powf(0.5 - settings.hardness)
+            * 6.0_f32.powf(0.5 - self.performance.hardness(settings.hardness))
             * note.velocity.max(0.05).powf(-0.2)
             * (REFERENCE_HZ / strike).clamp(0.2, 5.0).sqrt();
         let amplitude = note.velocity;
@@ -351,7 +369,7 @@ impl Engine for Bells {
         voice.pan = note.pan;
         voice.pan_now = note.pan * width;
         voice.held = true;
-        voice.damped = false;
+        voice.damped = 0.0;
         voice.sounding = true;
         voice.touching = (seconds * rate) as usize;
         voice.blow = (seconds, amplitude);
@@ -413,10 +431,7 @@ impl Engine for Bells {
             return;
         }
         voice.held = false;
-        voice.damped = true;
-        self.set_rates(index);
-        let (cents, rate) = (self.performance.bend * 100.0, self.rate);
-        self.voices[index].retune(cents, rate);
+        self.settle_damper(index);
     }
 
     fn silence(&mut self, index: usize) {
@@ -429,7 +444,15 @@ impl Engine for Bells {
 
     fn perform(&mut self, performance: &Performance) {
         let bent = performance.bend != self.performance.bend;
+        let pedalled = performance.lift() != self.performance.lift();
         self.performance = *performance;
+        if pedalled {
+            for index in 0..self.voices.len() {
+                if self.voices[index].sounding && !self.voices[index].held {
+                    self.settle_damper(index);
+                }
+            }
+        }
         if bent {
             let (cents, rate) = (performance.bend * 100.0, self.rate);
             for voice in self.voices.iter_mut().filter(|voice| voice.sounding) {

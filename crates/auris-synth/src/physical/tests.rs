@@ -1955,3 +1955,117 @@ fn portamento_slides_a_slur_and_lets_the_finger_jump_without_it() {
         );
     }
 }
+
+#[test]
+fn the_breath_controller_blows_a_pipe_and_without_breath_it_is_silent() {
+    for model in [Model::Clarinet, Model::TinWhistle] {
+        let key = home(model);
+        let blown = |events: &[NoteEvent]| {
+            let mut wind = rig(model, 48_000.0);
+            let mut all = events.to_vec();
+            all.push(on(key, 0.7));
+            let audio = wind.render(48_000, &all);
+            level_db(&audio[24_000..])
+        };
+        let plain = blown(&[]);
+        assert!((blown(&[controller(0, 2, 1.0)]) - plain).abs() < 0.01);
+        let (half, none) = (
+            blown(&[controller(0, 2, 0.5)]),
+            blown(&[controller(0, 2, 0.0)]),
+        );
+        assert!(
+            half < plain - 2.0,
+            "{model:?} half a breath is {half} dB against {plain}"
+        );
+        assert!(
+            none < plain - 60.0,
+            "{model:?} with no breath sounded at {none} dB"
+        );
+    }
+}
+
+#[test]
+fn controller_74_is_a_harder_or_softer_mallet_hammer_or_pick() {
+    // How bright the first tenth of a second is: the level of its slope against its own, which
+    // reads the same for a bar's or a bell's partials as for a string's harmonics.
+    let centroid = |model: Model, key: u8, brightness: Option<f32>| {
+        let mut rig = rig(model, 48_000.0);
+        let mut events = vec![on(key, 0.7)];
+        if let Some(value) = brightness {
+            events.insert(0, controller(0, 74, value));
+        }
+        let audio = rig.render(4_800, &events);
+        let slope: Vec<f32> = audio.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        (f64::from(rms(&slope) / rms(&audio)), audio)
+    };
+    for (model, key) in [
+        (Model::Piano, 60),
+        (Model::HammeredDulcimer, 67),
+        (Model::Guitar, 52),
+        // Low enough that a soft mallet is not already held to the bar's swing.
+        (Model::Mallet, 48),
+        (Model::Bell, 72),
+    ] {
+        let (plain, plain_audio) = centroid(model, key, None);
+        assert!(
+            centroid(model, key, Some(0.5)).1 == plain_audio,
+            "{model:?} moved at the middle"
+        );
+        let (soft, _) = centroid(model, key, Some(0.0));
+        let (hard, _) = centroid(model, key, Some(1.0));
+        assert!(
+            soft < plain && plain < hard && hard > soft * 1.2,
+            "{model:?}: centroid soft {soft}, plain {plain}, hard {hard}"
+        );
+    }
+}
+
+#[test]
+fn the_modulation_wheel_turns_a_vibraphones_motor() {
+    let mut vibes = bare(Model::Mallet);
+    vibes.set_param_by_key("bar", 1.0);
+    vibes.set_param_by_key("body", 1.0);
+    vibes.set_param_by_key("tremolo", 0.0);
+    vibes.set_param_by_key("tremolo_rate", 5.0);
+    let mut rig = Rig::new(Box::new(vibes), 48_000.0, 256, 2);
+    let swing = |audio: &[f32]| {
+        let levels: Vec<f64> = audio[4_800..].chunks(960).map(level_db).collect();
+        levels
+            .windows(6)
+            .map(|w| (w[5] - w[0]).abs())
+            .fold(0.0_f64, f64::max)
+    };
+    let still = rig.render(48_000, &[on(60, 0.8)]);
+    rig.instrument.reset();
+    let turning = rig.render(48_000, &[controller(0, 1, 1.0), on(60, 0.8)]);
+    assert!(
+        swing(&still) < 1.5,
+        "the motor turned with the wheel down: {}",
+        swing(&still)
+    );
+    assert!(
+        swing(&turning) > 3.0,
+        "the wheel swings {} dB",
+        swing(&turning)
+    );
+}
+
+#[test]
+fn a_damper_pedal_lets_chimes_and_a_cimbalom_ring_after_release() {
+    for model in [Model::Bell, Model::HammeredDulcimer] {
+        let tail = |depth: f32| {
+            let mut rig = rig(model, 48_000.0);
+            rig.set_param("release", 0.3);
+            let audio = rig.render(
+                48_000,
+                &[controller(0, 64, depth), on(72, 0.8), off(4_800, 72)],
+            );
+            level_db(&audio[4_800..9_600]) - level_db(&audio[24_000..28_800])
+        };
+        let (up, half, down) = (tail(0.0), tail(0.5), tail(1.0));
+        assert!(
+            down + 5.0 < half && half + 5.0 < up,
+            "{model:?} after release: up {up} dB, half {half} dB, down {down} dB"
+        );
+    }
+}
