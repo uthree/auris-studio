@@ -84,14 +84,24 @@ impl Session {
             &OfflineOptions::whole_project(),
             &mut RenderProgress::default(),
         )?;
-        let loudness = analyze_loudness(self.gpu.as_deref(), &mix);
+        self.analysis_of(&mix, per_track)
+    }
+
+    /// [`Self::analyze`] of a mix already rendered: `mix` must be the document's own, as a
+    /// listener meets it, since the sections are sliced from it by the document's timeline.
+    pub(crate) fn analysis_of(
+        &mut self,
+        mix: &AudioBuffer,
+        per_track: bool,
+    ) -> Result<MixAnalysis, SessionError> {
+        let loudness = analyze_loudness(self.gpu.as_deref(), mix);
 
         let end = self.project.end_tick();
         let mut sections = Vec::new();
         for span in self.project.sections.spans_in(Ticks::ZERO, end) {
             let from = self.project.tempo_map.ticks_to_seconds(span.start).0;
             let to = self.project.tempo_map.ticks_to_seconds(span.end).0;
-            let slice = slice_seconds(&mix, from, to);
+            let slice = slice_seconds(mix, from, to);
             sections.push(SectionLoudness {
                 label: span.label.clone(),
                 instance: span.instance,
@@ -123,7 +133,7 @@ impl Session {
 
         Ok(MixAnalysis {
             seconds: mix.duration_seconds(),
-            lufs: integrated_lufs(&mix),
+            lufs: integrated_lufs(mix),
             peak_db: loudness.peak_db(),
             true_peak_db: loudness.true_peak_db(),
             sections,

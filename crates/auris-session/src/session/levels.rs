@@ -20,8 +20,11 @@
 //! normalisation and nothing more.
 //! That is the honest limit of it, and it is a limit about knowledge rather than about arithmetic.
 
+use auris_core::param::db_to_gain;
+use auris_core::plugin::{PrepareContext, ProcessContext};
+use auris_core::project::{EffectSlot, Tap};
 use auris_core::registry::PluginRegistry;
-use auris_core::{EffectSlotId, Project, TrackId};
+use auris_core::{AudioBuffer, EffectSlotId, Project, TrackId};
 use auris_dsp::integrated_lufs;
 use auris_engine::EngineCommand;
 use auris_engine::OfflineOptions;
@@ -277,6 +280,12 @@ impl Session {
     /// The target is approached without exceeding the measured true-peak ceiling or the
     /// faders' travel. Master gain and any authored automation remain untouched. Refuses
     /// automated source gain, which would make the common offset ineffective.
+    ///
+    /// One render where it can: the signal arriving at a master limiter, which the limiter is
+    /// then run over here for the mix before and, where everything after the source faders
+    /// scales with them, for the mix after. A master that does more after its effects than a
+    /// fixed gain, or a stage that answers a louder input with something other than a louder
+    /// output, puts back a render for each measurement it spoils.
     pub fn normalize_mix(
         &mut self,
         target_lufs: f32,
@@ -310,23 +319,48 @@ impl Session {
                 "a source gain is automated; clear its gain lane before normalizing".into(),
             ));
         }
-        let before = self.analyze(false)?;
+        // One render serves every measurement where it can: the signal arriving at the master
+        // limiter, the limiter then run over it here. Without that signal, each measurement is
+        // a render of its own.
+        let limiter = self.leaning_limiter();
+        let arriving = match &limiter {
+            Some(limiter) => self.limiter_input(limiter)?,
+            None => None,
+        };
+        let (before, dry_peak, plain) = match (&limiter, &arriving) {
+            (Some(limiter), Some(arriving)) => {
+                let mix = self.through_master_limiter(limiter.slot, arriving, 1.0)?;
+                let master = self.project.master.gain_db;
+                let dry = analyze_loudness(self.gpu.as_deref(), arriving).true_peak_db() + master;
+                (self.analysis_of(&mix, false)?, Some(dry), None)
+            }
+            (Some(limiter), None) => (
+                self.analyze(false)?,
+                Some(self.true_peak_without(limiter.slot)?),
+                None,
+            ),
+            (None, _) => {
+                let mix = self.render_job().render(
+                    &OfflineOptions::whole_project(),
+                    &mut auris_engine::RenderProgress::default(),
+                )?;
+                (self.analysis_of(&mix, false)?, None, Some(mix))
+            }
+        };
         let Some(lufs) = before.lufs else {
             return Err(SessionError::MixNormalization("the mix is silent".into()));
         };
         // With a limiter last on the master, the ceiling is the limiter's to keep and the peaks
-        // may be pushed into it by up to [`NORMALIZE_LIMITER_ALLOWANCE_DB`]; without one, the loudest moment as it
-        // stands is the whole limit.
-        let limiter = self.leaning_limiter();
-        let peak_room = match &limiter {
-            Some(limiter) => {
-                // The limiter takes off `pre + input + offset - (ceiling - master)` at the loudest
-                // moment, where `pre` is that moment measured with the limiter out at the master's
-                // own fader. Holding that to the allowance, the master gain cancels.
-                let dry = self.true_peak_without(limiter.slot)?;
+        // may be pushed into it by up to [`NORMALIZE_LIMITER_ALLOWANCE_DB`]; without one, the
+        // loudest moment as it stands is the whole limit.
+        let peak_room = match (&limiter, dry_peak) {
+            // The limiter takes off `pre + input + offset - (ceiling - master)` at the loudest
+            // moment, where `pre` is that moment measured with the limiter out at the master's
+            // own fader. Holding that to the allowance, the master gain cancels.
+            (Some(limiter), Some(dry)) => {
                 NORMALIZE_LIMITER_ALLOWANCE_DB + ceiling_db - limiter.input_db - dry
             }
-            None => ceiling_db - before.true_peak_db,
+            _ => ceiling_db - before.true_peak_db,
         };
         let desired = (target_lufs - lufs).min(peak_room);
         let lower = faders
@@ -346,7 +380,23 @@ impl Session {
         for (id, gain) in faders {
             self.set_param(ParamTarget::TrackGain(id), gain + offset_db);
         }
-        let after = match self.analyze(false) {
+        // Moving every source fader by one offset scales everything up to the first stage that
+        // is not proportional by the same factor. Where nothing before the limiter (or, without
+        // one, before the output) is such a stage, the new mix is the old signal scaled and run
+        // through the limiter's new ceiling, and needs no render of its own.
+        let linear = self.scales_with_a_common_fader_offset(limiter.as_ref().map(|l| l.slot));
+        let offset = db_to_gain(offset_db);
+        let measured = match (&limiter, &arriving, plain) {
+            (Some(limiter), Some(arriving), _) if linear => self
+                .through_master_limiter(limiter.slot, arriving, offset)
+                .and_then(|mix| self.analysis_of(&mix, false)),
+            (None, _, Some(mut mix)) if linear => {
+                mix.apply_gain(offset);
+                self.analysis_of(&mix, false)
+            }
+            _ => self.analyze(false),
+        };
+        let after = match measured {
             Ok(after) => after,
             Err(error) => {
                 self.revert_transaction();
@@ -362,6 +412,161 @@ impl Session {
             offset_db,
             limited: limiter.is_some(),
         })
+    }
+
+    /// What arrives at the master limiter, rendered once: the limiter left out and the master
+    /// fader at unity, so [`Self::through_master_limiter`] can make the mix from it.
+    ///
+    /// `None` where the master does more after its effects than a fixed gain (a pan off
+    /// centre, a mute, or an automated lane on the master or its effects), since that stage
+    /// would then have to be rebuilt here as well.
+    fn limiter_input(
+        &mut self,
+        limiter: &MasterLimiter,
+    ) -> Result<Option<AudioBuffer>, SessionError> {
+        let master = &self.project.master;
+        let master_automated = self.project.automation.lanes().iter().any(|lane| {
+            matches!(
+                lane.target,
+                ParamTarget::MasterGain
+                    | ParamTarget::MasterPan
+                    | ParamTarget::Effect { track: None, .. }
+            )
+        });
+        if master.pan != 0.0 || master.mute || master_automated || !master.gain_db.is_finite() {
+            return Ok(None);
+        }
+        let mut project = self.project.clone();
+        project.master.gain_db = 0.0;
+        if let Some(effect) = project
+            .master
+            .effects
+            .iter_mut()
+            .find(|s| s.id == limiter.slot)
+        {
+            effect.enabled = false;
+        }
+        let arriving = self.job_for(project).render(
+            &OfflineOptions::whole_project(),
+            &mut auris_engine::RenderProgress::default(),
+        )?;
+        Ok(Some(arriving))
+    }
+
+    /// The mix a listener hears, made from [`Self::limiter_input`]'s signal scaled by `gain`:
+    /// the master limiter as the document now sets it, run here, then the master fader.
+    ///
+    /// The engine holds the whole mix back by the limiter's look-ahead and drops that lead-in
+    /// from an export, so this does too: the signal runs on past its end by that many frames
+    /// of silence, and the same number come off the front.
+    fn through_master_limiter(
+        &self,
+        slot: EffectSlotId,
+        arriving: &AudioBuffer,
+        gain: f32,
+    ) -> Result<AudioBuffer, SessionError> {
+        let stored = self
+            .project
+            .master
+            .effects
+            .iter()
+            .find(|s| s.id == slot)
+            .ok_or_else(|| SessionError::MixNormalization("the master limiter is gone".into()))?;
+        let mut limiter = self
+            .registry
+            .create_effect(&stored.effect_id)
+            .map_err(|error| SessionError::MixNormalization(error.to_string()))?;
+        limiter.load_state(&stored.state);
+        let rate = arriving.sample_rate();
+        let channels = arriving.channel_count();
+        let block = self.engine.max_block().max(1);
+        limiter.prepare(&PrepareContext::new(rate, block, channels));
+        let latency = limiter.latency_frames();
+        let frames = arriving.frame_count();
+        let master = db_to_gain(self.project.master.gain_db);
+        let mut out = AudioBuffer::new(channels, frames, rate);
+        let (mut written, mut position) = (0usize, 0usize);
+        while written < frames {
+            let length = block.min(frames + latency - position);
+            let mut chunk_view = AudioBuffer::new(channels, length, rate);
+            for (into, from) in chunk_view
+                .channels_mut()
+                .iter_mut()
+                .zip(arriving.channels())
+            {
+                for (frame, sample) in into.iter_mut().enumerate() {
+                    *sample = from.get(position + frame).map_or(0.0, |value| value * gain);
+                }
+            }
+            let context = ProcessContext {
+                sample_rate: rate,
+                block_frames: length,
+                playhead_samples: position as u64,
+                bpm: 120.0,
+                is_playing: true,
+                is_offline: true,
+            };
+            limiter.process(&mut chunk_view, &context);
+            let skip = latency.saturating_sub(position).min(length);
+            let take = (length - skip).min(frames - written);
+            for (into, from) in out.channels_mut().iter_mut().zip(chunk_view.channels()) {
+                for (offset, value) in from[skip..skip + take].iter().enumerate() {
+                    into[written + offset] = value * master;
+                }
+            }
+            written += take;
+            position += length;
+        }
+        Ok(out)
+    }
+
+    /// Whether moving every source fader by one offset scales the signal by that offset all
+    /// the way to the master's `stop` slot (or to the output, with none).
+    ///
+    /// The inserts on a source track sit before its fader and do not matter. What does is
+    /// everything after it: an output tapped before the fader keeps its level, an effect keyed
+    /// from another track hears a key that changed, and a bus or master effect that is not one
+    /// of the proportional built-ins (an equaliser, a delay, a reverb, a chorus, a gain)
+    /// answers a louder input with something other than a louder output.
+    fn scales_with_a_common_fader_offset(&self, stop: Option<EffectSlotId>) -> bool {
+        const PROPORTIONAL: [&str; 5] = [
+            "auris.fx.eq",
+            "auris.fx.delay",
+            "auris.fx.reverb",
+            "auris.fx.chorus",
+            "auris.fx.gain",
+        ];
+        let proportional = |slot: &&EffectSlot| PROPORTIONAL.contains(&slot.effect_id.as_str());
+        let tracks = self.project.tracks.iter().all(|track| {
+            let keyed = track
+                .mixer
+                .effects
+                .iter()
+                .any(|slot| slot.sidechain.is_some());
+            let after_fader = if track.kind.is_bus() {
+                track
+                    .mixer
+                    .effects
+                    .iter()
+                    .filter(|s| s.enabled)
+                    .all(|s| proportional(&s))
+            } else {
+                track
+                    .outputs
+                    .iter()
+                    .all(|output| output.tap != Tap::PreFader)
+            };
+            !keyed && after_fader
+        });
+        let master = self
+            .project
+            .master
+            .effects
+            .iter()
+            .take_while(|slot| Some(slot.id) != stop)
+            .filter(|slot| slot.enabled)
+            .all(|s| proportional(&s));
+        tracks && master
     }
 
     /// The master limiter `normalize_mix` can lean on, if there is one it may set the ceiling of.
@@ -646,6 +851,88 @@ mod tests {
                 Some(&NEW_DOCUMENT_CEILING_DB)
             );
         }
+    }
+
+    /// The measurements `normalize_mix` makes from one render, held against renders of their own.
+    fn assert_measures_alike(
+        made: &super::super::MixAnalysis,
+        rendered: &super::super::MixAnalysis,
+    ) {
+        let lufs = |analysis: &super::super::MixAnalysis| analysis.lufs.expect("a mix that plays");
+        assert!(
+            (lufs(made) - lufs(rendered)).abs() < 0.01,
+            "{} LUFS made, {} rendered",
+            lufs(made),
+            lufs(rendered)
+        );
+        assert!(
+            (made.true_peak_db - rendered.true_peak_db).abs() < 0.01,
+            "{} dBTP made, {} rendered",
+            made.true_peak_db,
+            rendered.true_peak_db
+        );
+        assert!((made.peak_db - rendered.peak_db).abs() < 0.01);
+        assert_eq!(made.sections.len(), rendered.sections.len());
+    }
+
+    #[test]
+    fn one_render_through_the_limiter_measures_what_two_more_renders_would() {
+        let mut session = written_by_hand(false);
+        let limiter = session.leaning_limiter().map(|limiter| limiter.slot);
+        assert!(session.scales_with_a_common_fader_offset(limiter));
+        let rendered_before = session.analyze(false).unwrap();
+        let report = session.normalize_mix(TARGET_LUFS, -1.0).unwrap();
+        assert!(report.limited && report.offset_db.abs() > 1.0, "{report:?}");
+        assert_measures_alike(&report.before, &rendered_before);
+        assert_measures_alike(&report.after, &session.analyze(false).unwrap());
+    }
+
+    #[test]
+    fn without_a_limiter_the_lifted_mix_is_the_measured_one_scaled() {
+        let mut session = written_by_hand(true);
+        let rendered_before = session.analyze(false).unwrap();
+        let report = session.normalize_mix(-20.0, -1.0).unwrap();
+        assert!(
+            !report.limited && report.offset_db.abs() > 0.5,
+            "{report:?}"
+        );
+        assert_measures_alike(&report.before, &rendered_before);
+        assert_measures_alike(&report.after, &session.analyze(false).unwrap());
+    }
+
+    #[test]
+    fn a_stage_that_does_not_scale_with_the_faders_is_rendered_instead() {
+        let mut session = written_by_hand(false);
+        let limiter = session.leaning_limiter().map(|limiter| limiter.slot);
+        // A compressor ahead of the limiter answers a louder mix with less than a louder mix.
+        let compressor = session
+            .project
+            .add_effect(None, "auris.fx.compressor")
+            .unwrap();
+        let effects = &mut session.project.master.effects;
+        let slot = effects.pop().unwrap();
+        assert_eq!(slot.id, compressor);
+        effects.insert(0, slot);
+        assert!(!session.scales_with_a_common_fader_offset(limiter));
+        let report = session.normalize_mix(TARGET_LUFS, -1.0).unwrap();
+        assert_measures_alike(&report.after, &session.analyze(false).unwrap());
+
+        // So does an output taken before a source's fader.
+        let mut session = written_by_hand(false);
+        let bus = session.project.add_bus_track("Room");
+        let lead = session.project.tracks[0].id;
+        session
+            .project
+            .track_mut(lead)
+            .unwrap()
+            .outputs
+            .push(auris_core::project::Output {
+                to: auris_core::project::Destination::Bus(bus),
+                gain_db: -6.0,
+                tap: Tap::PreFader,
+            });
+        let limiter = session.leaning_limiter().map(|limiter| limiter.slot);
+        assert!(!session.scales_with_a_common_fader_offset(limiter));
     }
 
     #[test]

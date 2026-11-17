@@ -17,7 +17,7 @@ rig path, `inspect_audio` measures a short excerpt; `normalize_mix` measures the
 arrangement. Every live backend can export that unsaved snapshot.
 
 `normalize_mix` applies one shared offset to source faders, preserving their differences,
-then renders the full mix again. It does not change the master fader or authored notes. A
+and measures the full mix that results. It does not change the master fader or authored notes. A
 source gain automation lane must be cleared before using it. True-peak and fader limits may
 prevent the requested LUFS; the tool reports the measured result rather than claiming the
 target was met.
