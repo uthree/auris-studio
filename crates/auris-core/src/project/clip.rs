@@ -2930,10 +2930,12 @@ mod tests {
             TempoPoint {
                 tick: Ticks::ZERO,
                 bpm: 120.0,
+                ramp: false,
             },
             TempoPoint {
                 tick: bar,
                 bpm: 60.0,
+                ramp: false,
             },
         ])
         .expect("two points in order");

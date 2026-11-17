@@ -182,6 +182,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::SetStyle => Key::EditSetStyle,
         Edit::SetTuning => Key::EditSetTuning,
         Edit::RemoveTempoPoint => Key::EditRemoveTempoPoint,
+        Edit::SetTempoRamp => Key::EditSetTempoRamp,
         Edit::ChangeSignature(_) => Key::EditChangeSignature,
         Edit::SetSignaturePoint => Key::EditSetSignaturePoint,
         Edit::RemoveSignaturePoint => Key::EditRemoveSignaturePoint,

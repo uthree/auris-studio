@@ -633,6 +633,8 @@ pub enum MenuCommand {
     SetTempoAt(Ticks),
     /// Remove the tempo change in force at a position.
     RemoveTempoAt(Ticks),
+    /// Make the tempo change in force at a position glide to the next one, or hold.
+    ToggleTempoRampAt(Ticks),
     /// Turn the meter of the stretch a position falls in.
     SetSignature(Ticks, TimeSignature),
     /// Type a meter the list does not offer, for the stretch a position falls in.
@@ -1681,6 +1683,10 @@ impl AurisApp {
             MenuCommand::RemoveKeyAt(tick) => self.session.remove_key(tick),
             MenuCommand::SetTempoAt(tick) => self.prompt_for_tempo_from(tick),
             MenuCommand::RemoveTempoAt(tick) => self.session.remove_tempo_point(tick),
+            MenuCommand::ToggleTempoRampAt(tick) => {
+                let ramp = self.project().tempo_map.glides_from(tick);
+                self.session.set_tempo_ramp(tick, !ramp)
+            }
             MenuCommand::SetSignature(tick, signature) => {
                 self.session.set_signature_at(tick, signature)
             }

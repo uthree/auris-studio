@@ -320,7 +320,7 @@ impl Default for Project {
 impl Project {
     /// Schema version written into saved files and required when opening them.
     /// Version 39 adds the score-reading contour, voicing, articulation and harmonic pedal
-    /// transforms.
+    /// transforms, and tempo changes that glide to the next one.
     /// Version 38 adds the document's tuning; an older build would play a retuned song in
     /// equal temperament without a word.
     /// Version 37 moves comments pinned to an effect onto its strip, since effects are no longer
