@@ -614,6 +614,12 @@ fn core_error_text(error: &CoreError, language: Language) -> String {
                 "クリップ{clip}は1回あたり{notes_per_pass}ノートを{passes}回展開し、演奏ノートが{instances}個になる可能性があります。上限{limit}個を超えるため、ノート数または繰り返しを減らしてください"
             ),
         ),
+        CoreError::UnsupportedSampleRate { rate, min, max } => (
+            format!(
+                "the project's sample rate {rate} Hz is outside the supported {min}–{max} Hz range"
+            ),
+            format!("プロジェクトのサンプルレート{rate} Hzは、対応範囲（{min}〜{max} Hz）の外です"),
+        ),
     };
     translated(language, english, japanese)
 }
