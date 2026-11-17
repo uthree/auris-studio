@@ -159,3 +159,28 @@ fn a_picker_import_is_available_to_tracks_and_later_sessions() {
     drop(session);
     assert_eq!(with_library(&library).soundfonts().count(), 1);
 }
+
+#[test]
+fn opening_or_starting_a_document_with_library_fonts_builds_the_graph_once() {
+    // A second build straight after the first loads every hosted plugin again, because the first
+    // graph still holds the instances it was given.
+    let scratch = Scratch::new("shared-font-one-build");
+    let library = scratch.join("soundfonts.json");
+    let mut session = with_library(&library);
+    session
+        .import_soundfont(&scratch.soundfont("Piano.sf2"))
+        .unwrap();
+    session.add_default_instrument_track("Piano").unwrap();
+    session.save_as(&scratch.join("Song.auris")).unwrap();
+    let saved = session.path().unwrap().to_path_buf();
+
+    let before = session.graph_builds;
+    session.open(&saved).unwrap();
+    assert_eq!(session.soundfonts().count(), 1);
+    assert_eq!(session.graph_builds - before, 1, "open");
+
+    let before = session.graph_builds;
+    session.new_project();
+    assert_eq!(session.soundfonts().count(), 1);
+    assert_eq!(session.graph_builds - before, 1, "new project");
+}

@@ -392,8 +392,7 @@ impl Session {
             &mut project,
             super::levels::NEW_DOCUMENT_CEILING_DB,
         );
-        self.replace_project(project);
-        self.install_library_fonts();
+        self.replace_project_with_library(project);
         let drums: Vec<_> = self
             .project
             .tracks

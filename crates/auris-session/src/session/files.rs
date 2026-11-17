@@ -634,8 +634,7 @@ impl Session {
         // History is cleared, so nothing can bring the old document's audio back; keeping the
         // decoded buffers would hold them for the rest of the process.
         self.clear_sources();
-        self.replace_project(project);
-        self.install_library_fonts();
+        self.replace_project_with_library(project);
         self.mark_saved();
     }
 
@@ -701,8 +700,7 @@ impl Session {
         self.sound_scope = crate::transient_id::transient_id("session");
         self.path = None;
         self.clear_sources();
-        self.replace_project(result.project);
-        self.install_library_fonts();
+        self.replace_project_with_library(result.project);
         // Dirty from the first frame: nothing on disk holds this document, and the `.mid` it came
         // from cannot hold it either.
         self.dirty = true;
@@ -1626,6 +1624,10 @@ impl Session {
     ///
     /// Only files already available on disk are read here. A font acquired later arrives through
     /// [`Self::install_shipped_soundfont`].
+    ///
+    /// The graph is not rebuilt here: every caller rebuilds once afterwards, and a second rebuild
+    /// straight after the first loads each hosted plugin again, because the first graph still holds
+    /// the instances it was given — two Surge XTs added over half a second to opening a song.
     pub(super) fn install_library_fonts(&mut self) {
         let dirty = self.dirty;
         let mut installed_any = false;
@@ -1657,7 +1659,7 @@ impl Session {
         }
         self.dirty = dirty;
         if installed_any {
-            self.invalidate_graph();
+            self.sync_singer_clip_names();
         }
     }
 
