@@ -103,6 +103,10 @@ fn bypassed_effect_opens_from_inspector_and_mixer_without_changing_audio(cx: &mu
     let (app, cx, track, _) = with_a_clip(cx);
     let slot = app.update(cx, |this, _| {
         this.select_track(track);
+        // The performance section opens with every dial showing and reaches past the bottom of
+        // the test window, so the controls below it would be clicked off-screen.
+        this.inspector_collapsed[crate::ui::inspector::InspectorSection::Performance as usize] =
+            true;
         this.panels.show(crate::dock::Panel::Inspector);
         this.panels.show(crate::dock::Panel::Mixer);
         this.mixer_graph_visible = false;
