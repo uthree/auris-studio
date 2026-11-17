@@ -385,6 +385,13 @@ impl NoteEvent {
 /// an editor. An editor says [`ClipCurve::MODULATION`](crate::project::ClipCurve::MODULATION).
 pub const CC_MODULATION: u8 = 1;
 
+/// Controller 74: brightness, General MIDI 2's sound controller 5.
+///
+/// Rests at the middle, 0.5, where a sound plays as it was sampled; lower is darker. Named for
+/// the reason [`CC_MODULATION`] is: the SoundFont sampler answers it on its own account, with a
+/// filter of its own, since a font's modulators cannot follow a controller that moves.
+pub const CC_BRIGHTNESS: u8 = 74;
+
 /// The highest controller number MIDI has.
 pub const CONTROLLER_MAX: u8 = 127;
 
@@ -565,6 +572,17 @@ pub trait Instrument: Parameterized + Send {
     fn active_voices(&self) -> usize {
         0
     }
+
+    /// Whether every block must be processed on the same OS thread.
+    ///
+    /// An offline render spreads independent tracks over worker threads, so one track's blocks
+    /// may each run on a different thread, though never two at once. Code written for this
+    /// trait is fine with that; a hosted plugin is fine only if its format allows it, and a
+    /// format that has not been checked answers `true` and stays on the rendering caller's
+    /// thread.
+    fn bound_to_one_thread(&self) -> bool {
+        false
+    }
 }
 
 /// An audio processor placed in a track's or the master bus's effect chain.
@@ -582,6 +600,17 @@ pub trait Effect: Parameterized + Send {
 
     /// Transforms `buffer` in place.
     fn process(&mut self, buffer: &mut AudioBuffer, ctx: &ProcessContext);
+
+    /// Whether every block must be processed on the same OS thread.
+    ///
+    /// An offline render spreads independent tracks over worker threads, so one track's blocks
+    /// may each run on a different thread, though never two at once. Code written for this
+    /// trait is fine with that; a hosted plugin is fine only if its format allows it, and a
+    /// format that has not been checked answers `true` and stays on the rendering caller's
+    /// thread.
+    fn bound_to_one_thread(&self) -> bool {
+        false
+    }
 
     /// Whether this effect listens to a second input as well as the one it is placed in.
     ///

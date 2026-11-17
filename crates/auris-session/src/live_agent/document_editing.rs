@@ -199,6 +199,11 @@ pub enum TimelineOperation {
         at_tick: i64,
         /// Tempo within the native tempo-map bounds.
         bpm: f64,
+        /// true: glide from this tempo to the next tempo point, linearly over the ticks
+        /// between them — a ritardando or accelerando is two points, the first gliding.
+        /// false: hold until the next point. Omit to keep what an existing point does.
+        #[serde(default)]
+        ramp: Option<bool>,
     },
     /// Remove an explicit tempo point; the initial tempo is retained.
     RemoveTempo {
@@ -250,11 +255,11 @@ impl Session {
         };
         match operation {
             TimelineOperation::Read => {}
-            TimelineOperation::SetTempo { at_tick, bpm } => {
+            TimelineOperation::SetTempo { at_tick, bpm, ramp } => {
                 if !(TempoMap::MIN_BPM..=TempoMap::MAX_BPM).contains(&bpm) {
                     return Err("bpm outside native tempo-map limits".into());
                 }
-                self.set_tempo_point(valid_tick(at_tick)?, bpm);
+                self.set_tempo_point_gliding(valid_tick(at_tick)?, bpm, ramp);
             }
             TimelineOperation::RemoveTempo { at_tick } => {
                 self.remove_tempo_point(valid_tick(at_tick)?)
@@ -957,6 +962,7 @@ mod tests {
             .agent_edit_timeline(TimelineOperation::SetTempo {
                 at_tick: 997,
                 bpm: 351.0,
+                ramp: None,
             })
             .unwrap();
         assert_eq!(session.project().midi_clip(clip).unwrap().1.notes, notes);
@@ -971,5 +977,32 @@ mod tests {
                 .is_err()
         );
         assert_eq!(session.project(), &before);
+    }
+
+    #[test]
+    fn a_ritardando_is_two_tempo_points_the_first_gliding() {
+        let (mut session, _, _) = fixture();
+        session
+            .agent_edit_timeline(TimelineOperation::SetTempo {
+                at_tick: 3840 * 4,
+                bpm: 120.0,
+                ramp: Some(true),
+            })
+            .unwrap();
+        let read = session
+            .agent_edit_timeline(TimelineOperation::SetTempo {
+                at_tick: 3840 * 6,
+                bpm: 80.0,
+                ramp: None,
+            })
+            .unwrap();
+        let read: serde_json::Value = serde_json::from_str(&read).unwrap();
+        let points = read["tempo_map"]["points"].as_array().unwrap();
+        let gliding: Vec<_> = points.iter().filter(|p| p["ramp"] == true).collect();
+        assert_eq!(gliding.len(), 1, "{points:?}");
+        assert_eq!(gliding[0]["tick"], 3840 * 4);
+        let map = &session.project().tempo_map;
+        assert!((map.bpm_at(Ticks(3840 * 5)) - 100.0).abs() < 1e-9);
+        assert_eq!(map.bpm_at(Ticks(3840 * 7)), 80.0);
     }
 }

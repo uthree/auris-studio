@@ -1677,6 +1677,16 @@ impl Parameterized for Vst3Effect {
     }
 }
 impl Effect for Vst3Effect {
+    /// VST3 marks `process` as called on "the processing thread" without promising which OS
+    /// thread that is: `setProcessing` may come on the UI thread or the processing one, and a
+    /// host's prefetch mode runs `process` on threads other than the realtime one. Nothing on
+    /// this side of the call minds either: teardown already waits for the owning thread, and
+    /// the realtime path checks no thread. Vital, DDSP Synth, SNAP and DDSP Effect rendered
+    /// bit for bit the same on Rayon workers as on the caller's thread.
+    fn bound_to_one_thread(&self) -> bool {
+        false
+    }
+
     fn descriptor(&self) -> PluginDescriptor {
         self.0.descriptor.clone()
     }
@@ -1716,6 +1726,16 @@ impl Parameterized for Vst3Instrument {
     }
 }
 impl Instrument for Vst3Instrument {
+    /// VST3 marks `process` as called on "the processing thread" without promising which OS
+    /// thread that is: `setProcessing` may come on the UI thread or the processing one, and a
+    /// host's prefetch mode runs `process` on threads other than the realtime one. Nothing on
+    /// this side of the call minds either: teardown already waits for the owning thread, and
+    /// the realtime path checks no thread. Vital, DDSP Synth, SNAP and DDSP Effect rendered
+    /// bit for bit the same on Rayon workers as on the caller's thread.
+    fn bound_to_one_thread(&self) -> bool {
+        false
+    }
+
     fn descriptor(&self) -> PluginDescriptor {
         self.0.descriptor.clone()
     }

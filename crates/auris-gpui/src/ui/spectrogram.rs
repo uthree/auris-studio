@@ -426,9 +426,11 @@ pub(crate) fn paint_rendered_spectrum(
 fn rendered_segments(tempo: &TempoMap, rate: f64, frames: u64) -> Vec<(Ticks, Ticks, u64, u64)> {
     let end = tempo.seconds_to_ticks(Seconds(frames as f64 / rate));
     let mut ticks = vec![Ticks::ZERO];
+    // Each segment is stretched evenly, which only a held tempo is; a glide is cut into
+    // sixteenths, short enough that the even stretch inside each cannot be seen.
     ticks.extend(
         tempo
-            .points()
+            .stepped(Ticks(Ticks::QUARTER.raw() / 4))
             .iter()
             .map(|point| point.tick)
             .filter(|tick| *tick > Ticks::ZERO && *tick < end),

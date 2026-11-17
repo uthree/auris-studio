@@ -820,7 +820,7 @@ fn preflight_export(
         }
     }
 
-    let conductor_capacity = (project.tempo_map.points().len() as u128)
+    let conductor_capacity = (project.tempo_map.stepped(TEMPO_STEP).len() as u128)
         .saturating_add(project.signatures.points().len() as u128)
         .saturating_add(2);
     let mut conductor_events = 0;
@@ -1247,6 +1247,9 @@ fn ensure_planned_events<T>(events: &[T], additional: usize, event_capacity: usi
 }
 
 /// The first track of a format 1 file: the clock, and nothing that makes a sound.
+/// How finely a tempo glide is stepped in an exported file.
+const TEMPO_STEP: Ticks = Ticks(auris_core::time::TICKS_PER_QUARTER / 4);
+
 fn conductor_track(
     project: &Project,
     event_capacity: usize,
@@ -1258,7 +1261,9 @@ fn conductor_track(
         event_capacity.saturating_sub(2),
         "the MIDI conductor track",
     )?;
-    for point in project.tempo_map.points() {
+    // A file can only hold a tempo, so a glide goes out as sixteenth-note steps, each the
+    // tempo that crosses it in the time the glide does.
+    for point in project.tempo_map.stepped(TEMPO_STEP) {
         let micros = (60_000_000.0 / point.bpm).round().clamp(1.0, MAX_MICROS) as u32;
         events.push((
             point.tick,
@@ -2534,10 +2539,12 @@ mod tests {
             auris_core::time::TempoPoint {
                 tick: Ticks::ZERO,
                 bpm: 60.0,
+                ramp: false,
             },
             auris_core::time::TempoPoint {
                 tick: Ticks::QUARTER * 4,
                 bpm: 120.0,
+                ramp: false,
             },
         ])
         .unwrap();
@@ -3426,6 +3433,31 @@ mod tests {
             imported.signatures.signature_at(Ticks::ZERO),
             TimeSignature::new(3, 4)
         );
+    }
+
+    #[test]
+    fn a_tempo_glide_goes_out_in_sixteenth_steps_that_keep_its_timing() {
+        let mut project = project_with(
+            vec![Note::new(60, Ticks(TICKS_PER_QUARTER * 4), Ticks::QUARTER)],
+            Ticks(TICKS_PER_QUARTER * 8),
+        );
+        project
+            .tempo_map
+            .set_point(Ticks(TICKS_PER_QUARTER * 4), 60.0);
+        project.tempo_map.set_ramp(Ticks::ZERO, true);
+        let imported = round_trip(&project);
+        // Sixteen sixteenths of glide, then the held 60.
+        assert_eq!(imported.tempo_map.points().len(), 17);
+        assert!(imported.tempo_map.points().iter().all(|point| !point.ramp));
+        let glide = project
+            .tempo_map
+            .ticks_to_seconds(Ticks(TICKS_PER_QUARTER * 4))
+            .0;
+        let steps = imported
+            .tempo_map
+            .ticks_to_seconds(Ticks(TICKS_PER_QUARTER * 4))
+            .0;
+        assert!((glide - steps).abs() < 1e-4, "{glide} against {steps}");
     }
 
     #[test]

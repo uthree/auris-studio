@@ -161,6 +161,7 @@ impl DraftPerformance {
                 .map(|p| TempoPoint {
                     tick: Ticks(p.tick),
                     bpm: p.bpm,
+                    ramp: false,
                 })
                 .collect(),
         )

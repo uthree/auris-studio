@@ -6,7 +6,7 @@ use auris_session::mixer_graph::commands::GraphAction;
 /// The tool's wire name.
 pub const NAME: &str = "mixer_graph";
 /// The model-facing description shared with the MCP registration.
-pub const DESCRIPTION: &str = "Reads or edits the mixer DAG. Nodes are strips only: one per track, bus and the master (track:N, track:master). Each node lists its insert effects in processing order with stable effect:N IDs; effects are not nodes and are never connection endpoints. Start with operation {\"action\":\"read\"}; follow next_offset for more nodes and outgoing edges. Inserts process before the fader. connect adds a unity post-fader output from a track node to a bus node or track:master; add_output/set_output set an output's level and pre/post-fader tap; set_sidechain keys an effect from another track. All cycles are rejected before mutation. Parallel effects use a bus. Set track fader/pan/mute/solo, add/remove/move/enable effects and read/set effect parameters with operation objects. Reordering preserves effect IDs. Disconnect removes only that output; removing all outputs leaves the track disconnected. Changed operations are checkpointed and saved; reads and unchanged retries do not save.";
+pub const DESCRIPTION: &str = "Reads or edits the mixer DAG. Nodes are strips only: one per track, bus and the master (track:N, track:master). Each node lists its insert effects in processing order with stable effect:N IDs; effects are not nodes and are never connection endpoints. Start with operation {\"action\":\"read\"}; follow next_offset for more nodes and outgoing edges. Inserts process before the fader. connect adds a unity post-fader output from a track node to a bus node or track:master; add_output/set_output set an output's level and pre/post-fader tap; set_sidechain keys an effect from another track. All cycles are rejected before mutation. Parallel effects use a bus. Set track fader/pan/mute/solo, add/remove/move/enable effects and read/set effect parameters with operation objects. Reordering preserves effect IDs. Disconnect removes only that output; removing all outputs leaves the track disconnected. A write answers with what it changed and, for routing and effect-chain edits, that one node's row; read the graph again only to see other nodes. Changed operations are checkpointed and saved; reads and unchanged retries do not save.";
 
 /// A saved project and one shared graph operation.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -61,9 +61,13 @@ mod tests {
             .unwrap();
         let file = request(operation.clone()).unwrap();
         assert_eq!(
-            file["graph"],
-            serde_json::from_str::<Value>(&live).unwrap()["graph"]
+            file["node"],
+            serde_json::from_str::<Value>(&live).unwrap()["node"]
         );
+        // A write answers with the node it reshaped, never the whole graph again.
+        assert!(file.get("graph").is_none());
+        assert_eq!(file["node"]["id"], format!("track:{}", a.0));
+        assert_eq!(file["node"]["edges"].as_array().unwrap().len(), 2);
         assert_eq!(file["saved"], true);
         let checkpoints = opened(&project).unwrap().checkpoints().unwrap().len();
         let saved = std::fs::read(&path).unwrap();

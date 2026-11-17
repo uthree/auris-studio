@@ -461,7 +461,7 @@ pub fn ruler(
     // already says what the one tempo is, and a marker on every song would be noise.
     if tempo.len() > 1 {
         let marker_top = bounds.origin.y + bounds.size.height - px(12.0);
-        for change in tempo {
+        for (index, change) in tempo.iter().enumerate() {
             let x = bounds.origin.x + view.tick_to_x(change.tick);
             if x < bounds.origin.x - px(40.0) || x > bounds.origin.x + bounds.size.width {
                 continue;
@@ -478,11 +478,36 @@ pub fn ruler(
                 window,
                 cx,
                 point(x + px(4.0), marker_top + px(1.0)),
-                format_bpm(change.bpm),
+                tempo_mark(tempo, index),
                 px(8.0),
                 theme.accent_text,
             );
         }
+    }
+}
+
+/// What the ruler writes at a tempo change: its BPM, and an arrow when it glides to the next.
+pub fn tempo_mark(tempo: &[TempoPoint], index: usize) -> String {
+    let change = &tempo[index];
+    match change.ramp && index + 1 < tempo.len() {
+        true => format!("{} →", format_bpm(change.bpm)),
+        false => format_bpm(change.bpm),
+    }
+}
+
+#[cfg(test)]
+mod tempo_mark_tests {
+    use super::*;
+
+    #[test]
+    fn a_gliding_change_reads_with_an_arrow_and_a_last_one_without() {
+        let mut map = TempoMap::constant(120.0);
+        map.set_point(Ticks(3840), 90.0);
+        map.set_ramp(Ticks::ZERO, true);
+        map.set_ramp(Ticks(3840), true);
+        let points = map.points();
+        assert_eq!(tempo_mark(points, 0), "120 →");
+        assert_eq!(tempo_mark(points, 1), "90");
     }
 }
 

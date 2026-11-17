@@ -34,6 +34,12 @@ pub enum PitchDial {
     OctaveAbove,
     /// Lower octave relative velocity.
     OctaveBelow,
+    /// How far soft playing darkens the sound.
+    Brightness,
+    /// How unevenly the vibrato is played.
+    VibratoVariation,
+    /// How far each note's intonation leans off equal temperament.
+    Intonation,
 }
 
 impl PitchDial {
@@ -51,6 +57,9 @@ impl PitchDial {
             Self::VolumeSwell => Key::PerformVolumeSwell,
             Self::OctaveAbove => Key::PerformOctaveAbove,
             Self::OctaveBelow => Key::PerformOctaveBelow,
+            Self::Brightness => Key::PerformBrightness,
+            Self::VibratoVariation => Key::PerformVibratoVariation,
+            Self::Intonation => Key::PerformIntonation,
         }
     }
     fn range(self) -> (f32, f32) {
@@ -63,9 +72,13 @@ impl PitchDial {
             Self::Fall => (0.0, 12.0),
             Self::FallTime => (10.0, 500.0),
             Self::Glide => (0.0, 250.0),
-            Self::Modulation | Self::VolumeSwell | Self::OctaveAbove | Self::OctaveBelow => {
-                (0.0, 1.0)
-            }
+            Self::Modulation
+            | Self::VolumeSwell
+            | Self::OctaveAbove
+            | Self::OctaveBelow
+            | Self::Brightness
+            | Self::VibratoVariation
+            | Self::Intonation => (0.0, 1.0),
         }
     }
     fn value(self, settings: &PitchPerformance) -> f32 {
@@ -80,6 +93,9 @@ impl PitchDial {
             Self::Glide => settings.glide_ms,
             Self::Modulation => settings.modulation,
             Self::VolumeSwell => settings.volume_swell,
+            Self::Brightness => settings.brightness,
+            Self::VibratoVariation => settings.vibrato_variation,
+            Self::Intonation => settings.intonation,
             Self::OctaveAbove | Self::OctaveBelow => 0.0,
         }
     }
@@ -104,7 +120,13 @@ impl PitchDial {
     pub(crate) fn text(self, stack: &[NoteTransform]) -> String {
         if matches!(
             self,
-            Self::Modulation | Self::VolumeSwell | Self::OctaveAbove | Self::OctaveBelow
+            Self::Modulation
+                | Self::VolumeSwell
+                | Self::OctaveAbove
+                | Self::OctaveBelow
+                | Self::Brightness
+                | Self::VibratoVariation
+                | Self::Intonation
         ) {
             return format!("{:.0}%", self.fraction(stack) * 100.0);
         }
@@ -151,6 +173,9 @@ impl PitchDial {
             Self::Glide => settings.glide_ms = value,
             Self::Modulation => settings.modulation = value,
             Self::VolumeSwell => settings.volume_swell = value,
+            Self::Brightness => settings.brightness = value,
+            Self::VibratoVariation => settings.vibrato_variation = value,
+            Self::Intonation => settings.intonation = value,
             Self::OctaveAbove | Self::OctaveBelow => unreachable!(),
         }
         with_pitch_settings(stack, settings)
@@ -225,11 +250,14 @@ impl AurisApp {
                 PitchDial::Vibrato,
                 PitchDial::VibratoRate,
                 PitchDial::VibratoDelay,
+                PitchDial::VibratoVariation,
+                PitchDial::Intonation,
                 PitchDial::Fall,
                 PitchDial::FallTime,
                 PitchDial::Glide,
                 PitchDial::Modulation,
                 PitchDial::VolumeSwell,
+                PitchDial::Brightness,
                 PitchDial::OctaveAbove,
                 PitchDial::OctaveBelow,
             ] {

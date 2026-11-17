@@ -176,10 +176,21 @@ fn command(
     Ok(command)
 }
 
+/// How long Claude Code waits for one live tool call, in milliseconds.
+///
+/// Without a `timeout` on the server, Claude Code gives an HTTP request sixty seconds to its
+/// first byte and then cancels it. A live tool answers only when the host has finished, and
+/// normalize_mix on a full song, a render or a long `sing` takes longer than that: the
+/// cancellation ended the whole conversation in the middle of a mix. The per-server timeout
+/// raises that per-request timer and the five-minute idle limit with it.
+const LIVE_TOOL_TIMEOUT_MS: u64 = 30 * 60 * 1000;
+
 fn write_mcp_config(cwd: &Path, mcp: Option<&LiveMcp>) -> Result<(), String> {
     let servers = match mcp {
-        Some(mcp) => json!({"auris_live":{"type":"http","url":mcp.url,
-            "headers":{"Authorization":format!("Bearer {}", mcp.token)}}}),
+        Some(mcp) => {
+            json!({"auris_live":{"type":"http","url":mcp.url,"timeout":LIVE_TOOL_TIMEOUT_MS,
+            "headers":{"Authorization":format!("Bearer {}", mcp.token)}}})
+        }
         None => json!({}),
     };
     // The token lives only in the private temporary directory, never in process arguments.
@@ -851,6 +862,7 @@ async fn receive_turn_tracked(
             }
             "result" => {
                 recovery.terminal_result = true;
+                bridge.emit(usage_event(&message));
                 if message["is_error"] == true || message["subtype"] != "success" {
                     return Err(format!(
                         "Claude Code turn failed: {}",
@@ -879,9 +891,40 @@ async fn receive_turn_tracked(
     }
 }
 
+/// What a turn cost, from Claude Code's closing `result` message, in the shape every
+/// backend reports. Claude counts cached and freshly cached input apart from the rest and
+/// its thinking inside the output, so `input` is the sum and `reasoning` is unknown.
+fn usage_event(result: &Value) -> Value {
+    let usage = &result["usage"];
+    let count = |key: &str| usage[key].as_u64().unwrap_or(0);
+    let cached = count("cache_read_input_tokens");
+    let written = count("cache_creation_input_tokens");
+    json!({
+        "event": "usage",
+        "input": count("input_tokens") + cached + written,
+        "cached_input": cached,
+        "cache_write": written,
+        "output": count("output_tokens"),
+        "reasoning": null,
+        "cost_usd": result["total_cost_usd"],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_turn_reports_its_tokens_with_cached_input_counted_as_input() {
+        let event = usage_event(&json!({"type":"result","total_cost_usd":0.25,"usage":{
+            "input_tokens":10,"cache_read_input_tokens":900,"cache_creation_input_tokens":90,
+            "output_tokens":40}}));
+        assert_eq!(event["input"], 1000);
+        assert_eq!(event["cached_input"], 900);
+        assert_eq!(event["cache_write"], 90);
+        assert_eq!(event["output"], 40);
+        assert_eq!(event["cost_usd"], 0.25);
+    }
 
     fn test_history(bridge: &Bridge, path: Option<PathBuf>) -> Opened {
         Opened::open(bridge, path, false, None).unwrap()
@@ -1159,6 +1202,13 @@ mod tests {
             format!("Bearer {}", mcp.token)
         );
         assert_eq!(config["mcpServers"].as_object().unwrap().len(), 1);
+        // Long host work must not hit Claude Code's sixty-second default for HTTP servers.
+        assert!(
+            config["mcpServers"]["auris_live"]["timeout"]
+                .as_u64()
+                .unwrap()
+                >= 15 * 60 * 1000
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1716,6 +1766,66 @@ mod tests {
         .unwrap();
         cli.stop().await;
         validate_servers(&status).unwrap_or_else(|error| panic!("{error}: {status}"));
+    }
+
+    /// A live tool the host takes longer than a minute over is still answered: Claude Code
+    /// cancels an HTTP MCP request after sixty seconds unless the server's entry says otherwise.
+    #[test]
+    #[ignore = "requires Claude Code sign-in, runs inference and waits seventy-five seconds"]
+    fn installed_claude_waits_for_a_live_tool_slower_than_a_minute() {
+        let mut preferences = prefs();
+        preferences.model = "haiku".into();
+        let mut worker = crate::Worker::spawn(preferences, None, true, None).unwrap();
+        worker.send(&json!({"say":"Transport test: call add_track exactly once with name Slow lead and kind instrument. It may take a few minutes to answer; wait for it. Do not call anything else. Report completion.","policy":auris_session::agent_policy::Policy::default()}).to_string()).unwrap();
+        let mut session =
+            auris_session::Session::new(auris_session::SessionOptions::headless()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(300);
+        loop {
+            assert!(std::time::Instant::now() < deadline, "timed out");
+            let event = match worker.try_recv() {
+                Ok(event) => event,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            match event["event"].as_str().unwrap_or_default() {
+                "permission" => {
+                    let operation = auris_session::agent_policy::Operation::parse(
+                        event["tool"].as_str().unwrap(),
+                        &event["args"],
+                    )
+                    .unwrap();
+                    let allowed = operation.name == "edit_project.add_track";
+                    worker
+                        .send(
+                            &json!({"event":"permission_result","id":event["id"],"ok":allowed})
+                                .to_string(),
+                        )
+                        .unwrap();
+                }
+                "edit" => {
+                    // As long as normalize_mix over a whole song.
+                    std::thread::sleep(Duration::from_secs(75));
+                    let result = session
+                        .agent_command(serde_json::from_value(event["command"].clone()).unwrap());
+                    worker.send(&json!({"event":"edit_result","ok":result.is_ok(),"text":result.unwrap_or_else(|error| error)}).to_string()).unwrap();
+                }
+                "error" => panic!("{}", event["message"]),
+                "ended" => panic!("Claude Code ended before answering"),
+                "answer" => break,
+                _ => {}
+            }
+        }
+        assert!(
+            session
+                .project()
+                .tracks
+                .iter()
+                .any(|track| track.name == "Slow lead")
+        );
+        worker.cancel();
     }
 
     #[test]
