@@ -1151,7 +1151,7 @@ pub mod architecture {
     //! sample timing remain unchanged. A caller-placed plugin joins the workers only when
     //! its format allows `process` to move between threads
     //! ([`Instrument::bound_to_one_thread`](auris_core::plugin::Instrument::bound_to_one_thread)):
-    //! CLAP says so, VST3 is not yet checked and stays on the caller's thread. Realtime rendering
+    //! CLAP and VST3 both do. Realtime rendering
     //! retains the serial routing order and never dispatches to or waits for Rayon.
     //!
     //! # How it gets there: outputs and buses

@@ -570,9 +570,9 @@ pub trait Instrument: Parameterized + Send {
     ///
     /// An offline render spreads independent tracks over worker threads, so one track's blocks
     /// may each run on a different thread, though never two at once. Code written for this
-    /// trait is fine with that; a hosted plugin is fine only if its format says so. CLAP does,
-    /// in so many words; a plugin format that has not been checked answers `true` and stays on
-    /// the rendering caller's thread.
+    /// trait is fine with that; a hosted plugin is fine only if its format allows it, and a
+    /// format that has not been checked answers `true` and stays on the rendering caller's
+    /// thread.
     fn bound_to_one_thread(&self) -> bool {
         false
     }
@@ -598,9 +598,9 @@ pub trait Effect: Parameterized + Send {
     ///
     /// An offline render spreads independent tracks over worker threads, so one track's blocks
     /// may each run on a different thread, though never two at once. Code written for this
-    /// trait is fine with that; a hosted plugin is fine only if its format says so. CLAP does,
-    /// in so many words; a plugin format that has not been checked answers `true` and stays on
-    /// the rendering caller's thread.
+    /// trait is fine with that; a hosted plugin is fine only if its format allows it, and a
+    /// format that has not been checked answers `true` and stays on the rendering caller's
+    /// thread.
     fn bound_to_one_thread(&self) -> bool {
         false
     }
