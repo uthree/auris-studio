@@ -99,6 +99,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::asset::AssetPath;
+use crate::error::{CoreError, Result};
 use crate::harmony::Harmony;
 use crate::time::{SignatureMap, TempoMap, Ticks};
 
@@ -338,13 +339,46 @@ impl Project {
     /// The name a document carries until somebody — a person or the agent — gives it one.
     pub const UNTITLED: &'static str = "Untitled";
 
+    /// The lowest sample rate a document may carry, in hertz.
+    pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
+    /// The highest sample rate a document may carry, in hertz.
+    ///
+    /// Every rate-dependent allocation in the graph — delay lines, look-ahead, pre-delay —
+    /// scales with this number, so it is the one bound that keeps their sizes finite. 768 kHz
+    /// is the highest rate an audio interface offers.
+    pub const MAX_SAMPLE_RATE: f64 = 768_000.0;
+
+    /// Whether `rate` lies in [`Self::MIN_SAMPLE_RATE`]`..=`[`Self::MAX_SAMPLE_RATE`]. `NaN` does
+    /// not.
+    pub fn is_supported_sample_rate(rate: f64) -> bool {
+        (Self::MIN_SAMPLE_RATE..=Self::MAX_SAMPLE_RATE).contains(&rate)
+    }
+
+    /// Refuses a document whose stored rate is not [supported](Self::is_supported_sample_rate).
+    ///
+    /// A file is the other way in: [`Self::new`] corrects a bad rate, but a stored or imported
+    /// document reaches the graph without passing through it, and preparing a graph at
+    /// `1e300` Hz asks every delay line for more memory than exists.
+    pub fn validate_sample_rate(&self) -> Result<()> {
+        if Self::is_supported_sample_rate(self.sample_rate) {
+            Ok(())
+        } else {
+            Err(CoreError::UnsupportedSampleRate {
+                rate: self.sample_rate,
+                min: Self::MIN_SAMPLE_RATE,
+                max: Self::MAX_SAMPLE_RATE,
+            })
+        }
+    }
+
     /// An empty project.
     ///
-    /// A `sample_rate` that is not a positive finite number becomes 48 kHz: every duration in
-    /// the project divides by this field, and storing `inf` or `NaN` would serialise as JSON
-    /// `null` — a document that can never be opened again.
+    /// A `sample_rate` that is not [supported](Self::is_supported_sample_rate) becomes 48 kHz:
+    /// every duration in the project divides by this field, storing `inf` or `NaN` would
+    /// serialise as JSON `null` — a document that can never be opened again — and an enormous
+    /// finite one would size every delay line in the graph past what memory holds.
     pub fn new(name: impl Into<String>, sample_rate: f64) -> Self {
-        let sample_rate = if sample_rate.is_finite() && sample_rate > 0.0 {
+        let sample_rate = if Self::is_supported_sample_rate(sample_rate) {
             sample_rate
         } else {
             48_000.0
@@ -549,11 +583,29 @@ mod tests {
     fn a_rate_that_is_not_a_rate_becomes_the_default() {
         // Every duration in a project divides by this field, and a non-finite value would
         // serialise as JSON null — a document that can never be opened again.
-        for bad in [0.0, -44_100.0, f64::NAN, f64::INFINITY] {
+        for bad in [0.0, -44_100.0, f64::NAN, f64::INFINITY, 1e300, 1.0, 1e7] {
             let project = Project::new("Bad", bad);
             assert_eq!(project.sample_rate, 48_000.0, "for {bad}");
         }
         assert_eq!(Project::new("Good", 44_100.0).sample_rate, 44_100.0);
+        assert_eq!(Project::new("Low", 8_000.0).sample_rate, 8_000.0);
+        assert_eq!(Project::new("High", 768_000.0).sample_rate, 768_000.0);
+    }
+
+    #[test]
+    fn a_stored_rate_outside_the_range_is_refused() {
+        let mut project = Project::new("Stored", 48_000.0);
+        assert!(project.validate_sample_rate().is_ok());
+        for bad in [1e300, 0.5, f64::NAN, 768_001.0, 7_999.0] {
+            project.sample_rate = bad;
+            assert!(
+                matches!(
+                    project.validate_sample_rate(),
+                    Err(CoreError::UnsupportedSampleRate { .. })
+                ),
+                "for {bad}"
+            );
+        }
     }
 
     #[test]

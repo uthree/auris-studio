@@ -2150,7 +2150,10 @@ mod tests {
 
     #[test]
     fn splitting_a_corrupt_audio_offset_saturates_instead_of_wrapping() {
-        let mut project = Project::new("split", 960.0);
+        let mut project = Project::new("split", 48_000.0);
+        // Below the supported range on purpose: one frame per tick keeps the split arithmetic
+        // readable, and nothing here builds a graph.
+        project.sample_rate = 960.0;
         let track = project.add_audio_track("Audio");
         let source =
             project.add_audio_source("tone", AssetPath::external("tone.wav"), 100, 960.0, 1);

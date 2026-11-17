@@ -285,6 +285,7 @@ pub(crate) fn publish_ready_staged_file(staged: NamedTempFile, path: &Path) -> R
 /// This is the worker half of a two-phase save. The returned value owns the private file and
 /// removes it on drop; only [`StagedProject::publish`] makes the document visible.
 pub fn stage_project(path: &Path, project: &mut Project) -> Result<StagedProject> {
+    project.validate_sample_rate()?;
     project.validate_loop_expansion()?;
     project.format_version = Project::FORMAT_VERSION;
     project.saved_by = env!("CARGO_PKG_VERSION").to_string();
@@ -382,6 +383,7 @@ pub fn load_project(path: &Path) -> Result<Project> {
     if let Some(id) = project.conflicting_object_id() {
         return Err(IoError::ProjectIdConflict(id));
     }
+    project.validate_sample_rate()?;
     project.validate_loop_expansion()?;
     if !project.repair_id_counter() {
         return Err(IoError::ProjectIdsExhausted);
@@ -1061,6 +1063,27 @@ mod tests {
 
         assert!(error.to_string().contains("loop passes"));
         assert!(!file.path().exists());
+    }
+
+    #[test]
+    fn a_stored_sample_rate_no_graph_is_built_for_is_refused_both_ways() {
+        // Issue #155: `1e300` is finite and positive, and preparing a reverb at it panicked.
+        let file = TempFile::new("extreme-rate.auris");
+        let mut project = demo_project();
+        project.sample_rate = 1e300;
+        let error = save_project(file.path(), &mut project)
+            .expect_err("saving must refuse a rate loading refuses");
+        assert!(error.to_string().contains("sample rate"), "{error}");
+        assert!(!file.path().exists());
+
+        project.sample_rate = 48_000.0;
+        save_project(file.path(), &mut project).unwrap();
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+        document["sample_rate"] = serde_json::json!(1e300);
+        std::fs::write(file.path(), serde_json::to_vec(&document).unwrap()).unwrap();
+        let error = load_project(file.path()).expect_err("an extreme stored rate is refused");
+        assert!(error.to_string().contains("sample rate"), "{error}");
     }
 
     #[test]

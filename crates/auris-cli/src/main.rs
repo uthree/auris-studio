@@ -1379,9 +1379,10 @@ fn new_project(args: &[String]) -> Result<(), String> {
                     .and_then(|value| value.parse().ok())
                     // `parse::<f64>` happily accepts `inf`, `NaN` and overflowing literals
                     // like `1e999`, and a project stored with one serialises its rate as JSON
-                    // null — a file this very tool can never read back. A rate that is not a
-                    // positive finite number is not a rate.
-                    .filter(|rate: &f64| rate.is_finite() && *rate > 0.0)
+                    // null — a file this very tool can never read back — and an enormous finite
+                    // one sizes every delay line past what memory holds. The document's own
+                    // range is the one the file loader enforces too.
+                    .filter(|rate: &f64| Project::is_supported_sample_rate(*rate))
                     .ok_or_else(|| {
                         messages::option_needs_value(
                             LANGUAGE,
