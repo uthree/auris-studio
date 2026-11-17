@@ -1768,6 +1768,66 @@ mod tests {
         validate_servers(&status).unwrap_or_else(|error| panic!("{error}: {status}"));
     }
 
+    /// A live tool the host takes longer than a minute over is still answered: Claude Code
+    /// cancels an HTTP MCP request after sixty seconds unless the server's entry says otherwise.
+    #[test]
+    #[ignore = "requires Claude Code sign-in, runs inference and waits seventy-five seconds"]
+    fn installed_claude_waits_for_a_live_tool_slower_than_a_minute() {
+        let mut preferences = prefs();
+        preferences.model = "haiku".into();
+        let mut worker = crate::Worker::spawn(preferences, None, true, None).unwrap();
+        worker.send(&json!({"say":"Transport test: call add_track exactly once with name Slow lead and kind instrument. It may take a few minutes to answer; wait for it. Do not call anything else. Report completion.","policy":auris_session::agent_policy::Policy::default()}).to_string()).unwrap();
+        let mut session =
+            auris_session::Session::new(auris_session::SessionOptions::headless()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(300);
+        loop {
+            assert!(std::time::Instant::now() < deadline, "timed out");
+            let event = match worker.try_recv() {
+                Ok(event) => event,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            match event["event"].as_str().unwrap_or_default() {
+                "permission" => {
+                    let operation = auris_session::agent_policy::Operation::parse(
+                        event["tool"].as_str().unwrap(),
+                        &event["args"],
+                    )
+                    .unwrap();
+                    let allowed = operation.name == "edit_project.add_track";
+                    worker
+                        .send(
+                            &json!({"event":"permission_result","id":event["id"],"ok":allowed})
+                                .to_string(),
+                        )
+                        .unwrap();
+                }
+                "edit" => {
+                    // As long as normalize_mix over a whole song.
+                    std::thread::sleep(Duration::from_secs(75));
+                    let result = session
+                        .agent_command(serde_json::from_value(event["command"].clone()).unwrap());
+                    worker.send(&json!({"event":"edit_result","ok":result.is_ok(),"text":result.unwrap_or_else(|error| error)}).to_string()).unwrap();
+                }
+                "error" => panic!("{}", event["message"]),
+                "ended" => panic!("Claude Code ended before answering"),
+                "answer" => break,
+                _ => {}
+            }
+        }
+        assert!(
+            session
+                .project()
+                .tracks
+                .iter()
+                .any(|track| track.name == "Slow lead")
+        );
+        worker.cancel();
+    }
+
     #[test]
     #[ignore = "requires Claude Code sign-in and runs inference against an in-memory song"]
     fn installed_claude_edits_an_unsaved_song() {
