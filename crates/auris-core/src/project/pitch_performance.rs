@@ -126,6 +126,7 @@ impl MidiClip {
                 [
                     ClipCurve::MODULATION,
                     ClipCurve::Controller(7),
+                    ClipCurve::SUSTAIN,
                     ClipCurve::BRIGHTNESS,
                 ]
                 .into_iter()
@@ -139,6 +140,9 @@ impl MidiClip {
 
     /// Whether this curve has an enabled non-destructive generator.
     pub fn has_generated_curve(&self, which: ClipCurve) -> bool {
+        if which == ClipCurve::SUSTAIN {
+            return pedal_stage(&self.transforms).is_some();
+        }
         let mut stages = Vec::new();
         settings(&self.transforms, None, &mut stages);
         stages.iter().any(|(s, _)| match which {
@@ -186,6 +190,9 @@ impl MidiClip {
         settings(&self.transforms, None, &mut stages);
         if !self.has_generated_curve(which) {
             return self.curve(which).to_vec();
+        }
+        if which == ClipCurve::SUSTAIN {
+            return self.performed_pedal_points(tempo, signatures, pass, offset, span);
         }
         let base = self.start + offset;
         let mut notes: Vec<Note> = performed_notes(
@@ -369,6 +376,74 @@ impl MidiClip {
             out.extend(events.into_iter().map(|(at, value)| (at + offset, value)));
         }
         out
+    }
+}
+
+/// The last pedal stage at the top of `stack` that pedals at all: where it stands, and how far.
+///
+/// A pedal inside a drum writer's scope is not one: a kit has no dampers to lift.
+fn pedal_stage(stack: &[NoteTransform]) -> Option<(usize, f32)> {
+    stack
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(index, stage)| match stage {
+            NoteTransform::Pedal { amount } if *amount > 0.0 => Some((index, *amount)),
+            _ => None,
+        })
+}
+
+impl MidiClip {
+    /// The sustain pedal for one performance pass: the pedal stage's, read from the notes as
+    /// that stage sees them, and wherever the authored lane is further down, the authored one.
+    fn performed_pedal_points(
+        &self,
+        tempo: &TempoMap,
+        signatures: &SignatureMap,
+        pass: u64,
+        offset: Ticks,
+        span: Ticks,
+    ) -> Vec<CurvePoint> {
+        let authored = self.curve(ClipCurve::SUSTAIN);
+        let Some((index, amount)) = pedal_stage(&self.transforms) else {
+            return authored.to_vec();
+        };
+        let bpm = tempo.bpm_at(self.start);
+        let notes: Vec<Note> = performed_notes(
+            self.playable_notes().collect(),
+            &self.transforms[..index],
+            PerformanceContext {
+                bpm,
+                pass,
+                start: self.start + offset,
+                length: self.length,
+                signatures,
+            },
+        )
+        .into_iter()
+        .filter(|n| n.start < span)
+        .collect();
+        let generated = super::interpretation::pedal_points(&notes, amount, bpm, span);
+        let ticks: BTreeSet<Ticks> = generated
+            .iter()
+            .chain(
+                authored
+                    .iter()
+                    .filter(|p| p.at >= Ticks::ZERO && p.at <= span),
+            )
+            .map(|p| p.at)
+            .collect();
+        ticks
+            .into_iter()
+            .map(|at| CurvePoint {
+                at,
+                value: super::curve_at(&generated, at).max(if authored.is_empty() {
+                    0.0
+                } else {
+                    super::curve_at(authored, at)
+                }),
+            })
+            .collect()
     }
 }
 
@@ -1071,5 +1146,57 @@ mod tests {
         let early = peak(240, 1200);
         let late = peak(6000, 6960);
         assert!(late > early * 1.3, "early {early}, late {late}");
+    }
+
+    #[test]
+    fn a_pedalled_clip_writes_its_pedal_and_an_authored_one_still_counts() {
+        let mut clip = MidiClip {
+            notes: vec![
+                Note::new(48, Ticks(0), Ticks(480)),
+                Note::new(64, Ticks(0), Ticks(480)),
+                Note::new(53, Ticks(1920), Ticks(480)),
+                Note::new(69, Ticks(1920), Ticks(480)),
+            ],
+            transforms: vec![NoteTransform::Pedal { amount: 1.0 }],
+            ..MidiClip::new(ClipId(1), "Piano", Ticks::ZERO, Ticks(7680))
+        };
+        assert!(clip.performance_curves().any(|c| c == ClipCurve::SUSTAIN));
+        let pedal = |clip: &MidiClip| {
+            clip.performed_curve_points(
+                ClipCurve::SUSTAIN,
+                &TempoMap::constant(120.0),
+                &SignatureMap::default(),
+                0,
+                Ticks::ZERO,
+                clip.length,
+            )
+        };
+        let points = pedal(&clip);
+        assert_eq!(curve_at(&points, Ticks(960)), 1.0);
+        assert_eq!(curve_at(&points, Ticks(1920 + 58)), 0.0);
+        assert_eq!(curve_at(&points, Ticks(1920 + 116)), 1.0);
+        assert!(
+            clip.notes.iter().all(|n| n.length == Ticks(480)),
+            "the text is untouched"
+        );
+        // An authored pedal held through the change keeps the dampers up there.
+        clip.controllers.insert(
+            64,
+            vec![
+                CurvePoint {
+                    at: Ticks::ZERO,
+                    value: 1.0,
+                },
+                CurvePoint {
+                    at: Ticks(3840),
+                    value: 1.0,
+                },
+            ],
+        );
+        assert_eq!(curve_at(&pedal(&clip), Ticks(1920 + 58)), 1.0);
+        // No pedal stage, no generated pedal: the lane is the authored one.
+        clip.transforms.clear();
+        assert!(!clip.has_generated_curve(ClipCurve::SUSTAIN));
+        assert_eq!(pedal(&clip), clip.controllers[&64]);
     }
 }

@@ -88,6 +88,10 @@ impl ClipCurve {
     /// The brightness controller, which rests at the middle rather than at zero.
     pub const BRIGHTNESS: ClipCurve = ClipCurve::Controller(crate::CC_BRIGHTNESS);
 
+    /// The sustain pedal: controller 64, which the pedal stage writes as well as lengthening
+    /// the notes it holds.
+    pub const SUSTAIN: ClipCurve = ClipCurve::Controller(64);
+
     /// The controller number, when this is a controller rather than the bend.
     pub fn controller(self) -> Option<u8> {
         match self {
