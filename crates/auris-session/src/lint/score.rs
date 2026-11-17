@@ -1433,7 +1433,7 @@ mod tests {
         // that ran backwards in time, and the chord's missing annotation went unreported.
         let mut project = Project::new("Cap", 48_000.0);
         for n in 0..13 {
-            let track = project.add_instrument_track(&format!("Late {n}"), "auris.synth.pulse");
+            let track = project.add_instrument_track(format!("Late {n}"), "auris.synth.pulse");
             let clip = project
                 .add_midi_clip(track, "Loop", Ticks(TICKS_PER_QUARTER * 40), Ticks(1))
                 .unwrap();
