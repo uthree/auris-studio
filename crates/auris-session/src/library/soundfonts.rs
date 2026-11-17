@@ -70,6 +70,37 @@ pub(crate) fn register(
     Ok(entry)
 }
 
+/// Takes every entry naming `path` out of the catalogue, returning whether there was one.
+///
+/// Only the catalogue changes. The file is somebody's own and was never copied in, so it stays
+/// where it lies, and a project whose tracks still play it goes on finding it by its own path.
+pub(crate) fn unregister(library: &Path, path: &Path) -> Result<bool, SessionError> {
+    let canonical = std::fs::canonicalize(path).ok();
+    let names = |font: &LibraryFont| {
+        font.path == path
+            || canonical
+                .as_deref()
+                .is_some_and(|canonical| font.path == canonical)
+    };
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(library.with_extension("lock"))
+        .map_err(|error| failed(library, error))?;
+    lock.lock().map_err(|error| failed(library, error))?;
+    let mut fonts = read(library)?;
+    let before = fonts.len();
+    fonts.retain(|font| !names(font));
+    if fonts.len() == before {
+        return Ok(false);
+    }
+    let bytes = serde_json::to_vec_pretty(&fonts).map_err(|error| failed(library, error))?;
+    write_config_bytes(library, &bytes).map_err(|error| failed(library, error))?;
+    Ok(true)
+}
+
 fn failed(path: &Path, error: impl std::fmt::Display) -> SessionError {
     SessionError::SoundFontLibrary(format!("{}: {error}", path.display()))
 }
@@ -109,5 +140,25 @@ mod tests {
                 .iter()
                 .any(|font| font.path == std::fs::canonicalize(&second).unwrap())
         );
+    }
+
+    #[test]
+    fn unregistering_takes_out_one_entry_and_leaves_the_file() {
+        let scratch = tempfile::tempdir().unwrap();
+        let library = scratch.path().join("soundfonts.json");
+        let first = scratch.path().join("first.sf2");
+        let second = scratch.path().join("second.sf2");
+        std::fs::write(&first, b"first").unwrap();
+        std::fs::write(&second, b"second").unwrap();
+        register(&library, &first, "First".into()).unwrap();
+        register(&library, &second, "Second".into()).unwrap();
+
+        assert!(unregister(&library, &first).unwrap());
+        let fonts = read(&library).unwrap();
+        assert_eq!(fonts.len(), 1);
+        assert_eq!(fonts[0].name, "Second");
+        assert!(first.is_file(), "the file itself is never deleted");
+        // A second attempt finds nothing to take out and writes nothing.
+        assert!(!unregister(&library, &first).unwrap());
     }
 }

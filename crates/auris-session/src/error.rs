@@ -168,6 +168,10 @@ pub enum SessionError {
     #[error("no soundfont with id {0}")]
     UnknownSoundFont(u64),
 
+    /// The SoundFont came with this installation and cannot be removed from its library.
+    #[error("soundfont {0} is part of this installation's sound library and cannot be removed")]
+    ShippedSoundFont(u64),
+
     /// The shipped sound library is not installed, so a General MIDI sound cannot be adopted.
     #[error("the shipped sound library is not installed; General MIDI sounds are unavailable")]
     LibraryMissing,

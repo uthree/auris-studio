@@ -645,6 +645,9 @@ DuplicateSoundConfirm = "複製"
 DeleteSound = "音源を削除…"
 DeleteSoundConfirm = "音源を削除"
 DeleteSoundBody = "保存した音源をライブラリから削除します。プロジェクトに適用済みの設定はそのまま残ります。この操作は取り消せません。"
+RemoveSoundFont = "ライブラリから削除…"
+RemoveSoundFontConfirm = "削除"
+RemoveSoundFontBody = "どのプロジェクトでもこのサウンドフォントの音色が選べなくなります。ファイル自体はディスクに残るので、もう一度読み込めます。"
 SoundContents = "音源の設定とインサートエフェクトを置き換え"
 UserSoundsEmpty = "トラックのインスペクタから音源とエフェクトを保存できます"
 BrowserEffects = "エフェクト"
@@ -1795,6 +1798,7 @@ ErrorDuplicateOutput = "そのトラックには、同じ位置から取る同�
 ErrorNotABus = "ルーティングの送り先にできるのはバスだけです"
 ErrorRoutingLoop = "信号がループしてしまいます"
 ErrorUnknownSoundFont = "そのサウンドフォントはこのプロジェクトにありません"
+ErrorShippedSoundFont = "そのサウンドフォントは Auris Studio に付属しているため削除できません"
 ExternalChangeConflict = "ディスク上の変更を取り込むか、手編集を別のプロジェクトに保存してください。取り込んだ後もUndoで手編集に戻せます。"
 ErrorLibraryMissing = "同梱の音色ライブラリが未インストールのため、General MIDI音源は使えません"
 ErrorGenerationPositionOccupied = "この位置にはクリップがあります。同じトラックの空いている場所を選んでください"
@@ -2386,6 +2390,14 @@ duplicate_sound_title = "「{name}」を複製"
 sound_copy_name = "{name}のコピー"
 # Names the saved sound being deleted.
 delete_sound_title = "「{name}」を削除しますか？"
+# Names the SoundFont being taken out of the application library.
+remove_soundfont_title = "「{name}」をライブラリから削除しますか？"
+# The removal body when tracks of the open project still play the font, and so keep it.
+remove_soundfont_body_in_use = "ほかのプロジェクトではこのサウンドフォントの音色が選べなくなります。このプロジェクトでは {count} 個のトラックが使っているので、このプロジェクトには残ります。ファイル自体はディスクに残ります。"
+# Confirmation that a SoundFont left the library.
+soundfont_removed = "{name} をライブラリから削除しました"
+# Confirmation that a SoundFont left the library while tracks of this project keep it.
+soundfont_removed_kept = "{name} をライブラリから削除しました（このプロジェクトの {count} 個のトラックは引き続き使います）"
 # Names the exact plugin folder a removal confirmation applies to.
 remove_plugin_folder_title = "プラグインフォルダ「{path}」を削除しますか？"
 # Confirms which plugin search folder was removed.
