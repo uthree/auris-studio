@@ -37,3 +37,11 @@ the MIDI-shaped `MidiEvent` has nowhere to put, so the realtime path always wrot
 `Plugin::send_tuned_note_on_at` is that path with the field filled in, for Auris's tunings: the
 note is tracked and released as an ordinary note-on at its key, so a `MidiEvent::NoteOff` for
 the key ends it. A process-isolated plugin is sent the key untuned.
+
+A realtime-owned instance can be prepared again. Auris hands a render instance that has come back
+from the audio thread, and been stopped, to the next renderer instead of loading the plugin again
+on every edit, so `prepare_realtime_bus_processing` accepts an instance that is already
+realtime-owned, as long as it is not processing. Preparing again re-applies the parameter-queue
+bounds exactly, which also covers the ordinary queues a `reconfigure` in between leaves behind.
+`stop_processing` now forgets the ordinary-note counts along with the other tracked notes, so a
+restarted instance does not lose voice capacity, or send releases, for notes of an earlier run.

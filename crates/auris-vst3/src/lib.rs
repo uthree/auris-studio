@@ -323,7 +323,12 @@ struct Shared {
     active_renderers: Arc<AtomicUsize>,
     render_teardowns: Mutex<Vec<RenderTeardown>>,
     /// Render instances back from their renderers, deactivated and waiting to be released.
-    releasing: Mutex<Releasing<Plugin>>,
+    releasing: Mutex<Releasing<RenderInstance>>,
+    /// At most one render instance per thread, back from its renderer and deactivated, kept for
+    /// the next renderer that thread builds instead of loading the plugin again.
+    spares: Mutex<Spares<RenderInstance>>,
+    /// How many render instances have been loaded from the bundle.
+    render_loads: AtomicUsize,
     /// When the control instance was loaded. It is not released sooner than the grace after.
     loaded_at: Instant,
     render_failure: Arc<AtomicU32>,
@@ -338,8 +343,66 @@ struct ParameterSnapshot {
 }
 
 struct RenderTeardown {
-    returned: Arc<ArrayQueue<ManuallyDrop<Plugin>>>,
+    returned: Arc<ArrayQueue<ManuallyDrop<RenderInstance>>>,
     owner_thread: ThreadId,
+}
+
+/// A plugin instance owned by a renderer, with what decides whether another may have it next.
+///
+/// Every edit rebuilds the graph and so builds a renderer of each hosted plugin. Loading the
+/// plugin for each one costs its whole start-up (a sampled guitar reads 130 MB) and destroying the
+/// one before it is what set off the Ample Guitar crash `RELEASE_GRACE` waits out; an instance
+/// that came back healthy is handed to the next renderer instead.
+struct RenderInstance {
+    plugin: Plugin,
+    mode: ProcessMode,
+    /// Cleared once its renderer failed: whatever left it failing may still be in it.
+    healthy: bool,
+}
+
+impl RenderInstance {
+    fn config(&self) -> RenderConfig {
+        RenderConfig {
+            sample_rate: self.plugin.sample_rate(),
+            block_size: self.plugin.block_size(),
+            mode: self.mode,
+        }
+    }
+}
+
+impl Deref for RenderInstance {
+    type Target = Plugin;
+
+    fn deref(&self) -> &Plugin {
+        &self.plugin
+    }
+}
+
+impl DerefMut for RenderInstance {
+    fn deref_mut(&mut self) -> &mut Plugin {
+        &mut self.plugin
+    }
+}
+
+/// What a render instance was set up for, which a renderer handed it must want too.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct RenderConfig {
+    sample_rate: f64,
+    block_size: usize,
+    mode: ProcessMode,
+}
+
+/// Whether a spare render instance set up for `spare` can be handed to a renderer wanting
+/// `wanted`, instead of loading a new one.
+///
+/// Process mode is fixed by `setupProcessing`, and a different rate or block size would be a
+/// `reconfigure` of a plugin that has already sized its buffers for the old one; a fresh load is
+/// the plainer path for both. An instance whose renderer failed is never handed on.
+fn reusable(spare: RenderConfig, healthy: bool, wanted: RenderConfig) -> bool {
+    healthy
+        && spare.sample_rate.to_bits() == wanted.sample_rate.to_bits()
+        && spare.block_size == wanted.block_size
+        && spare.mode == wanted.mode
 }
 
 impl ParameterSnapshot {
@@ -503,6 +566,37 @@ impl<T> Releasing<T> {
     }
 }
 
+/// Values kept for reuse, at most one per thread, each only ever handed back to its own thread.
+///
+/// As with [`Releasing`], dropping this drops nothing it still holds: a value whose thread never
+/// comes back for it is leaked rather than destroyed elsewhere.
+struct Spares<T> {
+    kept: Vec<(ThreadId, ManuallyDrop<T>)>,
+}
+
+impl<T> Spares<T> {
+    fn new() -> Self {
+        Self { kept: Vec::new() }
+    }
+
+    /// Keeps `value` as this thread's spare, returning the one it displaces.
+    ///
+    /// The newest is kept: it is the one that was rendering most recently.
+    fn keep(&mut self, value: T) -> Option<T> {
+        let owner = thread::current().id();
+        let displaced = self.take();
+        self.kept.push((owner, ManuallyDrop::new(value)));
+        displaced
+    }
+
+    /// Takes this thread's spare.
+    fn take(&mut self) -> Option<T> {
+        let owner = thread::current().id();
+        let index = self.kept.iter().position(|(kept, _)| *kept == owner)?;
+        Some(ManuallyDrop::into_inner(self.kept.swap_remove(index).1))
+    }
+}
+
 fn sleep_until(deadline: Instant) {
     let now = Instant::now();
     if deadline > now {
@@ -607,6 +701,8 @@ impl Vst3Plugin {
                 active_renderers: Arc::new(AtomicUsize::new(0)),
                 render_teardowns: Mutex::new(Vec::new()),
                 releasing: Mutex::new(Releasing::new()),
+                spares: Mutex::new(Spares::new()),
+                render_loads: AtomicUsize::new(0),
                 loaded_at: Instant::now(),
                 render_failure: Arc::new(AtomicU32::new(Vst3RenderFailure::NONE)),
                 full_refresh_required: AtomicBool::new(false),
@@ -923,32 +1019,11 @@ impl Vst3Plugin {
     /// Takes back the render instances returned to this thread, and releases those whose
     /// [`RELEASE_GRACE`] has passed.
     ///
-    /// A returned instance is deactivated at once and released only once the grace has passed.
+    /// A returned instance is deactivated at once. The newest healthy one is kept as this
+    /// thread's spare for the next renderer; the rest are released only once the grace has
+    /// passed.
     fn service_teardowns(&self) {
-        let Ok(mut releasing) = self.shared.releasing.lock() else {
-            return;
-        };
-        let now = Instant::now();
-        if let Ok(mut teardowns) = self.shared.render_teardowns.lock() {
-            let current = thread::current().id();
-            teardowns.retain_mut(|teardown| {
-                if current != teardown.owner_thread {
-                    return true;
-                }
-                match teardown.returned.pop() {
-                    Some(plugin) => {
-                        let mut plugin = ManuallyDrop::into_inner(plugin);
-                        if let Err(error) = plugin.stop_processing() {
-                            log::warn!("could not deactivate a retired VST3 instance: {error}");
-                        }
-                        releasing.retire(plugin, now);
-                        false
-                    }
-                    None => true,
-                }
-            });
-        }
-        releasing.release_due(now);
+        self.shared.service_teardowns();
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, Plugin>, Vst3Error> {
@@ -956,10 +1031,92 @@ impl Vst3Plugin {
     }
 }
 
+impl Shared {
+    fn service_teardowns(&self) {
+        let Ok(mut releasing) = self.releasing.lock() else {
+            return;
+        };
+        let now = Instant::now();
+        if let Ok(mut teardowns) = self.render_teardowns.lock() {
+            let current = thread::current().id();
+            teardowns.retain_mut(|teardown| {
+                if current != teardown.owner_thread {
+                    return true;
+                }
+                let Some(instance) = teardown.returned.pop() else {
+                    return true;
+                };
+                let mut instance = ManuallyDrop::into_inner(instance);
+                if let Err(error) = instance.stop_processing() {
+                    log::warn!("could not deactivate a retired VST3 instance: {error}");
+                    instance.healthy = false;
+                }
+                let retired = match (instance.healthy, self.spares.lock()) {
+                    (true, Ok(mut spares)) => spares.keep(instance),
+                    _ => Some(instance),
+                };
+                if let Some(retired) = retired {
+                    releasing.retire(retired, now);
+                }
+                false
+            });
+        }
+        releasing.release_due(now);
+    }
+
+    /// A render instance for this thread: its spare when that fits `mode`, a new load otherwise.
+    ///
+    /// The spare is deactivated already; it is given the control instance's `state` here, and its
+    /// renderer prepares it for realtime ownership again in `Bridge::prepare`.
+    fn render_instance(
+        &self,
+        mode: ProcessMode,
+        state: &[u8],
+    ) -> Result<RenderInstance, Vst3Error> {
+        let wanted = RenderConfig {
+            sample_rate: self.prepare.sample_rate,
+            block_size: self.prepare.max_block_frames.max(1),
+            mode,
+        };
+        let spare = self.spares.lock().ok().and_then(|mut spares| spares.take());
+        if let Some(mut spare) = spare {
+            let reused = reusable(spare.config(), spare.healthy, wanted)
+                && match spare.load_state(state) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        log::warn!("a spare VST3 instance refused its state: {error}");
+                        false
+                    }
+                };
+            if reused {
+                return Ok(spare);
+            }
+            if let Ok(mut releasing) = self.releasing.lock() {
+                releasing.retire(spare, Instant::now());
+            }
+        }
+        let (mut plugin, _) = load_configured_plugin(&self.path, &self.class_id, &self.prepare)?;
+        self.render_loads.fetch_add(1, Ordering::Relaxed);
+        plugin.load_state(state)?;
+        if mode == ProcessMode::Offline {
+            plugin.set_process_mode(mode)?;
+        }
+        Ok(RenderInstance {
+            plugin,
+            mode,
+            healthy: true,
+        })
+    }
+}
+
 impl Drop for Vst3Plugin {
     fn drop(&mut self) {
         self.service_teardowns();
         if let Ok(mut releasing) = self.shared.releasing.lock() {
+            let spare = self.shared.spares.lock().ok().and_then(|mut s| s.take());
+            if let Some(spare) = spare {
+                releasing.retire(spare, Instant::now());
+            }
             releasing.release_all();
         }
         // The control instance goes with `shared`, and no sooner than the grace after its load.
@@ -1009,7 +1166,7 @@ impl Vst3Instrument {
 }
 
 struct Bridge {
-    plugin: DeferredOwnerDrop<Plugin>,
+    plugin: DeferredOwnerDrop<RenderInstance>,
     buffers: BusAudioBuffers,
     descriptor: PluginDescriptor,
     parameters: Arc<Vec<ParamDescriptor>>,
@@ -1045,12 +1202,7 @@ impl Bridge {
             .lock()
             .map_err(|_| Vst3Error::Busy)?
             .save_state()?;
-        let (mut plugin, _) =
-            load_configured_plugin(&shared.path, &shared.class_id, &shared.prepare)?;
-        plugin.load_state(&state)?;
-        if mode == ProcessMode::Offline {
-            plugin.set_process_mode(mode)?;
-        }
+        let plugin = shared.render_instance(mode, &state)?;
         // Capture the revision before its values. A concurrent publication after this load will
         // then leave a larger revision for the first render block to observe; reading the
         // revision afterwards could incorrectly declare a partly old snapshot up to date.
@@ -1319,6 +1471,7 @@ impl Bridge {
     fn fail(&mut self, failure: Vst3RenderFailure) {
         self.processing_failed = true;
         self.fatal_failure = true;
+        self.plugin.healthy = false;
         let _ = self.render_failure.compare_exchange(
             Vst3RenderFailure::NONE,
             failure.encode(),
@@ -2311,6 +2464,96 @@ mod tests {
         releasing.release_all();
         assert!(retired_at.elapsed() >= RELEASE_GRACE);
         assert_eq!(drops.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn a_spare_is_reused_only_by_a_healthy_renderer_of_the_same_setup() {
+        let wanted = RenderConfig {
+            sample_rate: 48_000.0,
+            block_size: 512,
+            mode: ProcessMode::Realtime,
+        };
+        assert!(reusable(wanted, true, wanted));
+        assert!(
+            !reusable(wanted, false, wanted),
+            "a failed renderer's instance"
+        );
+        for spare in [
+            RenderConfig {
+                sample_rate: 44_100.0,
+                ..wanted
+            },
+            RenderConfig {
+                block_size: 256,
+                ..wanted
+            },
+            RenderConfig {
+                mode: ProcessMode::Offline,
+                ..wanted
+            },
+        ] {
+            assert!(!reusable(spare, true, wanted), "{spare:?}");
+        }
+    }
+
+    #[test]
+    fn a_thread_keeps_one_spare_the_newest_and_only_for_itself() {
+        let mut spares = Spares::new();
+        assert_eq!(spares.keep(1), None);
+        assert_eq!(spares.keep(2), Some(1), "the older one is displaced");
+
+        let spares = Arc::new(Mutex::new(spares));
+        let elsewhere = Arc::clone(&spares);
+        std::thread::spawn(move || {
+            let mut spares = elsewhere.lock().unwrap();
+            assert_eq!(
+                spares.take(),
+                None,
+                "another thread's spare is not handed out"
+            );
+            assert_eq!(spares.keep(3), None);
+        })
+        .join()
+        .unwrap();
+
+        let mut spares = spares.lock().unwrap();
+        assert_eq!(spares.take(), Some(2));
+        assert_eq!(spares.take(), None);
+    }
+
+    /// Set `AURIS_VST3_SMOKE_PLUGIN` to an installed VST3 instrument's bundle to run this.
+    #[test]
+    #[ignore = "requires AURIS_VST3_SMOKE_PLUGIN to name an installed VST3 instrument"]
+    fn renderers_built_one_after_another_load_the_plugin_once() {
+        let path = PathBuf::from(
+            std::env::var_os("AURIS_VST3_SMOKE_PLUGIN")
+                .expect("AURIS_VST3_SMOKE_PLUGIN must name a VST3 bundle"),
+        );
+        let info = plugins_in(&path)
+            .unwrap()
+            .into_iter()
+            .find(|info| info.kind == PluginKind::Instrument)
+            .expect("the bundle must expose an instrument");
+        let prepare = PrepareContext::new(48_000.0, 512, 2);
+        let control = Vst3Plugin::load(&path, &info.class_id, &prepare).unwrap();
+        let context = ProcessContext::realtime(48_000.0, 512, 0, 120.0, true);
+        let mut peak = 0.0_f32;
+        for edit in 0..24 {
+            let mut instrument = control.instrument().unwrap();
+            Instrument::prepare(&mut instrument, &prepare);
+            let mut out = AudioBuffer::from_planar(vec![vec![0.0; 512]; 2], 48_000.0).unwrap();
+            let struck = [NoteEvent::note_on(0, 60 + (edit % 12) as u8, 0.9)];
+            for block in 0..16 {
+                let events: &[NoteEvent] = if block == 0 { &struck } else { &[] };
+                instrument.process(events, &mut out, &context);
+                peak = peak.max(out.peak());
+            }
+            assert!(!instrument.processing_failed(), "edit {edit}");
+            // The engine drops a replaced graph on a thread of its own.
+            std::thread::spawn(move || drop(instrument)).join().unwrap();
+        }
+        assert_eq!(control.shared.render_loads.load(Ordering::Relaxed), 1);
+        assert!(peak > 0.0, "a reused instance must still sound");
     }
 
     #[test]

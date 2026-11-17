@@ -2702,11 +2702,28 @@ impl ParameterChanges {
     ///
     /// `points_per_parameter` is a hard bound in single-owner mode: excess points are rejected
     /// instead of growing a vector from the audio callback.
+    ///
+    /// Calling it again, on the control thread while nothing processes, re-applies both bounds
+    /// exactly: the pool is cut back to `parameters` and every queue's capacity, which is the
+    /// point bound, is made `points_per_parameter` again.
     pub fn prepare_single_owner(&self, parameters: usize, points_per_parameter: usize) {
         let mut queues = self
             .queues
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
+        self.used.store(0, Ordering::Relaxed);
+        queues.truncate(parameters);
+        for queue in queues.iter() {
+            let mut points = queue
+                .points
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if points.capacity() != points_per_parameter {
+                *points = Vec::with_capacity(points_per_parameter);
+            } else {
+                points.clear();
+            }
+        }
         while queues.len() < parameters {
             queues.push(ComWrapper::new(ParameterValueQueue::with_capacity(
                 0,
@@ -4073,6 +4090,29 @@ mod parameter_changes_tests {
         changes.clear_all();
         assert!(changes.enqueue(8, 0, 1.0));
         assert_eq!(unsafe { changes.getParameterCount() }, 1);
+    }
+
+    #[test]
+    fn preparing_a_single_owner_pool_again_applies_the_new_bounds_exactly() {
+        let changes = ParameterChanges::default();
+        changes.prepare_single_owner(1, 2);
+        assert!(changes.enqueue(7, 0, 0.25));
+
+        // Handed to a new owner with wider bounds: the stale point is gone, three fit.
+        changes.prepare_single_owner(2, 3);
+        assert_eq!(unsafe { changes.getParameterCount() }, 0);
+        for offset in 0..3 {
+            assert!(changes.enqueue(7, offset, 0.5));
+        }
+        assert!(!changes.enqueue(7, 3, 0.5));
+        assert!(changes.enqueue(8, 0, 0.5));
+        assert!(!changes.enqueue(9, 0, 0.5));
+
+        // And with narrower ones, the pool and every queue shrink back to them.
+        changes.prepare_single_owner(1, 1);
+        assert!(changes.enqueue(7, 0, 0.5));
+        assert!(!changes.enqueue(7, 1, 0.5));
+        assert!(!changes.enqueue(8, 0, 0.5));
     }
 
     #[test]
