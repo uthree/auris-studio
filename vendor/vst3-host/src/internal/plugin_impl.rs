@@ -2767,7 +2767,10 @@ impl PluginInternal for PluginImpl {
         parameter_queues: usize,
         points_per_parameter: usize,
     ) -> Result<()> {
-        if self.is_processing || self.realtime_owned {
+        // A second call on an instance that is already realtime-owned is how a host hands a
+        // stopped render instance to a new owner: the queues are prepared again (a `reconfigure`
+        // in between replaces them with ordinary ones) and every other step is idempotent.
+        if self.is_processing {
             return Err(Error::RealtimeCapacityExceeded);
         }
         let points_per_parameter = points_per_parameter.max(1);
@@ -3147,8 +3150,12 @@ impl PluginInternal for PluginImpl {
                 self.is_active = false;
             }
 
-            // Nothing can still be sounding, so no note-on is outstanding.
+            // Nothing can still be sounding, so no note-on is outstanding. The ordinary-note
+            // counts go too: an instance started again must not have its voice capacity, or its
+            // next panic, decided by notes it held in an earlier run.
             self.active_notes.clear();
+            self.ordinary_note_counts.fill(0);
+            self.ordinary_active_notes = 0;
 
             Ok(())
         }

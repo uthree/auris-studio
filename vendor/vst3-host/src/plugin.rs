@@ -2026,6 +2026,10 @@ impl Plugin {
     /// processing owner. After this succeeds, do not share or call this `Plugin` from another
     /// thread; move it into the audio runner instead.
     ///
+    /// Once the runner has given the instance back and it has been stopped with
+    /// [`Self::stop_processing`], it may be prepared again, with the same or other bounds, and
+    /// handed to a new runner. This also re-prepares queues a [`Self::reconfigure`] replaced.
+    ///
     /// Output MIDI, processor-to-host parameter feedback, editor feedback and the convenience
     /// level meter are disabled on this path. They are control-plane features and would require
     /// sharing their storage with a non-realtime thread.
