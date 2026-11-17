@@ -82,6 +82,17 @@ pub enum CoreError {
         /// Greatest supported note-instance count.
         limit: usize,
     },
+
+    /// A document carries a sample rate no audio graph is built for.
+    #[error("the project's sample rate {rate} Hz is outside the supported {min}–{max} Hz range")]
+    UnsupportedSampleRate {
+        /// The rate the document asked for.
+        rate: f64,
+        /// Lowest supported rate.
+        min: f64,
+        /// Highest supported rate.
+        max: f64,
+    },
 }
 
 /// Result alias used throughout the core crate.
