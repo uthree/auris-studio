@@ -234,7 +234,7 @@ pub enum NoteEdit {
     Replace {
         /// Stable MIDI clip ID.
         clip: u64,
-        /// Complete replacement, in exact ticks.
+        /// Complete replacement; an empty array clears the clip.
         notes: Vec<AuthoredNote>,
     },
 }
@@ -248,9 +248,6 @@ impl NoteEdit {
         }
     }
 }
-
-/// How read_notes and edit_notes count time, said once in every read.
-const TIME_UNITS: &str = "bar is the 1-based song bar (clip bars are [first,last]); beat is 1-based in the meter's beat, fractional within the bar; length_beats uses the same beat. on_grid:false marks a stored attack between subdivisions.";
 
 impl Session {
     pub(super) fn agent_read_notes(&self, requests: &[NoteRead]) -> Result<String, String> {
@@ -335,13 +332,21 @@ impl Session {
             }
             pages.push(page);
         }
-        Ok(serde_json::json!({"revision":self.agent_document_revision()?,"time":TIME_UNITS,"clips":pages}).to_string())
+        // The units are the tool's description, not a sentence repeated on every page: it was
+        // two hundred bytes, two and a half thousand times in the workshop logs.
+        Ok(
+            serde_json::json!({"revision":self.agent_document_revision()?,"clips":pages})
+                .to_string(),
+        )
     }
 
     /// Content-based revision, also stable across saved-project calls and process restarts.
+    ///
+    /// Sixteen hex digits of the SHA-256, not sixty-four: it only has to tell this document
+    /// from the one a model last read, and a model copies it into nearly every edit.
     pub fn agent_document_revision(&self) -> Result<String, String> {
         let bytes = serde_json::to_vec(self.project()).map_err(|e| e.to_string())?;
-        Ok(Sha256::digest(bytes)
+        Ok(Sha256::digest(bytes)[..8]
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect())

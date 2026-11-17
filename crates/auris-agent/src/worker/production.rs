@@ -37,6 +37,26 @@ fn record_view(record: &Record, document: &Value, instructions: bool) -> Result<
     Ok(view)
 }
 
+/// The phase as the record view states it, with only the checks still unmet.
+///
+/// What a put or remove answers with: whether the work is done is the one thing the model
+/// does not already know after writing a note.
+fn unmet_checks(phase: &Value) -> Value {
+    if phase.is_null() {
+        return Value::Null;
+    }
+    let checks: Vec<Value> = phase["checks"]
+        .as_object()
+        .into_iter()
+        .flat_map(|by_phase| by_phase.values())
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter(|check| check["met"] == false)
+        .cloned()
+        .collect();
+    json!({"current":phase["current"],"unmet_checks":checks})
+}
+
 /// The record saved beside a conversation's history, or an empty one when there is none.
 ///
 /// Under the lock the record's own save renames under, since on Windows that rename fails for
@@ -103,6 +123,14 @@ impl Bridge {
     pub(crate) fn production_record(&self, operation: Operation) -> Result<Value, String> {
         let write = !matches!(operation, Operation::Read);
         let instructions = matches!(operation, Operation::Read | Operation::EnterPhase { .. });
+        // A note the model has just written is not news to it: put and remove answer with
+        // what they did and where the phase stands, not the record they changed. The whole
+        // record on every put cost several kilobytes each, three hundred times in the logs.
+        let acknowledged = match &operation {
+            Operation::Put { entry } => Some(json!({"stored":entry.key})),
+            Operation::Remove { key } => Some(json!({"removed":key})),
+            _ => None,
+        };
         self.with_production(
             |state| {
                 if !state.document["revision"].is_string() {
@@ -113,6 +141,13 @@ impl Bridge {
                 state
                     .record
                     .update_with_document(operation, &state.document)?;
+                if let Some(mut answer) = acknowledged {
+                    // Read from the unpaged view: a long record pages the phase away.
+                    answer["entries"] = state.record.entries.len().into();
+                    answer["phase"] = unmet_checks(&state.record.view(&state.document)["phase"]);
+                    answer["next"] = "production_record read shows the whole record.".into();
+                    return Ok(answer);
+                }
                 let mut view = record_view(&state.record, &state.document, instructions)?;
                 view["persistence"] = json!(if state.history.is_some() {
                     "conversation"
@@ -287,6 +322,53 @@ Usage: Loop background music."
         let quiet = record_view(&record, &json!({"revision":"today"}), false).unwrap();
         assert!(quiet.get("phase_instructions").is_none());
     }
+    #[test]
+    fn a_put_answers_with_its_key_and_the_unmet_checks_not_the_record() {
+        let (bridge, _, _) = test_bridge();
+        bridge
+            .inspected_production_document(&mut json!({"revision":"one"}))
+            .unwrap();
+        bridge
+            .production_record(Operation::EnterPhase {
+                phase: auris_session::production_record::Phase::Score,
+                reason: "new song".into(),
+                writing_order: None,
+            })
+            .unwrap();
+        let put = |key: &str| {
+            bridge
+                .production_record(
+                    serde_json::from_value(json!({"kind":"put","entry":{
+                "key":key,"category":"motif","source":"agent_assumption","basis":"opening phrase",
+                "text":"keep the rising third"}}))
+                    .unwrap(),
+                )
+                .unwrap()
+        };
+        put("motif");
+        let answer = put("hook");
+        assert_eq!(answer["stored"], "hook");
+        assert_eq!(answer["entries"], 2);
+        assert_eq!(answer["phase"]["current"], "score");
+        let unmet = answer["phase"]["unmet_checks"].as_array().unwrap();
+        assert!(!unmet.is_empty());
+        assert!(unmet.iter().all(|check| check["met"] == false));
+        // The record itself, and the phase instructions, stay behind read.
+        assert!(answer.get("evidence").is_none() && answer.get("coverage").is_none());
+        assert!(answer.get("phase_instructions").is_none());
+        let removed = bridge
+            .production_record(Operation::Remove { key: "hook".into() })
+            .unwrap();
+        assert_eq!(
+            (removed["removed"].as_str(), removed["entries"].as_u64()),
+            (Some("hook"), Some(1))
+        );
+        assert_eq!(
+            bridge.production_record(Operation::Read).unwrap()["entries"][0]["entry"]["key"],
+            "motif"
+        );
+    }
+
     #[test]
     fn records_resume_and_reset_rejects_a_late_writer() {
         let directory = tempfile::tempdir().unwrap();

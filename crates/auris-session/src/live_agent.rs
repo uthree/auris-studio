@@ -991,6 +991,68 @@ fn with_document_revision(
     serde_json::Value::Object(answer).to_string()
 }
 
+/// Rewrites every number with more than six decimals, outside string literals, in the shortest
+/// form that reads back as the same `f32`.
+///
+/// Parameters, gains and pans are `f32`; widened to `f64` for JSON they print their binary
+/// error (0.7799999713897705 for 0.78), and seconds computed in `f64` print sixteen digits.
+/// Each costs the model a dozen tokens for nothing it can use, on every reading of a mixer or
+/// an inspection. Seven significant digits are more than any value here is set or heard to.
+/// Integers, short decimals and anything inside quotes are left alone.
+fn trim_float_noise(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    let mut in_string = false;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if in_string {
+            if byte == b'\\' {
+                let end = (at + 2).min(bytes.len());
+                out.push_str(&text[at..end]);
+                at = end;
+                continue;
+            }
+            in_string = byte != b'"';
+        } else if byte == b'"' {
+            in_string = true;
+        } else if byte.is_ascii_digit() && (at == 0 || !is_word_byte(bytes[at - 1])) {
+            let start = at;
+            let mut end = at;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+            let mut decimals = 0;
+            if end + 1 < bytes.len() && bytes[end] == b'.' && bytes[end + 1].is_ascii_digit() {
+                end += 1;
+                while end < bytes.len() && bytes[end].is_ascii_digit() {
+                    end += 1;
+                    decimals += 1;
+                }
+            }
+            let token = &text[start..end];
+            let ends_word = end < bytes.len() && is_word_byte(bytes[end]);
+            match token.parse::<f64>() {
+                Ok(value) if decimals > 6 && !ends_word && (value as f32).is_finite() => {
+                    out.push_str(&(value as f32).to_string());
+                }
+                _ => out.push_str(token),
+            }
+            at = end;
+            continue;
+        }
+        let width = text[at..].chars().next().map_or(1, char::len_utf8);
+        out.push_str(&text[at..at + width]);
+        at += width;
+    }
+    out
+}
+
+/// Whether a byte continues a word or a number, so a digit beside it is not a number of its own.
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'e' | b'E')
+}
+
 impl Session {
     /// Execute a file-free command against this session, preserving ordinary undo semantics.
     ///
@@ -1023,6 +1085,7 @@ impl Session {
         let result = self
             .with_agent_history(|session| session.execute_agent_command(command, plugin_paths))
             .map(|text| {
+                let text = trim_float_noise(&text);
                 if self.revision() == before {
                     return text;
                 }
@@ -1719,6 +1782,31 @@ mod tests {
                 &serde_json::json!({"command":{"action":"report_status","status":"Writing"}}),
             )
             .is_ok_and(|op| op.name == "edit_project.report_status" && !op.mutating)
+        );
+    }
+
+    #[test]
+    fn float_noise_is_trimmed_outside_strings_only() {
+        assert_eq!(
+            trim_float_noise(r#"{"value":0.7799999713897705,"pan":-0.25999999046325684}"#),
+            r#"{"value":0.78,"pan":-0.26}"#
+        );
+        assert_eq!(
+            trim_float_noise(r#"{"seconds":13.52112676056338,"bar":3,"beat":2.5}"#),
+            r#"{"seconds":13.521127,"bar":3,"beat":2.5}"#
+        );
+        // Strings, escaped quotes inside them, exponents and words keep every digit.
+        for kept in [
+            r#"{"text":"0.7799999713897705 \"1.23456789\""}"#,
+            r#"{"tiny":1.2345678e-9}"#,
+            "v1.234567891 x",
+            "見た 0.12",
+        ] {
+            assert_eq!(trim_float_noise(kept), kept);
+        }
+        assert_eq!(
+            trim_float_noise("Rendered audio, revision 183.\n{\"peak\":-6.894632938247643}"),
+            "Rendered audio, revision 183.\n{\"peak\":-6.894633}"
         );
     }
 

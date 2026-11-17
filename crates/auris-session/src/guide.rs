@@ -1148,8 +1148,10 @@ pub mod architecture {
     //! generations. Workers only modify their own track; the caller then commits outputs in
     //! stable order before the next generation starts. Reordering independent contributions
     //! can introduce floating-point roundoff relative to playback, while output length and
-    //! sample timing remain unchanged. Caller-placed plugins stay on the rendering caller's
-    //! thread until their native worker-migration contracts are established. Realtime rendering
+    //! sample timing remain unchanged. A caller-placed plugin joins the workers only when
+    //! its format allows `process` to move between threads
+    //! ([`Instrument::bound_to_one_thread`](auris_core::plugin::Instrument::bound_to_one_thread)):
+    //! CLAP and VST3 both do. Realtime rendering
     //! retains the serial routing order and never dispatches to or waits for Rayon.
     //!
     //! # How it gets there: outputs and buses

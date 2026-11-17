@@ -784,6 +784,12 @@ impl Worker {
         }
     }
 
+    /// Whether the worker thread has ended, without reading its events.
+    #[cfg(test)]
+    pub(crate) fn has_stopped(&self) -> bool {
+        self.stopped.load(Ordering::Acquire)
+    }
+
     /// Send a user request or a host response without waiting for the worker.
     pub fn send(&self, message: &str) -> Result<(), String> {
         if self.stopped.load(Ordering::Acquire) {

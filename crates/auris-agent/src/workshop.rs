@@ -1657,6 +1657,33 @@ fn read_record(
         .map_err(|e| AttemptError::permanent(format!("Production record is unreadable: {e}")))
 }
 
+/// Sends `message`, or says why the worker could not take it.
+///
+/// A worker that ended while the host was busy with a long tool leaves its reason queued
+/// behind the reply; the bare send error ("The agent worker stopped") would hide it, and the
+/// recovery would be told nothing it could act on.
+fn reply(
+    worker: &crate::Worker,
+    log: &mut composer_log::Log,
+    message: &str,
+) -> Result<(), AttemptError> {
+    let Err(stopped) = worker.send(message) else {
+        return Ok(());
+    };
+    let mut reason = None;
+    while let Ok(event) = worker.try_recv() {
+        log.observe(&event);
+        if event["event"] == "error" {
+            reason = event["message"].as_str().map(str::to_owned);
+        }
+    }
+    Err(match reason {
+        Some(reason) => format!("{reason} ({stopped})"),
+        None => stopped,
+    }
+    .into())
+}
+
 fn keep_record(worker: &crate::Worker, path: &std::path::Path) -> Result<(), AttemptError> {
     let record = worker.production_record()?;
     let bytes = serde_json::to_vec(&record).map_err(|e| AttemptError::permanent(e.to_string()))?;
@@ -2058,7 +2085,9 @@ fn compose_guided(
         "assignment",
         json!({"message":assignment,"backend":prefs.backend,"model":prefs.model}),
     );
-    worker.send(
+    reply(
+        &worker,
+        &mut log,
         &json!({"say": assignment.to_string(),"policy":prefs.policy,"attachments":references})
             .to_string(),
     )?;
@@ -2112,7 +2141,7 @@ fn compose_guided(
                 // own shell and file tools (Claude Code reads oversized tool output back from a
                 // file), and one such reach should not discard the whole candidate.
                 log.permission(event["tool"].as_str().unwrap_or_default(), allowed);
-                worker.send(&json!({"event":"permission_result","id":event["id"],"ok":allowed,
+                reply(&worker, &mut log, &json!({"event":"permission_result","id":event["id"],"ok":allowed,
                     "reason":"Isolated candidate: only Auris music tools are available. Do not use shell or file tools; continue with the Auris tools."}).to_string())?;
                 if !allowed {
                     denials += 1;
@@ -2132,13 +2161,13 @@ fn compose_guided(
                 if let Ok(status) = &result {
                     let _ = sender.send(JobEvent::Status(candidate.id, status.clone()));
                 }
-                let reply = match result {
+                let answer = match result {
                     Ok(status) => {
                         json!({"event":"edit_result","ok":true,"text":json!({"shown":status}).to_string()})
                     }
                     Err(error) => json!({"event":"edit_result","ok":false,"text":error}),
                 };
-                worker.send(&reply.to_string())?;
+                reply(&worker, &mut log, &answer.to_string())?;
             }
             "edit" => {
                 let action = event["command"]["action"].as_str().unwrap_or_default();
@@ -2172,7 +2201,7 @@ fn compose_guided(
                     save_checkpoint(&mut session, &folder)?;
                     keep_record(&worker, &folder.join(CHECKPOINT_RECORD))?;
                 }
-                let reply = match result {
+                let answer = match result {
                     Ok(text) if action == "inspect_audio" => {
                         json!({"event":"edit_result","ok":true,"inspection":serde_json::from_str::<serde_json::Value>(&text).map_err(|e|e.to_string())?})
                     }
@@ -2180,7 +2209,7 @@ fn compose_guided(
                         json!({"event":"edit_result","ok":result.is_ok(),"text":result.unwrap_or_else(|e|e)})
                     }
                 };
-                worker.send(&reply.to_string())?;
+                reply(&worker, &mut log, &answer.to_string())?;
             }
             "result" if event["ok"] == false => {
                 last_failure = event["text"]
@@ -2205,10 +2234,8 @@ fn compose_guided(
                         log.note("send_back", unresolved.clone());
                         let _ = sender.send(JobEvent::Progress(candidate.id, "arrange".into()));
                         deadline += Duration::from_secs(300);
-                        worker.send(
-                            &json!({"say": send_back(&unresolved).to_string(),"policy":prefs.policy})
-                                .to_string(),
-                        )?;
+                        reply(&worker, &mut log, &json!({"say": send_back(&unresolved).to_string(),"policy":prefs.policy})
+                                .to_string(),)?;
                         continue;
                     }
                     log.note("unresolved", unresolved);
@@ -2466,6 +2493,42 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "no snapshot");
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn a_reply_to_a_worker_that_ended_says_why_it_ended() {
+        // A Claude Code that cannot be started ends the worker with its reason queued, as a
+        // CLI that cancels a long tool call does while the host is still running it.
+        let folder = tempfile::tempdir().unwrap();
+        let missing = folder.path().join(if cfg!(windows) {
+            "claude.exe"
+        } else {
+            "claude"
+        });
+        let prefs = auris_session::AgentPreferences {
+            backend: "claude".into(),
+            claude_path: missing.display().to_string(),
+            ..Default::default()
+        };
+        let worker = crate::Worker::spawn(prefs, None, true, None).unwrap();
+        worker.send(r#"{"say":"Compose"}"#).unwrap();
+        let mut log = super::composer_log::Log::open(folder.path());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let error = loop {
+            if worker.has_stopped() {
+                break super::reply(&worker, &mut log, "{}").unwrap_err().message;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the worker never ended"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert!(error.ends_with("(The agent worker stopped)"), "{error}");
+        assert!(
+            error.len() > "(The agent worker stopped)".len() + 1,
+            "{error}"
+        );
     }
 
     #[test]

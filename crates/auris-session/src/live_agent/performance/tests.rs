@@ -613,7 +613,7 @@ fn partial_edits_upgrade_legacy_stages_without_losing_their_controls_or_order() 
         None,
     )
     .unwrap();
-    assert_eq!(result["settings"]["expression"]["velocity"], json!(0.2f32));
+    assert_eq!(result["settings"]["expression"]["velocity"], json!(0.2));
     assert_eq!(result["settings"]["expression"]["seed"], 9);
     assert_eq!(result["settings"]["strum"]["spread_ms"], 23.0);
     assert_eq!(result["settings"]["strum"]["direction"], "high_to_low");
@@ -784,7 +784,7 @@ fn groove_capture_uses_the_performed_reference_and_partial_edits_keep_the_snapsh
         None,
     )
     .unwrap();
-    assert_eq!(result["settings"]["groove"]["timing"], json!(0.8f32));
+    assert_eq!(result["settings"]["groove"]["timing"], json!(0.8));
     let actual = session
         .clip_transforms(target)
         .unwrap()

@@ -330,12 +330,15 @@ impl RenderGraph {
         let mut scheduled_audio_windows_total = 0usize;
         let mut resource_error = None;
         for (index, track) in project.tracks.iter().enumerate() {
-            let parallel_safe = !instruments.contains_key(&track.id)
-                && !track
-                    .mixer
-                    .effects
-                    .iter()
-                    .any(|slot| placed.contains_key(&slot.id));
+            // A plugin the caller placed may move between worker threads only if it says so.
+            let parallel_safe = !instruments
+                .get(&track.id)
+                .is_some_and(|instrument| instrument.bound_to_one_thread())
+                && !track.mixer.effects.iter().any(|slot| {
+                    placed
+                        .get(&slot.id)
+                        .is_some_and(|effect| effect.bound_to_one_thread())
+                });
             // `audible` carries only the solo resolution; the strip keeps its own mute so a
             // mute toggle is a command rather than a rebuild.
             let audible = solo.get(index).copied().unwrap_or(true);
