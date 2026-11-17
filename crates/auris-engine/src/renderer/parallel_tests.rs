@@ -433,7 +433,6 @@ fn a_placed_plugin_that_may_change_threads_joins_the_workers() {
             .create_instrument(crate::testkit::TONE_ID)
             .unwrap(),
     );
-    let mut project = project;
     project.tracks[0].mixer.effects.clear();
     let graph = RenderGraph::build_with(
         &project,
