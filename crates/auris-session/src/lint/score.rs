@@ -162,7 +162,9 @@ fn sounding_tracks(project: &Project) -> impl Iterator<Item = (TrackId, &[MidiCl
 
 pub(super) fn events(project: &Project) -> Vec<Event> {
     let mut events = Vec::new();
-    for (track, clips, drum) in sounding_tracks(project) {
+    // Leaving the loops at the cap must still reach the sort below: every rule after this
+    // scans in start order, and the capped prefix is in track order (issue #164).
+    'expand: for (track, clips, drum) in sounding_tracks(project) {
         for clip in clips.iter().filter(|clip| !clip.muted) {
             let notes: Vec<_> = clip.playable_notes_with_indices().collect();
             for (offset, span) in loop_passes(clip.length, clip.loop_end) {
@@ -171,7 +173,7 @@ pub(super) fn events(project: &Project) -> Vec<Event> {
                         continue;
                     }
                     if events.len() >= MAX_EVENTS {
-                        return events;
+                        break 'expand;
                     }
                     let start = clip.start + offset + note.start;
                     let length = note.length.min(span - note.start).max(Ticks(1));
@@ -1422,6 +1424,47 @@ mod tests {
 
     fn rules(project: &Project) -> Vec<Rule> {
         lint_score(project).iter().map(|d| d.rule).collect()
+    }
+
+    #[test]
+    fn events_cut_off_at_the_cap_are_still_in_timeline_order() {
+        // Issue #164: thirteen late tracks loop a one-tick note up to the cap, and the chord at
+        // tick 0 sits on the last track. Returning before the sort handed the rules a list
+        // that ran backwards in time, and the chord's missing annotation went unreported.
+        let mut project = Project::new("Cap", 48_000.0);
+        for n in 0..13 {
+            let track = project.add_instrument_track(format!("Late {n}"), "auris.synth.pulse");
+            let clip = project
+                .add_midi_clip(track, "Loop", Ticks(TICKS_PER_QUARTER * 40), Ticks(1))
+                .unwrap();
+            let clip = project.midi_clip_mut(clip).unwrap();
+            clip.notes = vec![Note::new(60, Ticks::ZERO, Ticks(1))];
+            // 12 × 16,384 + 3,389 = 199,997: three of the chord's notes fit, the fourth is cut.
+            clip.loop_end = Ticks(if n < 12 { 16_384 } else { 3_389 });
+        }
+        let track = project.add_instrument_track("Early", "auris.synth.pulse");
+        let clip = project
+            .add_midi_clip(track, "Chord", Ticks::ZERO, Ticks(TICKS_PER_QUARTER))
+            .unwrap();
+        project.midi_clip_mut(clip).unwrap().notes = [60, 64, 67, 72]
+            .into_iter()
+            .map(|p| Note::new(p, Ticks::ZERO, Ticks(TICKS_PER_QUARTER)))
+            .collect();
+
+        let events = events(&project);
+        assert_eq!(events.len(), MAX_EVENTS);
+        assert!(
+            events
+                .windows(2)
+                .all(|pair| (pair[0].start, pair[0].pitch) <= (pair[1].start, pair[1].pitch))
+        );
+        assert_eq!(events[0].start, Ticks::ZERO);
+        assert!(
+            missing_chords(&project, &events)
+                .iter()
+                .any(|d| d.rule == Rule::MissingChord),
+            "the chord at tick 0 is still reported"
+        );
     }
 
     #[test]
