@@ -890,8 +890,21 @@ mod tests {
     #[test]
     fn without_a_limiter_the_lifted_mix_is_the_measured_one_scaled() {
         let mut session = written_by_hand(true);
+        // Pull every fader down and aim a decibel above wherever the instruments then put the
+        // mix, so the lift is the loudness target's and not the true peak's however loud the
+        // built-in voices are this build.
+        let faders: Vec<_> = session
+            .project
+            .tracks
+            .iter()
+            .map(|track| (track.id, track.mixer.gain_db))
+            .collect();
+        for (id, gain_db) in faders {
+            session.write_fader(id, gain_db - 6.0);
+        }
         let rendered_before = session.analyze(false).unwrap();
-        let report = session.normalize_mix(-20.0, -1.0).unwrap();
+        let target = rendered_before.lufs.expect("a mix that plays") + 1.0;
+        let report = session.normalize_mix(target, -1.0).unwrap();
         assert!(
             !report.limited && report.offset_db.abs() > 0.5,
             "{report:?}"
