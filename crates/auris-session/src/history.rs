@@ -48,6 +48,8 @@ pub enum Edit {
     SetTuning,
     /// A tempo change was removed, letting the tempo before it run through.
     RemoveTempoPoint,
+    /// A tempo change was set to glide to the next one, or to hold.
+    SetTempoRamp,
     /// The time signature of one stretch of the timeline was changed.
     ///
     /// Carries the position of the change being turned, for the reason [`Edit::ChangeTempo`]

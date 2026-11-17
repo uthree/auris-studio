@@ -60,6 +60,7 @@
 
 pub mod audio;
 pub mod bank;
+mod brightness;
 pub mod sampler;
 pub mod zones;
 

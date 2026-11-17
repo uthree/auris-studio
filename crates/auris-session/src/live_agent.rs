@@ -2350,6 +2350,7 @@ mod tests {
                 operation: document_editing::TimelineOperation::SetTempo {
                     at_tick: 0,
                     bpm: f64::NAN,
+                    ramp: None,
                 },
             },
             Command::SetLoop {
@@ -2369,6 +2370,7 @@ mod tests {
                 operation: document_editing::TimelineOperation::SetTempo {
                     at_tick: 0,
                     bpm: 144.0,
+                    ramp: None,
                 },
             })
             .unwrap();

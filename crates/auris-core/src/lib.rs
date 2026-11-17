@@ -53,9 +53,9 @@ pub use harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
 pub use lyrics::{LyricLine, LyricMap, LyricSpan};
 pub use param::{ParamDescriptor, ParamId, ParamTarget, ParamUnit, ParamValueCurve};
 pub use plugin::{
-    CC_EXPRESSION, CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent, Parameterized,
-    PluginCategory, PluginDescriptor, PluginKind, PluginState, PrepareContext, ProcessContext,
-    TailContext,
+    CC_BRIGHTNESS, CC_EXPRESSION, CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent,
+    Parameterized, PluginCategory, PluginDescriptor, PluginKind, PluginState, PrepareContext,
+    ProcessContext, TailContext,
 };
 pub use project::{
     AudioClip, AudioSource, AudioSourceBank, AudioTrack, CHORD_VOICES, ClipId, ClipPreset,
@@ -85,9 +85,9 @@ pub mod prelude {
     pub use crate::buffer::AudioBuffer;
     pub use crate::param::{ParamDescriptor, ParamId, ParamUnit, ParamValueCurve};
     pub use crate::plugin::{
-        CC_EXPRESSION, CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent, Parameterized,
-        PluginCategory, PluginDescriptor, PluginKind, PluginState, PrepareContext, ProcessContext,
-        TailContext,
+        CC_BRIGHTNESS, CC_EXPRESSION, CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent,
+        Parameterized, PluginCategory, PluginDescriptor, PluginKind, PluginState, PrepareContext,
+        ProcessContext, TailContext,
     };
     pub use crate::registry::PluginRegistry;
 }

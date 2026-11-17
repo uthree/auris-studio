@@ -286,6 +286,8 @@ pub struct Sampler {
     scratch_right: Vec<f32>,
     /// Keys held, for the activity indicator.
     held: u32,
+    /// The brightness controller's filter, applied after the font.
+    brightness: crate::brightness::Brightness,
 }
 
 impl Sampler {
@@ -324,6 +326,7 @@ impl Sampler {
             scratch_left: Vec::new(),
             scratch_right: Vec::new(),
             held: 0,
+            brightness: crate::brightness::Brightness::default(),
         }
     }
 
@@ -454,6 +457,11 @@ impl Sampler {
                 synth.process_midi_message(CHANNEL, PITCH_BEND, raw & 0x7F, (raw >> 7) & 0x7F);
             }
             NoteEvent::Controller { number, value, .. } if !is_reserved(number) => {
+                // Brightness is answered here as well, since no font can follow it; see the
+                // `brightness` module. The font is still told, in case it was built to listen.
+                if number == auris_core::CC_BRIGHTNESS {
+                    self.brightness.set(value);
+                }
                 // Handed straight to the font rather than interpreted, whichever controller it is.
                 // A SoundFont declares its own modulators — controller 1 is conventionally wired
                 // to a vibrato depth in every General MIDI set — but a font is free to have wired
@@ -507,6 +515,7 @@ impl Sampler {
             scratch_left,
             scratch_right,
             held,
+            brightness,
             ..
         } = self;
         let Some(synth) = synth.as_mut() else {
@@ -531,6 +540,7 @@ impl Sampler {
                     }
                     return;
                 }
+                brightness.process(&mut left[start..end], &mut right[start..end]);
                 // More than two channels is not something the engine asks for, but a buffer
                 // that arrives with them should not come back with silence in the extras.
                 for (index, extra) in rest.iter_mut().enumerate() {
@@ -551,6 +561,7 @@ impl Sampler {
                     mono[start..end].fill(0.0);
                     return;
                 }
+                brightness.process(&mut scratch_left[..frames], &mut scratch_right[..frames]);
                 for (index, sample) in mono[start..start + frames].iter_mut().enumerate() {
                     *sample = 0.5 * (scratch_left[index] + scratch_right[index]);
                 }
@@ -642,6 +653,7 @@ impl Instrument for Sampler {
             log::warn!("the synthesiser panicked while rendering and is being rebuilt");
         }
         self.poisoned = false;
+        self.brightness.prepare(ctx.sample_rate as f32);
         self.level
             .set_time(LEVEL_SMOOTHING_SECONDS, ctx.sample_rate as f32);
         self.level
@@ -694,6 +706,7 @@ impl Instrument for Sampler {
 
     fn reset(&mut self) {
         self.held = 0;
+        self.brightness.reset();
         if self.poisoned {
             // The synthesiser died rendering; whatever state it was left in is not one to
             // call back into. `prepare` will build a fresh one.
@@ -1032,6 +1045,36 @@ mod tests {
         assert!(
             rms(&out.channel(0)[2048..]) < 1e-6,
             "the note started after All Sound Off kept sounding after its own note-off"
+        );
+    }
+
+    #[test]
+    fn the_brightness_controller_darkens_the_font_and_rests_untouched_at_the_middle() {
+        let bank = stocked();
+        let render = |brightness: Option<f32>| {
+            let mut sampler = playing(bank.clone(), 0, 4096);
+            let mut out = AudioBuffer::stereo(4096, RATE);
+            let ctx = ProcessContext::realtime(RATE, 4096, 0, 120.0, true);
+            let mut events = Vec::new();
+            if let Some(value) = brightness {
+                events.push(NoteEvent::Controller {
+                    frame: 0,
+                    number: auris_core::CC_BRIGHTNESS,
+                    value,
+                });
+            }
+            events.push(note_on(0));
+            sampler.process(&events, &mut out, &ctx);
+            out.channel(0).to_vec()
+        };
+        let plain = render(None);
+        assert_eq!(render(Some(0.5)), plain, "the middle is the font as it is");
+        let dark = render(Some(0.0));
+        assert!(
+            rms(&dark[2048..]) < 0.9 * rms(&plain[2048..]),
+            "{} against {}",
+            rms(&dark[2048..]),
+            rms(&plain[2048..])
         );
     }
 

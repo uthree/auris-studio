@@ -171,7 +171,8 @@ impl NoteScore {
             }
         }
 
-        for point in project.tempo_map.points() {
+        // A glide reads out beat by beat, the way the ruler would be read along it.
+        for point in project.tempo_map.stepped(auris_core::Ticks::QUARTER) {
             let start = project.tempo_map.ticks_to_seconds(point.tick).0;
             if start.is_finite() && point.bpm.is_finite() && point.bpm > 0.0 {
                 score.tempos.push(ScoreTempo {

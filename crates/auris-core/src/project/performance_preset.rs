@@ -190,6 +190,19 @@ pub fn builtin_performance_presets() -> Vec<PerformancePreset> {
             ..PitchPerformance::default()
         },
     };
+    // A player's own touch on top of the gestures: uneven vibrato, leaning intonation and a
+    // sound that darkens as it is played softer.
+    let played = |stage: T, vibrato_variation: f32, intonation: f32, brightness: f32| match stage {
+        T::Pitch { settings } => T::Pitch {
+            settings: PitchPerformance {
+                vibrato_variation,
+                intonation,
+                brightness,
+                ..settings
+            },
+        },
+        other => other,
+    };
     let strum = |spread_ms, clock, up_notes, up_velocity, low_accent| T::Strum {
         settings: Strum {
             spread_ms,
@@ -213,22 +226,25 @@ pub fn builtin_performance_presets() -> Vec<PerformancePreset> {
         preset(
             "piano_ballad",
             Keys,
-            "Pedalled piano: chords ring a quarter note past their release, a slight rolled attack and a gently breathing phrase.",
+            "Pedalled piano: the melody sings over its chords, the pedal changes with the harmony, a slight rolled attack and a gently breathing phrase.",
             vec![
+                T::Contour { amount: 0.5 },
+                T::Voicing { amount: 0.6 },
                 T::Stroke {
                     spread_ms: 6.0,
                     direction: StrokeDirection::Alternate,
                 },
                 expression(0.25, 0.30, 0.14, 0.04, 0.5),
-                T::Sustain { ticks: 960 },
+                T::Pedal { amount: 0.9 },
             ],
         ),
         preset(
             "piano_pop_comp",
             Keys,
-            "Tight pop piano comping: a quick rolled chord, slightly detached, firm on the beat.",
+            "Tight pop piano comping: a quick rolled chord with its top voice brought out, slightly detached, firm on the beat.",
             vec![
                 T::Gate { amount: 0.9 },
+                T::Voicing { amount: 0.4 },
                 T::Stroke {
                     spread_ms: 5.0,
                     direction: StrokeDirection::Alternate,
@@ -239,9 +255,10 @@ pub fn builtin_performance_presets() -> Vec<PerformancePreset> {
         preset(
             "jazz_piano_comp",
             Keys,
-            "Jazz comping: wider roll, short stabs and the offbeats leaned on rather than the beat.",
+            "Jazz comping: wider roll, short stabs with the top voice on top, and the offbeats leaned on rather than the beat.",
             vec![
                 T::Gate { amount: 0.75 },
+                T::Voicing { amount: 0.4 },
                 T::Stroke {
                     spread_ms: 9.0,
                     direction: StrokeDirection::Alternate,
@@ -383,11 +400,13 @@ pub fn builtin_performance_presets() -> Vec<PerformancePreset> {
         preset(
             "string_legato",
             Strings,
-            "Legato strings: notes overlap into each other, phrases swell and long notes take a delayed vibrato.",
+            "Legato strings: steps overlap into each other, leaps take a breath, phrases follow the line and long notes take a delayed, unevenly sung vibrato.",
             vec![
+                T::Articulate { amount: 0.7 },
+                T::Contour { amount: 0.6 },
                 expression(0.20, 0.20, 0.18, 0.0, 0.8),
                 T::Sustain { ticks: 120 },
-                pitch(0.03, 0.08, 0.0, 0.0),
+                played(pitch(0.03, 0.08, 0.0, 0.0), 0.6, 0.5, 0.5),
             ],
         ),
         preset(
@@ -402,20 +421,23 @@ pub fn builtin_performance_presets() -> Vec<PerformancePreset> {
         preset(
             "brass_section",
             Brass,
-            "Brass section: punchy, slightly detached hits with small scoops and falls.",
+            "Brass section: punchy, slightly detached hits that follow the line, with small scoops and falls, darker when played softly.",
             vec![
                 T::Gate { amount: 0.9 },
+                T::Contour { amount: 0.4 },
                 expression(0.20, 0.25, 0.10, 0.08, 0.6),
-                pitch(0.20, 0.06, 0.30, 0.0),
+                played(pitch(0.20, 0.06, 0.30, 0.0), 0.4, 0.3, 0.6),
             ],
         ),
         preset(
             "woodwind_solo",
             Woodwinds,
-            "Solo flute, clarinet or saxophone: connected phrases with a delayed vibrato and a breathing swell.",
+            "Solo flute, clarinet or saxophone: connected phrases that breathe before leaps and ease into their endings, with a delayed, uneven vibrato, a leaning intonation and a breathing swell.",
             vec![
+                T::Articulate { amount: 0.6 },
+                T::Contour { amount: 0.6 },
                 expression(0.25, 0.25, 0.16, 0.04, 0.4),
-                pitch(0.10, 0.12, 0.08, 30.0),
+                played(pitch(0.10, 0.12, 0.08, 30.0), 0.6, 0.5, 0.5),
             ],
         ),
         preset(

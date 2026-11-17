@@ -577,6 +577,7 @@ mod tests {
                 operation: crate::live_agent::document_editing::TimelineOperation::SetTempo {
                     at_tick: 0,
                     bpm: 90.0,
+                    ramp: None,
                 },
             })
             .unwrap();

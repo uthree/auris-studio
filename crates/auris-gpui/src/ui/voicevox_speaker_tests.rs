@@ -299,6 +299,10 @@ fn the_track_picker_fetches_real_engine_names_and_persists_the_clicked_style(
     app.update(cx, |this, _| {
         this.panels = crate::dock::PanelLayout::default();
         this.select_track(track);
+        // The performance section opens with every dial showing and reaches past the bottom of
+        // the test window, so the controls below it would be clicked off-screen.
+        this.inspector_collapsed[crate::ui::inspector::InspectorSection::Performance as usize] =
+            true;
         this.session.set_singer_voice(track, Some(&path)).unwrap();
         assert_eq!(
             this.singer_voice_label(track).as_deref(),

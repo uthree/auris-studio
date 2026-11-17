@@ -699,9 +699,27 @@ pub struct TempoPoint {
     pub tick: Ticks,
     /// Quarter notes per minute from this point onwards.
     pub bpm: f64,
+    /// Whether the tempo glides from here to the next point's, rather than holding.
+    ///
+    /// The glide is linear over *ticks* — the tempo halfway through the bars is halfway between
+    /// the two — which is how a ritardando is written and how it reads on a ruler. A ramp on the
+    /// last point has nothing to glide to and holds, until a point is written after it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ramp: bool,
 }
 
-/// Piecewise-constant tempo over the timeline.
+impl TempoPoint {
+    /// A tempo that holds from `tick` onwards.
+    pub fn new(tick: Ticks, bpm: f64) -> Self {
+        Self {
+            tick,
+            bpm,
+            ramp: false,
+        }
+    }
+}
+
+/// Tempo over the timeline: held from each change, or gliding to the next.
 ///
 /// Invariants, upheld by every constructor and mutator: at least one point, sorted by tick,
 /// the first point sits at tick 0, and every BPM is finite and positive.
@@ -761,10 +779,7 @@ impl TempoMap {
 
     /// A map with one tempo for the whole timeline.
     pub fn constant(bpm: f64) -> Self {
-        Self::indexed(vec![TempoPoint {
-            tick: Ticks::ZERO,
-            bpm: Self::clamp_bpm(bpm),
-        }])
+        Self::indexed(vec![TempoPoint::new(Ticks::ZERO, Self::clamp_bpm(bpm))])
     }
 
     /// A map over already-normalised points, with its lookup table built.
@@ -783,10 +798,45 @@ impl TempoMap {
         self.starts.reserve(self.points.len());
         let mut seconds = 0.0;
         self.starts.push(seconds);
-        for pair in self.points.windows(2) {
-            seconds +=
-                (pair[1].tick.0 - pair[0].tick.0) as f64 * Self::seconds_per_tick(pair[0].bpm);
+        for index in 0..self.points.len().saturating_sub(1) {
+            let length = self.points[index + 1].tick.0 - self.points[index].tick.0;
+            seconds += self.seconds_into(index, length);
             self.starts.push(seconds);
+        }
+    }
+
+    /// The glide out of segment `index`, as tempo gained per tick; `None` when it holds.
+    fn slope(&self, index: usize) -> Option<f64> {
+        let point = &self.points[index];
+        let next = self.points.get(index + 1)?;
+        (point.ramp && next.bpm != point.bpm)
+            .then(|| (next.bpm - point.bpm) / (next.tick.0 - point.tick.0) as f64)
+    }
+
+    /// Seconds from the start of segment `index` to `into` ticks inside it.
+    ///
+    /// A held segment is the product it always was, so a map without ramps answers bit for bit
+    /// what it did. A gliding one integrates 60 / (TPQ · bpm(x)) over a tempo linear in ticks.
+    fn seconds_into(&self, index: usize, into: i64) -> f64 {
+        let point = &self.points[index];
+        match self.slope(index) {
+            None => into as f64 * Self::seconds_per_tick(point.bpm),
+            Some(slope) => {
+                let reached = point.bpm + slope * into as f64;
+                60.0 / TICKS_PER_QUARTER as f64 * (reached / point.bpm).ln() / slope
+            }
+        }
+    }
+
+    /// Ticks into segment `index` at which `seconds` have passed since its start.
+    fn ticks_into(&self, index: usize, seconds: f64) -> f64 {
+        let point = &self.points[index];
+        match self.slope(index) {
+            None => seconds / Self::seconds_per_tick(point.bpm),
+            Some(slope) => {
+                point.bpm * ((seconds * TICKS_PER_QUARTER as f64 * slope / 60.0).exp() - 1.0)
+                    / slope
+            }
         }
     }
 
@@ -853,15 +903,70 @@ impl TempoMap {
         self.reindex();
     }
 
-    /// Inserts or replaces a tempo change.
+    /// Inserts or replaces a tempo change. A replaced change keeps whether it glides.
     pub fn set_point(&mut self, tick: Ticks, bpm: f64) {
         let bpm = Self::clamp_bpm(bpm);
         let tick = tick.max_zero();
         match self.points.binary_search_by_key(&tick, |p| p.tick) {
             Ok(index) => self.points[index].bpm = bpm,
-            Err(index) => self.points.insert(index, TempoPoint { tick, bpm }),
+            Err(index) => self.points.insert(index, TempoPoint::new(tick, bpm)),
         }
         self.reindex();
+    }
+
+    /// Makes the change at `tick` glide to the next one, or hold. Answers whether a change
+    /// sits at `tick` to be told.
+    pub fn set_ramp(&mut self, tick: Ticks, ramp: bool) -> bool {
+        match self.points.binary_search_by_key(&tick, |p| p.tick) {
+            Ok(index) => {
+                self.points[index].ramp = ramp;
+                self.reindex();
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Whether the change in force at `tick` is set to glide, whether or not a later change
+    /// gives it anywhere to go yet. What an editor's tick mark shows.
+    pub fn glides_from(&self, tick: Ticks) -> bool {
+        self.points[self.segment_index(tick)].ramp
+    }
+
+    /// Whether the tempo is gliding at `tick` — the change in force there ramps towards a
+    /// later one.
+    pub fn ramps_at(&self, tick: Ticks) -> bool {
+        self.slope(self.segment_index(tick)).is_some()
+    }
+
+    /// The map as held tempos only, each glide laid out in steps of at most `step`.
+    ///
+    /// Every step carries the tempo that takes exactly as long to cross it as the glide does,
+    /// so the stepped map lands on every step's boundary at the same second the glide reaches
+    /// it. For a reader that can only hold a tempo — a MIDI file's tempo events.
+    pub fn stepped(&self, step: Ticks) -> Vec<TempoPoint> {
+        let step = step.0.max(1);
+        let mut out = Vec::with_capacity(self.points.len());
+        for (index, point) in self.points.iter().enumerate() {
+            let Some(next) = self
+                .points
+                .get(index + 1)
+                .filter(|_| self.slope(index).is_some())
+            else {
+                out.push(TempoPoint::new(point.tick, point.bpm));
+                continue;
+            };
+            let mut at = point.tick.0;
+            while at < next.tick.0 {
+                let end = (at + step).min(next.tick.0);
+                let seconds = self.seconds_into(index, end - point.tick.0)
+                    - self.seconds_into(index, at - point.tick.0);
+                let bpm = (end - at) as f64 * 60.0 / (TICKS_PER_QUARTER as f64 * seconds);
+                out.push(TempoPoint::new(Ticks(at), Self::clamp_bpm(bpm)));
+                at = end;
+            }
+        }
+        out
     }
 
     /// Removes the tempo change at `tick`. The anchor at tick 0 cannot be removed.
@@ -884,9 +989,14 @@ impl TempoMap {
         }
     }
 
-    /// Tempo in effect at `tick`.
+    /// Tempo in effect at `tick`: the change in force there, or partway along its glide.
     pub fn bpm_at(&self, tick: Ticks) -> f64 {
-        self.points[self.segment_index(tick)].bpm
+        let index = self.segment_index(tick);
+        let point = &self.points[index];
+        match self.slope(index) {
+            Some(slope) => point.bpm + slope * (tick.0 - point.tick.0).max(0) as f64,
+            None => point.bpm,
+        }
     }
 
     /// Where the tempo change in force at `tick` sits.
@@ -917,7 +1027,7 @@ impl TempoMap {
         if into == 0 {
             return Seconds(self.starts[index]);
         }
-        Seconds(self.starts[index] + into as f64 * Self::seconds_per_tick(point.bpm))
+        Seconds(self.starts[index] + self.seconds_into(index, into))
     }
 
     /// Inverse of [`Self::ticks_to_seconds`].
@@ -928,7 +1038,7 @@ impl TempoMap {
         // The segment is the first whose end lies past `seconds`, or the last one.
         let index = self.starts[1..].partition_point(|start| *start <= seconds.0);
         let point = &self.points[index];
-        let into_segment = (seconds.0 - self.starts[index]) / Self::seconds_per_tick(point.bpm);
+        let into_segment = self.ticks_into(index, seconds.0 - self.starts[index]);
         Ticks(point.tick.0 + into_segment.round() as i64)
     }
 
@@ -1134,10 +1244,12 @@ mod tests {
             TempoPoint {
                 tick: Ticks::ZERO,
                 bpm: 120.0,
+                ramp: false,
             },
             TempoPoint {
                 tick: bar,
                 bpm: 240.0,
+                ramp: false,
             },
         ])
         .unwrap();
@@ -1155,10 +1267,12 @@ mod tests {
             TempoPoint {
                 tick: Ticks::ZERO,
                 bpm: 120.0,
+                ramp: false,
             },
             TempoPoint {
                 tick: bar,
                 bpm: 240.0,
+                ramp: false,
             },
         ])
         .unwrap();
@@ -1176,10 +1290,12 @@ mod tests {
             TempoPoint {
                 tick: Ticks(5000),
                 bpm: 90.0,
+                ramp: false,
             },
             TempoPoint {
                 tick: Ticks(100),
                 bpm: 150.0,
+                ramp: false,
             },
         ])
         .unwrap();
@@ -1194,10 +1310,12 @@ mod tests {
             TempoPoint {
                 tick: Ticks::ZERO,
                 bpm: 90.0,
+                ramp: false,
             },
             TempoPoint {
                 tick: Ticks::ZERO,
                 bpm: 150.0,
+                ramp: false,
             },
         ])
         .unwrap();
@@ -1539,10 +1657,7 @@ mod tests {
                     let map = TempoMap::from_points(
                         [(a, 120.0), (b, 90.0), (c, 60.0)]
                             .into_iter()
-                            .map(|(tick, bpm)| TempoPoint {
-                                tick: Ticks(tick),
-                                bpm,
-                            })
+                            .map(|(tick, bpm)| TempoPoint::new(Ticks(tick), bpm))
                             .collect(),
                     )
                     .unwrap();
@@ -1596,10 +1711,12 @@ mod tests {
             TempoPoint {
                 tick: Ticks::ZERO,
                 bpm: 120.0,
+                ramp: false,
             },
             TempoPoint {
                 tick: Ticks(5000),
                 bpm: 90.0,
+                ramp: false,
             },
         ])
         .unwrap();
@@ -1632,5 +1749,84 @@ mod tests {
         assert_eq!(Ticks(350).snap_nearest(grid), Ticks(240));
         assert_eq!(Ticks(370).snap_nearest(grid), Ticks(480));
         assert_eq!(Ticks(-10).snap_floor(grid), Ticks(-240));
+    }
+
+    fn ritardando() -> TempoMap {
+        let mut map = TempoMap::constant(120.0);
+        map.set_point(Ticks(3840), 60.0);
+        assert!(map.set_ramp(Ticks::ZERO, true));
+        map
+    }
+
+    #[test]
+    fn a_ramp_glides_linearly_in_ticks_and_integrates_exactly() {
+        let map = ritardando();
+        assert_eq!(map.bpm_at(Ticks(1920)), 90.0);
+        assert_eq!(map.bpm_at(Ticks(3840)), 60.0);
+        assert_eq!(map.bpm_at(Ticks(7680)), 60.0);
+        assert!(map.ramps_at(Ticks(100)));
+        assert!(!map.ramps_at(Ticks(4000)));
+        // Four beats gliding from 120 to 60 last 4 ln 2 seconds: between the two seconds 120
+        // would take and the four that 60 would.
+        let four_beats = map.ticks_to_seconds(Ticks(3840)).0;
+        assert!(
+            (four_beats - 4.0 * std::f64::consts::LN_2).abs() < 1e-12,
+            "{four_beats}"
+        );
+        // After the glide the tempo holds at 60: a second per beat.
+        let after = map.ticks_to_seconds(Ticks(4800)).0 - four_beats;
+        assert!((after - 1.0).abs() < 1e-12);
+        for tick in [0, 1, 480, 1919, 1920, 3000, 3839, 3840, 5000] {
+            let seconds = map.ticks_to_seconds(Ticks(tick));
+            assert_eq!(map.seconds_to_ticks(seconds), Ticks(tick), "{tick}");
+        }
+    }
+
+    #[test]
+    fn a_ramp_on_the_last_point_holds_and_turning_it_off_restores_the_step() {
+        let mut map = ritardando();
+        map.set_ramp(Ticks::ZERO, false);
+        assert_eq!(map.ticks_to_seconds(Ticks(3840)).0, 2.0);
+        assert!(!map.set_ramp(Ticks(10), true), "no change sits there");
+        let mut last = TempoMap::constant(100.0);
+        last.set_ramp(Ticks::ZERO, true);
+        assert_eq!(last.bpm_at(Ticks(9600)), 100.0);
+        assert_eq!(last.ticks_to_seconds(Ticks(960)).0, 0.6);
+        // Rewriting a change's tempo keeps its glide.
+        let mut map = ritardando();
+        map.set_point(Ticks::ZERO, 130.0);
+        assert!(map.points()[0].ramp);
+    }
+
+    #[test]
+    fn a_stepped_ramp_reaches_every_step_at_the_seconds_the_glide_does() {
+        let map = ritardando();
+        let steps = map.stepped(Ticks(240));
+        assert_eq!(steps.len(), 16 + 1);
+        assert!(steps.iter().all(|point| !point.ramp));
+        let stepped = TempoMap::from_points(steps).unwrap();
+        for tick in (0..=4800).step_by(240) {
+            let glide = map.ticks_to_seconds(Ticks(tick)).0;
+            let held = stepped.ticks_to_seconds(Ticks(tick)).0;
+            assert!(
+                (glide - held).abs() < 1e-9,
+                "{tick}: {glide} against {held}"
+            );
+        }
+        // A map without glides is its own stepping.
+        let plain = TempoMap::constant(120.0);
+        assert_eq!(plain.stepped(Ticks(240)), plain.points());
+    }
+
+    #[test]
+    fn a_ramp_is_written_only_where_it_is_set() {
+        let map = ritardando();
+        let text = serde_json::to_string(&map).unwrap();
+        assert_eq!(text.matches("ramp").count(), 1, "{text}");
+        let back: TempoMap = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, map);
+        let older: TempoMap =
+            serde_json::from_str(r#"{"points":[{"tick":0,"bpm":120.0}]}"#).unwrap();
+        assert_eq!(older, TempoMap::constant(120.0));
     }
 }

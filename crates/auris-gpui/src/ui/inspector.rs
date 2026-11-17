@@ -32,7 +32,7 @@ pub(crate) struct ParameterListState {
 
 /// Stable groups whose disclosure state belongs to the view, not the selected document object.
 #[derive(Clone, Copy)]
-enum InspectorSection {
+pub(crate) enum InspectorSection {
     Generation,
     Performance,
     Sound,

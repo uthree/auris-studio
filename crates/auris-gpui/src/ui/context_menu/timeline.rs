@@ -114,6 +114,17 @@ impl AurisApp {
                 self.t(Key::MenuRemoveTempoHere),
                 MenuCommand::RemoveTempoAt(tick),
             )
+            // Only where there is a later change to glide to.
+            .toggle_if(
+                self.project()
+                    .tempo_map
+                    .points()
+                    .iter()
+                    .any(|point| point.tick > tick),
+                self.t(Key::MenuTempoRampHere),
+                MenuCommand::ToggleTempoRampAt(tick),
+                self.project().tempo_map.glides_from(tick),
+            )
             .separator()
             .item(
                 self.t(Key::MenuSetSignatureHere),

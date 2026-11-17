@@ -283,13 +283,41 @@ impl Session {
     /// cross. Writing at tick zero turns the song's opening tempo rather than adding to it,
     /// exactly as [`Self::set_key`] treats the anchor.
     pub fn set_tempo_point(&mut self, at: Ticks, bpm: f64) {
+        self.set_tempo_point_gliding(at, bpm, None);
+    }
+
+    /// [`Self::set_tempo_point`], also saying whether the change glides to the next one:
+    /// `Some(true)` for a ritardando or accelerando written as two points, `Some(false)` to
+    /// hold, `None` to keep what the change already did. One Undo step either way.
+    pub fn set_tempo_point_gliding(&mut self, at: Ticks, bpm: f64, ramp: Option<bool>) {
         let at = self.snap_harmony(at);
         let mut probe = self.project.tempo_map.clone();
         probe.set_point(at, bpm);
+        if let Some(ramp) = ramp {
+            probe.set_ramp(at, ramp);
+        }
         if probe == self.project.tempo_map {
             return;
         }
         self.record(Edit::SetTempoPoint);
+        self.project.tempo_map = probe;
+        self.invalidate_graph();
+        self.publish_loop();
+    }
+
+    /// Makes the tempo change in force at `at` glide to the next change, or hold.
+    ///
+    /// Aimed *through* `at`, for the reason [`Self::remove_tempo_point`] is: "glide from here"
+    /// means the change driving the clock under the pointer. A glide with no later change to
+    /// reach is stored and waits for one; nothing is recorded when nothing changes.
+    pub fn set_tempo_ramp(&mut self, at: Ticks, ramp: bool) {
+        let at = self.project.tempo_map.change_at(at.max_zero());
+        let mut probe = self.project.tempo_map.clone();
+        probe.set_ramp(at, ramp);
+        if probe == self.project.tempo_map {
+            return;
+        }
+        self.record(Edit::SetTempoRamp);
         self.project.tempo_map = probe;
         self.invalidate_graph();
         self.publish_loop();
@@ -443,6 +471,28 @@ mod tests {
         assert_eq!(session.redo(), Some(Edit::SetLoopRegion));
         assert_eq!(session.project().loop_region, Some(second));
         assert!(!session.project().loop_enabled);
+    }
+
+    #[test]
+    fn a_tempo_change_glides_to_the_next_as_one_undo_step() {
+        let mut session = session();
+        session.forget_history();
+        session.set_tempo_point(Ticks(3840 * 4), 80.0);
+        // Aimed from anywhere inside the stretch, like removing a change.
+        session.set_tempo_ramp(Ticks(5000), true);
+        assert!(session.project().tempo_map.glides_from(Ticks::ZERO));
+        assert!(session.project().tempo_map.bpm_at(Ticks(3840 * 2)) < session.project().bpm());
+        // Saying it again is not an edit.
+        let steps = undo_depth(&mut session);
+        session.set_tempo_ramp(Ticks(10), true);
+        assert_eq!(undo_depth(&mut session), steps);
+        assert_eq!(session.undo(), Some(Edit::SetTempoRamp));
+        assert!(!session.project().tempo_map.glides_from(Ticks::ZERO));
+        // Writing a change can set its glide in the same step.
+        session.set_tempo_point_gliding(Ticks(3840 * 2), 100.0, Some(true));
+        assert!(session.project().tempo_map.glides_from(Ticks(3840 * 2)));
+        assert_eq!(session.undo(), Some(Edit::SetTempoPoint));
+        assert_eq!(session.project().tempo_map.points().len(), 2);
     }
 
     #[test]
