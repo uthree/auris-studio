@@ -69,6 +69,10 @@ impl Effect for ThreadAffineEffect {
 
     fn reset(&mut self) {}
 
+    fn bound_to_one_thread(&self) -> bool {
+        true
+    }
+
     fn process(&mut self, buffer: &mut AudioBuffer, _ctx: &ProcessContext) {
         assert_eq!(
             thread::current().id(),
@@ -396,6 +400,51 @@ fn parallel_routed_mix_is_deterministic_and_numerically_close() {
             reference = Some(parallel);
         }
     }
+}
+
+#[test]
+fn a_placed_plugin_that_may_change_threads_joins_the_workers() {
+    // A hosted CLAP plugin enters through the placed map too, and says it may move.
+    let (mut project, _) = fixture(8, 0);
+    let track_id = project.tracks[0].id;
+    let slot = project.add_effect(Some(track_id), AFFINITY_ID).unwrap();
+    let mut placed = crate::graph::PlacedEffects::new();
+    placed.insert(
+        slot,
+        Box::new(ThreadAffineEffect {
+            owner: thread::current().id(),
+        }),
+    );
+    let graph = RenderGraph::build_with(
+        &project,
+        &AudioSourceBank::new(),
+        &registry(),
+        &mut placed,
+        &mut crate::graph::PlacedInstruments::new(),
+        BLOCK,
+        SAMPLE_RATE,
+    );
+    assert!(!graph.tracks[0].parallel_safe);
+
+    let mut movable = crate::graph::PlacedInstruments::new();
+    movable.insert(
+        track_id,
+        crate::testkit::registry()
+            .create_instrument(crate::testkit::TONE_ID)
+            .unwrap(),
+    );
+    let mut project = project;
+    project.tracks[0].mixer.effects.clear();
+    let graph = RenderGraph::build_with(
+        &project,
+        &AudioSourceBank::new(),
+        &registry(),
+        &mut crate::graph::PlacedEffects::new(),
+        &mut movable,
+        BLOCK,
+        SAMPLE_RATE,
+    );
+    assert!(graph.tracks.iter().all(|track| track.parallel_safe));
 }
 
 #[test]

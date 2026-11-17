@@ -1398,6 +1398,12 @@ impl Parameterized for Vst3Effect {
     }
 }
 impl Effect for Vst3Effect {
+    /// VST3's threading contract for `process` has not been checked against moving between
+    /// worker threads, so a hosted VST3 keeps to the caller's thread.
+    fn bound_to_one_thread(&self) -> bool {
+        true
+    }
+
     fn descriptor(&self) -> PluginDescriptor {
         self.0.descriptor.clone()
     }
@@ -1437,6 +1443,12 @@ impl Parameterized for Vst3Instrument {
     }
 }
 impl Instrument for Vst3Instrument {
+    /// VST3's threading contract for `process` has not been checked against moving between
+    /// worker threads, so a hosted VST3 keeps to the caller's thread.
+    fn bound_to_one_thread(&self) -> bool {
+        true
+    }
+
     fn descriptor(&self) -> PluginDescriptor {
         self.0.descriptor.clone()
     }

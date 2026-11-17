@@ -565,6 +565,17 @@ pub trait Instrument: Parameterized + Send {
     fn active_voices(&self) -> usize {
         0
     }
+
+    /// Whether every block must be processed on the same OS thread.
+    ///
+    /// An offline render spreads independent tracks over worker threads, so one track's blocks
+    /// may each run on a different thread, though never two at once. Code written for this
+    /// trait is fine with that; a hosted plugin is fine only if its format says so. CLAP does,
+    /// in so many words; a plugin format that has not been checked answers `true` and stays on
+    /// the rendering caller's thread.
+    fn bound_to_one_thread(&self) -> bool {
+        false
+    }
 }
 
 /// An audio processor placed in a track's or the master bus's effect chain.
@@ -582,6 +593,17 @@ pub trait Effect: Parameterized + Send {
 
     /// Transforms `buffer` in place.
     fn process(&mut self, buffer: &mut AudioBuffer, ctx: &ProcessContext);
+
+    /// Whether every block must be processed on the same OS thread.
+    ///
+    /// An offline render spreads independent tracks over worker threads, so one track's blocks
+    /// may each run on a different thread, though never two at once. Code written for this
+    /// trait is fine with that; a hosted plugin is fine only if its format says so. CLAP does,
+    /// in so many words; a plugin format that has not been checked answers `true` and stays on
+    /// the rendering caller's thread.
+    fn bound_to_one_thread(&self) -> bool {
+        false
+    }
 
     /// Whether this effect listens to a second input as well as the one it is placed in.
     ///

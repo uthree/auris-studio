@@ -70,6 +70,13 @@ impl Parameterized for ClapEffect {
 }
 
 impl Effect for ClapEffect {
+    /// CLAP's audio thread "is symbolic": the specification lets `process` run on a different
+    /// OS thread each call and asks only that one instance is never processed on two at once,
+    /// which the render graph guarantees.
+    fn bound_to_one_thread(&self) -> bool {
+        false
+    }
+
     fn descriptor(&self) -> PluginDescriptor {
         self.0.descriptor()
     }
