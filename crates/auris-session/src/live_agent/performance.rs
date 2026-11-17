@@ -75,6 +75,9 @@ fn family(stage: &NoteTransform) -> Option<ResetStage> {
         NoteTransform::Strum { .. } | NoteTransform::Stroke { .. } => ResetStage::Strum,
         NoteTransform::Ghost { .. } | NoteTransform::Brush { .. } => ResetStage::Ghost,
         NoteTransform::Mute { .. } => ResetStage::Mute,
+        NoteTransform::Contour { .. } => ResetStage::Contour,
+        NoteTransform::Voicing { .. } => ResetStage::Voicing,
+        NoteTransform::Articulate { .. } => ResetStage::Articulation,
         NoteTransform::Slide { .. } => ResetStage::Slide,
         NoteTransform::Pitch { .. } => ResetStage::Pitch,
         NoteTransform::Octaves { .. } => ResetStage::Octaves,
@@ -90,15 +93,19 @@ fn rank(stage: &NoteTransform) -> usize {
         NoteTransform::Groove { .. } | NoteTransform::Swing { .. } => 0,
         NoteTransform::Transpose { .. } => 1,
         NoteTransform::Gate { .. } => 2,
-        NoteTransform::Brush { .. } | NoteTransform::Ghost { .. } => 3,
-        NoteTransform::Slide { .. } => 4,
-        NoteTransform::Mute { .. } => 5,
-        NoteTransform::Strum { .. } | NoteTransform::Stroke { .. } => 6,
-        NoteTransform::Lean { .. } | NoteTransform::ForDrumVoice { .. } => 7,
-        NoteTransform::Humanize { .. } | NoteTransform::Expression { .. } => 8,
-        NoteTransform::Sustain { .. } => 9,
-        NoteTransform::Pitch { .. } => 10,
-        NoteTransform::Octaves { .. } => 11,
+        // The score-reading stages read the written line, so they come before anything that
+        // adds or moves notes; voicing last of them, since its melody lead splits the chord.
+        NoteTransform::Articulate { .. } | NoteTransform::Contour { .. } => 3,
+        NoteTransform::Voicing { .. } => 4,
+        NoteTransform::Brush { .. } | NoteTransform::Ghost { .. } => 5,
+        NoteTransform::Slide { .. } => 6,
+        NoteTransform::Mute { .. } => 7,
+        NoteTransform::Strum { .. } | NoteTransform::Stroke { .. } => 8,
+        NoteTransform::Lean { .. } | NoteTransform::ForDrumVoice { .. } => 9,
+        NoteTransform::Humanize { .. } | NoteTransform::Expression { .. } => 10,
+        NoteTransform::Sustain { .. } => 11,
+        NoteTransform::Pitch { .. } => 12,
+        NoteTransform::Octaves { .. } => 13,
     }
 }
 
@@ -287,6 +294,18 @@ impl Session {
                 "sustain_ticks": match scalar(ResetStage::Sustain) {
                     Some(NoteTransform::Sustain { ticks }) => *ticks,
                     _ => 0
+                },
+                "contour": match scalar(ResetStage::Contour) {
+                    Some(NoteTransform::Contour { amount }) => *amount,
+                    _ => 0.0
+                },
+                "voicing": match scalar(ResetStage::Voicing) {
+                    Some(NoteTransform::Voicing { amount }) => *amount,
+                    _ => 0.0
+                },
+                "articulation": match scalar(ResetStage::Articulation) {
+                    Some(NoteTransform::Articulate { amount }) => *amount,
+                    _ => 0.0
                 },
                 "mute": match scalar(ResetStage::Mute) {
                     Some(NoteTransform::Mute { amount }) => *amount,
@@ -490,6 +509,23 @@ impl Session {
                 (ticks > 0).then_some(NoteTransform::Sustain { ticks }),
             );
         }
+        for (value, kind, stage) in [
+            (
+                patch.contour,
+                ResetStage::Contour,
+                (|amount| NoteTransform::Contour { amount }) as fn(f32) -> NoteTransform,
+            ),
+            (patch.voicing, ResetStage::Voicing, |amount| {
+                NoteTransform::Voicing { amount }
+            }),
+            (patch.articulation, ResetStage::Articulation, |amount| {
+                NoteTransform::Articulate { amount }
+            }),
+        ] {
+            if let Some(amount) = value {
+                replace(&mut stack, kind, (amount > 0.0).then(|| stage(amount)));
+            }
+        }
         if let Some(amount) = patch.mute {
             replace(
                 &mut stack,
@@ -689,7 +725,7 @@ pub(crate) fn mixed_swing(project: &auris_core::Project) -> Option<String> {
 #[serde(default, deny_unknown_fields)]
 pub struct PerformancePatch {
     /// Remove selected stage families before applying the supplied edits.
-    #[schemars(length(max = 13))]
+    #[schemars(length(max = 16))]
     pub reset: Vec<ResetStage>,
     /// Combined timing/velocity wander, 0..1; individual expression fields override it.
     #[schemars(range(min = 0, max = 1))]
@@ -712,6 +748,20 @@ pub struct PerformancePatch {
     /// attacks do not move and no notes are added.
     #[schemars(range(min = 0, max = 3840))]
     pub sustain_ticks: Option<i64>,
+    /// Melodic contour strength, 0..1; 0 removes it. Read from the written line, no seed:
+    /// higher and longer notes are played stronger (about ±10% velocity per octave from the
+    /// phrase's mean pitch), and each phrase's last attack is 15% softer and up to 40 ms late.
+    #[schemars(range(min = 0, max = 1))]
+    pub contour: Option<f32>,
+    /// Chord voicing strength, 0..1; 0 removes it. In every chord the top note keeps its
+    /// velocity and sounds up to 15 ms early; inner notes are up to 25% softer, the lowest 10%.
+    #[schemars(range(min = 0, max = 1))]
+    pub voicing: Option<f32>,
+    /// Contextual articulation strength, 0..1; 0 removes it. Only written-legato connections
+    /// change: a step of up to 2 semitones overlaps the next note by up to 25 ms, a leap of 5
+    /// or more leaves up to 30 ms of silence, a repeated pitch is released up to 40 ms early.
+    #[schemars(range(min = 0, max = 1))]
+    pub articulation: Option<f32>,
     /// Muted retrigger strength, 0..1.
     #[schemars(range(min = 0, max = 1))]
     pub mute: Option<f32>,
@@ -910,6 +960,12 @@ pub enum ResetStage {
     Ghost,
     /// Remove the mute family, including its legacy representation.
     Mute,
+    /// Remove the melodic contour stage.
+    Contour,
+    /// Remove the chord voicing stage.
+    Voicing,
+    /// Remove the contextual articulation stage.
+    Articulation,
     /// Remove the slide family, including its legacy representation.
     Slide,
     /// Remove the pitch family, including its legacy representation.
@@ -933,8 +989,8 @@ fn bounded(name: &str, value: f64, min: f64, max: f64) -> Result<(), String> {
 
 impl PerformancePatch {
     fn validate(&self) -> Result<(), String> {
-        if self.reset.len() > 13 {
-            return Err("reset accepts at most 13 stage families".into());
+        if self.reset.len() > 16 {
+            return Err("reset accepts at most 16 stage families".into());
         }
         let fields = serde_json::to_value(self).map_err(|e| e.to_string())?;
         for name in ["expression", "strum", "ghost", "pitch", "groove"] {
@@ -953,6 +1009,15 @@ impl PerformancePatch {
         }
         if let Some(value) = self.sustain_ticks {
             bounded("PerformancePatch.sustain_ticks", value as f64, 0.0, 3840.0)?;
+        }
+        for (name, value) in [
+            ("PerformancePatch.contour", self.contour),
+            ("PerformancePatch.voicing", self.voicing),
+            ("PerformancePatch.articulation", self.articulation),
+        ] {
+            if let Some(value) = value {
+                bounded(name, value as f64, 0.0, 1.0)?;
+            }
         }
         if let Some(value) = self.mute {
             bounded("PerformancePatch.mute", value as f64, 0.0, 1.0)?;

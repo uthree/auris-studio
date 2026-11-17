@@ -638,7 +638,7 @@ fn invalid_batches_and_unknown_fields_leave_document_and_history_untouched() {
     for settings in [
         json!({}),
         json!({"gate":0.5,"strum":{}}),
-        json!({"reset":vec!["gate";14]}),
+        json!({"reset":vec!["gate";17]}),
         json!({"gate":0.5,"reset":["expression"],"ghost":{"length_ms":500}}),
         json!({"swing_percent":49}),
         json!({"pitch":{"vibrato_hz":12}}),
@@ -889,6 +889,65 @@ fn sustain_holds_releases_reads_back_and_resets_to_nothing() {
             .1
             .transforms
             .is_empty()
+    );
+}
+
+#[test]
+fn score_reading_stages_read_back_in_canonical_order_and_reset_alone() {
+    let (mut session, clip) = fixture();
+    let result = edit(
+        &mut session,
+        clip,
+        json!({"voicing":0.5,"humanize":0.2,"contour":0.75,"articulation":0.25,"gate":0.9}),
+        None,
+    )
+    .unwrap();
+    assert_eq!(result["settings"]["contour"], 0.75);
+    assert_eq!(result["settings"]["voicing"], 0.5);
+    assert_eq!(result["settings"]["articulation"], 0.25);
+    let stack = session
+        .project()
+        .midi_clip(clip)
+        .unwrap()
+        .1
+        .transforms
+        .clone();
+    let kinds: Vec<_> = stack
+        .iter()
+        .map(|stage| serde_json::to_value(stage).unwrap()["kind"].clone())
+        .collect();
+    // Gate, then the score readers with voicing last of them, then the wander.
+    assert_eq!(
+        kinds,
+        vec![
+            json!("gate"),
+            json!("contour"),
+            json!("articulate"),
+            json!("voicing"),
+            json!("humanize")
+        ],
+        "{stack:?}"
+    );
+    assert!(edit(&mut session, clip, json!({"voicing":1.5}), None).is_err());
+    edit(
+        &mut session,
+        clip,
+        json!({"reset":["voicing"],"contour":0}),
+        None,
+    )
+    .unwrap();
+    let stack = &session.project().midi_clip(clip).unwrap().1.transforms;
+    assert!(
+        stack.iter().all(|stage| !matches!(
+            stage,
+            NoteTransform::Voicing { .. } | NoteTransform::Contour { .. }
+        )),
+        "{stack:?}"
+    );
+    assert!(
+        stack
+            .iter()
+            .any(|stage| matches!(stage, NoteTransform::Articulate { .. }))
     );
 }
 

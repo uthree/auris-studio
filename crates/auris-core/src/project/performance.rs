@@ -109,6 +109,15 @@ pub fn performed_note_slots(
             NoteTransform::Brush { amount } => brush(&mut notes, *amount, context),
             NoteTransform::Slide { amount } => slide(&mut notes, *amount, context),
             NoteTransform::Sustain { ticks } => sustain(&mut notes, *ticks),
+            NoteTransform::Contour { amount } => {
+                super::interpretation::contour(&mut notes, *amount, context)
+            }
+            NoteTransform::Voicing { amount } => {
+                super::interpretation::voicing(&mut notes, *amount, context)
+            }
+            NoteTransform::Articulate { amount } => {
+                super::interpretation::articulate(&mut notes, *amount, context)
+            }
             local => {
                 notes = notes
                     .into_iter()

@@ -161,6 +161,31 @@ pub enum NoteTransform {
         /// A note never shrinks below one tick.
         amount: f32,
     },
+    /// Shapes dynamics from the written line: higher and longer notes carry more weight, and
+    /// each phrase's last attack arrives a little late and a little softer.
+    ///
+    /// A phrase stage, deterministic, read from the score itself rather than from a seed.
+    Contour {
+        /// Strength from 0 (off) to 1 (about ±10 % velocity per octave from the phrase's mean,
+        /// ±6 % per doubled interval, and a final attack 15 % softer and up to 40 ms late).
+        amount: f32,
+    },
+    /// Balances every chord: the top voice keeps its velocity and sounds a little ahead,
+    /// inner voices and the bass recede.
+    Voicing {
+        /// Strength from 0 (off) to 1 (inner voices 25 % softer, the lowest 10 %, and the top
+        /// 15 ms ahead of its chord).
+        amount: f32,
+    },
+    /// Plays each written-legato connection by what it connects to: a step overlaps into the
+    /// next note, a leap leaves a breath before it, and a repeated key is lifted early.
+    ///
+    /// Notes already detached from what follows, or held across it, are left as written.
+    Articulate {
+        /// Strength from 0 (off) to 1 (25 ms overlap, 30 ms before a leap, 40 ms before a
+        /// repeat, never less than half the written note).
+        amount: f32,
+    },
     /// Holds every note past its written release, the way a sustain pedal keeps a struck string
     /// ringing after the key comes up.
     ///
@@ -204,7 +229,8 @@ pub enum StrokeDirection {
 /// them.
 ///
 /// An empty stack is the identity, bit for bit. This single-note helper applies only local
-/// transforms; expression, strum, stroke, ghost, mute, brush, slide and sustain require
+/// transforms; expression, strum, stroke, ghost, mute, brush, slide, sustain, contour,
+/// voicing and articulation require
 /// [`super::performed_notes`] instead.
 pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f64) -> Note {
     for transform in transforms {
@@ -218,7 +244,10 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
             | NoteTransform::Mute { .. }
             | NoteTransform::Brush { .. }
             | NoteTransform::Slide { .. }
-            | NoteTransform::Sustain { .. } => note,
+            | NoteTransform::Sustain { .. }
+            | NoteTransform::Contour { .. }
+            | NoteTransform::Voicing { .. }
+            | NoteTransform::Articulate { .. } => note,
             NoteTransform::ForDrumVoice { voice, transforms } => {
                 if note.drum_voice == *voice {
                     performed(note, transforms, pass, bpm)

@@ -41,6 +41,7 @@ pub mod drum;
 mod expression;
 mod ghost;
 mod groove;
+mod interpretation;
 mod layer;
 mod lint_suppression;
 pub use expression::Expression;
@@ -318,6 +319,7 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
+    /// Version 39 adds the score-reading contour, voicing and articulation transforms.
     /// Version 38 adds the document's tuning; an older build would play a retuned song in
     /// equal temperament without a word.
     /// Version 37 moves comments pinned to an effect onto its strip, since effects are no longer
@@ -330,7 +332,7 @@ impl Project {
     /// Version 31 adds power, added-tone, 6/9 and thirteenth chord qualities to stored harmony.
     /// Version 30 adds eleventh chord qualities to stored harmony.
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
-    pub const FORMAT_VERSION: u32 = 38;
+    pub const FORMAT_VERSION: u32 = 39;
 
     /// The name a document carries until somebody — a person or the agent — gives it one.
     pub const UNTITLED: &'static str = "Untitled";
