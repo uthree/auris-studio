@@ -133,6 +133,18 @@ fn stopped(body: usize, hz: f32) -> f32 {
     (hz / open).max(1.0).sqrt()
 }
 
+/// How many times nearer the bridge controller 74 moves the bow at the top of its travel, and
+/// how many times further at the bottom. The end of a violin's fingerboard is about twice as
+/// far from the bridge as the bow is usually drawn.
+const TOWARD_BRIDGE: f32 = 3.0;
+const TOWARD_FINGERBOARD: f32 = 2.0;
+/// How much lighter, on the Bow Pressure control's scale, a stroke over the fingerboard is.
+const TASTO_LIGHTER: f32 = 0.3;
+/// The nearest the bow comes to the bridge and the furthest it goes from it, as the Bow
+/// Position control's own range has them.
+const NEAREST_BOW: f32 = 0.03;
+const FURTHEST_BOW: f32 = 0.25;
+
 /// How far a player goes toward evening out a note the body favours or refuses, as the power
 /// of how much it does: they bow such a note more gently, or more firmly, by ear.
 const EVENING: f32 = 0.7;
@@ -370,6 +382,8 @@ struct Voice {
     blockers: [DcBlocker; 2],
     key: f32,
     /// The pitch being played now, which glides to the key under a slur.
+    /// The key a slurred line is sounding, which portamento slides toward a new one.
+    slid: f32,
     pitch: f32,
     velocity: f32,
     /// What the bow's speed is multiplied by to even this note out against its neighbours, and
@@ -400,6 +414,7 @@ impl Default for Voice {
             blockers: Default::default(),
             key: 60.0,
             pitch: 60.0,
+            slid: 60.0,
             velocity: 0.0,
             evened: 1.0,
             evening: 1.0,
@@ -452,6 +467,27 @@ impl Bowed {
         }
     }
 
+    /// Where the bow is drawn: the control's place, moved by controller 74 toward the bridge
+    /// (sul ponticello) above its middle, as near as a third of the way, and over the end of
+    /// the fingerboard (sul tasto) below it, as far as twice as far — never off the control's
+    /// own range.
+    fn bowed_at(&self) -> f32 {
+        let toward = (self.performance.brightness.clamp(0.0, 1.0) - 0.5) * 2.0;
+        let moved = if toward >= 0.0 {
+            TOWARD_BRIDGE.powf(-toward)
+        } else {
+            TOWARD_FINGERBOARD.powf(-toward)
+        };
+        (self.settings.position * moved).clamp(NEAREST_BOW, FURTHEST_BOW)
+    }
+
+    /// How much lighter than the control a player bows over the fingerboard, on the scale of
+    /// the Bow Pressure control: the light, airy stroke sul tasto is played with.
+    fn lightened(&self) -> f32 {
+        let toward_fingerboard = ((0.5 - self.performance.brightness) * 2.0).clamp(0.0, 1.0);
+        TASTO_LIGHTER * toward_fingerboard
+    }
+
     /// How many times the host's rate a string is run at.
     ///
     /// Stick and slip turn into one another at an instant, and what that does to a sampled
@@ -474,7 +510,7 @@ impl Bowed {
     /// length.
     fn conduct(&mut self, index: usize, start: bool) {
         let (settings, rate, performance) = (self.settings, self.rate, self.performance);
-        let expression = self.expression;
+        let (expression, lightened) = (self.expression, self.lightened());
         let Some(voice) = self.voices.get_mut(index) else {
             return;
         };
@@ -482,7 +518,12 @@ impl Bowed {
         let ticks_per_second = rate / TICK as f32;
         // A slur moves the finger, not the bow: the pitch arrives over a few hundredths of a
         // second.
-        let target = voice.key + performance.bend;
+        if start {
+            voice.slid = voice.key;
+        } else {
+            super::slide(&mut voice.slid, voice.key, &performance, ticks_per_second);
+        }
+        let target = voice.slid + performance.bend;
         if start {
             voice.pitch = target;
         } else {
@@ -517,7 +558,8 @@ impl Bowed {
         // The most force a string takes at this speed and place before the bow crushes the
         // note, by Schelleng's account. A harder key presses harder as well as bowing faster.
         let limit = speed.max(0.02) / (position * (GRIP - SLIDE));
-        let pressure = (settings.pressure + 0.2 * (voice.velocity - 0.5)).clamp(0.0, 1.0);
+        let pressure =
+            (settings.pressure + 0.2 * (voice.velocity - 0.5) - lightened).clamp(0.0, 1.0);
         let asked = LIGHTEST * (HEAVIEST / LIGHTEST).powf(pressure);
         let ease = (EASE_PERIODS / fundamental).clamp(0.05, 0.4);
         let share = asked + (CATCH - asked).max(0.0) * (-seconds / ease).exp();
@@ -642,9 +684,10 @@ impl Engine for Bowed {
             players: (params.at(P_PLAYERS).round() as usize).clamp(1, PLAYERS),
             instrument: params.at(P_INSTRUMENT).round().clamp(0.0, 4.0) as usize,
         };
+        let at = self.bowed_at();
         for voice in self.voices.iter_mut().filter(|voice| voice.sounding) {
             // The bow moves along the string at once; everything else is read every tick.
-            voice.position = self.settings.position;
+            voice.position = at;
         }
     }
 
@@ -654,7 +697,7 @@ impl Engine for Bowed {
         let key = note.pitch;
         let position = match note.touch {
             Some(at) => touch_position(at).clamp(0.03, 0.4),
-            None => settings.position,
+            None => self.bowed_at(),
         };
         let body = match settings.instrument {
             0 => register(key),
@@ -749,7 +792,14 @@ impl Engine for Bowed {
     }
 
     fn perform(&mut self, performance: &Performance) {
+        let moved = performance.brightness != self.performance.brightness;
         self.performance = *performance;
+        if moved {
+            let at = self.bowed_at();
+            for voice in self.voices.iter_mut().filter(|voice| voice.sounding) {
+                voice.position = at;
+            }
+        }
     }
 
     fn render(&mut self, mid: &mut [f32], side: &mut [f32], tick: bool) {

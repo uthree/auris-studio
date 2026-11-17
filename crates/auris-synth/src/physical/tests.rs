@@ -1880,3 +1880,78 @@ fn letting_a_fretted_note_go_mutes_it_from_the_top_down() {
         fall(&let_go, 1.0)
     );
 }
+
+#[test]
+fn controller_74_draws_the_bow_toward_the_bridge_or_over_the_fingerboard() {
+    let bowed = |events: &[NoteEvent]| {
+        let mut violin = rig(Model::Violin, 48_000.0);
+        violin.set_param("vibrato", 0.0);
+        let mut all = events.to_vec();
+        all.push(on(69, 0.7));
+        violin.render(48_000, &all)
+    };
+    // The spectral centroid, in harmonics: one band of partials would sit on a different
+    // notch of the bow's comb at every place.
+    let top = |audio: &[f32]| {
+        let steady = &audio[24_000..48_000];
+        let partials: Vec<f64> = (1..=30)
+            .map(|n| partial(steady, hz(69), f64::from(n)))
+            .collect();
+        let weighted: f64 = partials
+            .iter()
+            .enumerate()
+            .map(|(n, a)| (n + 1) as f64 * a)
+            .sum();
+        weighted / partials.iter().sum::<f64>()
+    };
+    let plain = bowed(&[]);
+    // At its middle the controller is where the bow already was.
+    assert!(bowed(&[controller(0, 74, 0.5)]) == plain);
+    let (tasto, normal, ponticello) = (
+        top(&bowed(&[controller(0, 74, 0.0)])),
+        top(&plain),
+        top(&bowed(&[controller(0, 74, 1.0)])),
+    );
+    assert!(
+        tasto < normal * 0.9 && normal * 1.5 < ponticello,
+        "centroid sul tasto {tasto}, ordinario {normal}, sul ponticello {ponticello} harmonics"
+    );
+}
+
+#[test]
+fn portamento_slides_a_slur_and_lets_the_finger_jump_without_it() {
+    for model in [Model::Violin, Model::Clarinet, Model::TinWhistle] {
+        let (from, to) = (home(model), home(model) + 7);
+        let slur = |portamento: f32| {
+            let mut line = rig(model, 48_000.0);
+            line.set_param("legato", 1.0);
+            line.render(
+                24_000,
+                &[
+                    controller(0, 65, portamento),
+                    controller(0, 5, 0.6),
+                    on(from, 0.8),
+                ],
+            );
+            line.render(96_000, &[on(to, 0.8)])
+        };
+        // A tenth of a second into the slur, and two seconds on.
+        let arrived = |audio: &[f32], at: std::ops::Range<usize>| {
+            goertzel(&audio[at.clone()], 48_000.0, hz(to))
+                / goertzel(&audio[at], 48_000.0, hz(from)).max(1.0e-9)
+        };
+        let (jumped, slid) = (slur(0.0), slur(1.0));
+        assert!(
+            arrived(&jumped, 2_400..7_200) > 3.0,
+            "{model:?} without portamento was still on the old note"
+        );
+        assert!(
+            arrived(&slid, 2_400..7_200) < 1.0,
+            "{model:?} with portamento was already on the new note"
+        );
+        assert!(
+            arrived(&slid, 86_400..96_000) > 3.0,
+            "{model:?} with portamento never arrived"
+        );
+    }
+}

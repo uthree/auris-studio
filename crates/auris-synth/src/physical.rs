@@ -376,6 +376,14 @@ pub(crate) struct Performance {
     /// middle, and shorter below it. A plucked string hears it as a palm laid on the strings at
     /// the bridge, which is how a guitarist shortens a note while it is held.
     pub decay: f32,
+    /// Controller 74, brightness: resting at the middle. A bowed string hears it as where the
+    /// bow is drawn, nearer the bridge above the middle and over the fingerboard below it.
+    pub brightness: f32,
+    /// Controller 65: portamento. While it is on, a slur slides from one note to the next in
+    /// the time controller 5 gives instead of moving the finger at once.
+    pub portamento: bool,
+    /// Controller 5: the portamento time, from nothing to all the way up.
+    pub portamento_time: f32,
     /// The stereo width control.
     pub width: f32,
 }
@@ -385,6 +393,20 @@ pub(crate) struct Performance {
 const DAMPERS_LEAVE: f32 = 0.25;
 /// Pedal travel at which the dampers are clear of the strings.
 const DAMPERS_CLEAR: f32 = 0.75;
+/// The quickest and slowest portamento, as the time constant of a slide, in seconds.
+const PORTAMENTO_FASTEST: f32 = 0.02;
+const PORTAMENTO_SLOWEST: f32 = 1.5;
+
+/// Moves `slid`, the key a slurred line is sounding, toward `key`: at once, or with portamento
+/// on, over the time it gives. Called once a control tick, at `ticks_per_second`.
+pub(crate) fn slide(slid: &mut f32, key: f32, performance: &Performance, ticks_per_second: f32) {
+    match performance.portamento_seconds() {
+        Some(seconds) => {
+            *slid += (key - *slid) * (1.0 - (-1.0 / (seconds * ticks_per_second)).exp());
+        }
+        None => *slid = key,
+    }
+}
 
 impl Performance {
     /// How far the sustain pedal holds the dampers off the strings: 0 with them resting on the
@@ -405,6 +427,19 @@ impl Performance {
         resting * resting
     }
 
+    /// How long a slurred slide takes with portamento on, in seconds — the time constant of its
+    /// approach to the new note — or `None` with it off, when the finger moves at once.
+    ///
+    /// Controller 5 at the bottom is a quick slide, a fiftieth of a second, and all the way up
+    /// a slow one of a second and a half; it rises as the square, so the useful slides are
+    /// spread across the travel.
+    pub fn portamento_seconds(&self) -> Option<f32> {
+        self.portamento.then(|| {
+            let time = self.portamento_time.clamp(0.0, 1.0);
+            PORTAMENTO_FASTEST + (PORTAMENTO_SLOWEST - PORTAMENTO_FASTEST) * time * time
+        })
+    }
+
     /// How hard a palm is laid on the strings: none with controller 75 at or above its middle,
     /// all the way at the bottom of it.
     pub fn palm(&self) -> f32 {
@@ -423,6 +458,9 @@ impl Default for Performance {
             soft: false,
             legato: false,
             decay: 0.5,
+            brightness: 0.5,
+            portamento: false,
+            portamento_time: 0.0,
             width: 1.0,
         }
     }
@@ -995,6 +1033,9 @@ impl SegmentRenderer for Physical {
                     64 => self.performance.pedal = value,
                     66 => self.performance.sostenuto = value >= 0.5,
                     75 => self.performance.decay = value,
+                    74 => self.performance.brightness = value,
+                    65 => self.performance.portamento = value >= 0.5,
+                    5 => self.performance.portamento_time = value,
                     67 => self.performance.soft = value >= 0.5,
                     68 => {
                         let legato = value >= 0.5;

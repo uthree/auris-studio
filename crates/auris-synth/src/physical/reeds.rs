@@ -113,6 +113,8 @@ struct Voice {
     decimator: Decimator,
     blocker: DcBlocker,
     key: f32,
+    /// The key a slurred line is sounding, which portamento slides toward a new one.
+    slid: f32,
     pitch: f32,
     velocity: f32,
     sounding: bool,
@@ -148,6 +150,7 @@ impl Default for Voice {
             blocker: DcBlocker::default(),
             key: 60.0,
             pitch: 60.0,
+            slid: 60.0,
             velocity: 0.0,
             sounding: false,
             held: false,
@@ -287,7 +290,12 @@ impl Reeds {
         };
         let internal = rate * voice.oversampling as f32;
         let ticks_per_second = rate / TICK as f32;
-        let target = voice.key + performance.bend;
+        if start {
+            voice.slid = voice.key;
+        } else {
+            super::slide(&mut voice.slid, voice.key, &performance, ticks_per_second);
+        }
+        let target = voice.slid + performance.bend;
         if start {
             voice.pitch = target;
         } else {

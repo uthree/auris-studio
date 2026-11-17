@@ -110,6 +110,12 @@ the bass hear a palm laid on the strings at the bridge. It shortens notes that a
 upper partials first, so at the bottom a note is its pick's click and a short, dark thump. It
 reaches notes already sounding, and the open strings too. Above the middle it does nothing.
 Letting a key go is the fretting hand easing off: the note stops within **Release**.
+CC74, brightness, also rests at its middle; on the strings it is where the bow is drawn. Above
+the middle the bow moves toward the bridge, as near as a third of **Bow Position** (sul
+ponticello, glassy). Below it the bow goes out over the end of the fingerboard, up to twice as
+far, with a lighter stroke (sul tasto, veiled). CC65 turns portamento on for the strings, reeds
+and whistles: a slurred note slides to the next instead of moving the finger at once, taking the
+time CC5 gives, from a fiftieth of a second to a second and a half. Pitch bend is not slowed.
 Pitch bend reaches sounding notes, up to two octaves either way. On the piano **Release** is
 the damper: the time it takes to remove 80 dB, longer in the bass, and the keys above F6 have
 none.
