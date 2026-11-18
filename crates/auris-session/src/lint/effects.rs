@@ -75,6 +75,7 @@ fn strip_settings(
             diagnostic.param = Some(range.param.to_string());
             diagnostic.value = Some(value);
             diagnostic.limit = Some(limit);
+            diagnostic.range = Some((range.low, range.high));
             diagnostics.push(diagnostic);
         }
     }
@@ -153,6 +154,19 @@ mod tests {
         assert_eq!(
             findings(&session),
             vec![(Severity::Warning, Some(12.0), Some(6.0), "drive_db".into())]
+        );
+        // The model is told the whole range, not only the bound it crossed, so it can choose a
+        // value inside rather than on the edge.
+        let message = session
+            .lint_score()
+            .diagnostics
+            .iter()
+            .find(|d| d.rule == Rule::EffectSetting)
+            .unwrap()
+            .describe();
+        assert!(
+            message.contains("above the 0 to 6 this style's page names"),
+            "{message}"
         );
         set(&mut session, track, "drive_db", 3.0);
         assert!(findings(&session).is_empty());

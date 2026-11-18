@@ -328,6 +328,10 @@ pub struct Diagnostic {
     /// The parameter key involved, with [`Self::effect`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub param: Option<String>,
+    /// The range a setting was held to, lowest and highest, with [`Self::param`]: what the
+    /// message offers instead of the one bound [`Self::limit`] names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<(f32, f32)>,
 }
 
 impl Diagnostic {
@@ -346,6 +350,7 @@ impl Diagnostic {
             fix: None,
             effect: None,
             param: None,
+            range: None,
         }
     }
 
@@ -509,8 +514,9 @@ impl Diagnostic {
                 } else {
                     ""
                 };
+                let (low, high) = self.range.unwrap_or((limit, limit));
                 format!(
-                    "{effect} {param} is {value}{start}, {side} the {limit} this style's page names; set it in range with mixer_graph set_parameter, or keep it and record why"
+                    "{effect} {param} is {value}{start}, {side} the {low} to {high} this style's page names; set it within that range with mixer_graph set_parameter, or keep it and record why"
                 )
             }
         }

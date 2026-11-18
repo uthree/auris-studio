@@ -275,8 +275,11 @@ impl AurisApp {
             Rule::Unpitched | Rule::PhaseCancellation | Rule::LongLyricLine => {
                 format!("{:.0}", diagnostic.value.unwrap_or_default())
             }
+            // A setting is shown as typed, so a range of 0.15 to 0.25 is not rounded to 0.1.
+            Rule::EffectSetting => diagnostic.value.unwrap_or_default().to_string(),
             _ => number(diagnostic.value.unwrap_or_default()),
         };
+        let (low, high) = diagnostic.range.unwrap_or_default();
         let clips = diagnostic
             .clips
             .iter()
@@ -290,6 +293,8 @@ impl AurisApp {
             .replace("{limit}", &number(diagnostic.limit.unwrap_or_default()))
             .replace("{effect}", &self.lint_effect_label(diagnostic))
             .replace("{param}", diagnostic.param.as_deref().unwrap_or_default())
+            .replace("{low}", &low.to_string())
+            .replace("{high}", &high.to_string())
     }
 
     /// The name of the effect a finding is about, as the mixer draws it.
