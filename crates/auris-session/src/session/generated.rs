@@ -719,14 +719,8 @@ fn update_kit_dials(previous: &ClipRecipe, next: &mut ClipRecipe) {
         if previous.groove != next.groove {
             writer.groove = next.groove.clone();
         }
-        if previous.swing != next.swing {
-            writer.swing = next.swing;
-        }
         if previous.subdivision != next.subdivision {
             writer.subdivision = next.subdivision;
-        }
-        if previous.gate != next.gate {
-            writer.gate = next.gate;
         }
         if previous.dynamics != next.dynamics {
             writer.dynamics = next.dynamics;
@@ -1634,7 +1628,6 @@ mod tests {
         let backing = session.add_default_instrument_track("Chords").unwrap();
         let mut recipe = ClipRecipe::new(ClipPreset::Chords, 3);
         recipe.density = 1.0;
-        recipe.gate = 0.3;
         let clip = session.generate_clip(backing, BAR, BAR, recipe).unwrap();
         let starts: std::collections::BTreeSet<_> = session
             .midi_clip(clip)
@@ -2087,7 +2080,6 @@ mod tests {
         for (name, role, preset, note) in voices {
             let mut writer = ClipRecipe::new(preset, 32 + u64::from(note));
             writer.groove = "bossa-nova".into();
-            writer.swing = 61;
             recipe.drum_voices.push(DrumVoiceRecipe {
                 name: name.into(),
                 role,

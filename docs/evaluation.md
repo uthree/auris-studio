@@ -402,6 +402,41 @@ answers. Audiobox takes the GPU whenever one is visible. On a GPU, scores match 
 adapters turn both off. `song_aesthetics.py --precision bf16` is about 1.6 times faster but moves
 scores by up to 0.8; fp16 turns MuQ's output into NaN.
 
+## Performance dials against human playing
+
+The starting value a technique takes when it is added from the performance section's
+**+ Add a technique** menu, and where the **Shape** dial starts, are read from human performances
+by `tools/eval/performance_stats.py`. Each stage scales its effect linearly with its amount, so a
+statistic measured on human playing, divided by the stage's effect at full strength, is the
+amount that reproduces it. Piano statistics come from 200 MAESTRO v3 performances (seed 0);
+guitar strums from GuitarSet's 180 comping takes. The figures below are medians over pieces;
+the full summary is
+[performance-dials-2026-11-19.json](../tools/eval/references/performance-dials-2026-11-19.json).
+
+| Technique | Human statistic | Implied amount | Start |
+| --- | --- | ---: | ---: |
+| Voicing | inner voices 13% under the top; top 6 ms ahead | 0.52; 0.38 | 0.5 |
+| Pedal | 71% of notes released under the pedal | 0.71 | 0.7 |
+| Sustain | 0.39 s held past release (0.78 beat at 120 BPM) | — | ¾ beat |
+| Strum | 20 ms guitar stroke; 22 ms piano chord | 0.20; 0.22 | 0.2 |
+| Articulation | leaps detached by 14 ms; repeated keys released 115 ms early | 0.48; 2.9 | 0.5 |
+| Shape | melody dynamics follow pitch; phrase arch | contour 1.26; swell 0.06 | contour only |
+
+The data cannot set three things. A performance is not its score, so it cannot show which
+steps were written legato; the articulation's step overlap is not measured. Ghost notes,
+slides and mutes have no corpus here and start halfway. And one classical piano corpus is
+one repertoire: these are starting points, not the right amount for every song.
+
+The same measurement points at constants rather than starting values. The pitch slope (1.26),
+the bass under the top (19% against the stage's 10% at full) and the repeated-key release (115 ms
+against 40 ms) all lie beyond what the stages reach at full strength.
+
+```sh
+uv run tools/eval/performance_stats.py MAESTRO_DIR GUITARSET_DIR --out stats.json
+```
+
+MAESTRO is CC BY-NC-SA 4.0: download both corpora under `target/` and commit only aggregates.
+
 ## Controlled melody listening
 
 A 2026-10-26 local trial
@@ -429,6 +464,8 @@ uv run --python 3.11 --with pytest --with numpy --with scipy --with soundfile py
 uv run --with ruff ruff check tools/eval/music.py tools/eval/learned_models.py
 uv run --with pytest --with mido==1.3.3 pytest tools/eval/test_accompaniment_parts.py
 uv run --with ruff ruff check tools/eval/accompaniment_parts.py
+uv run --with pytest --with mido==1.3.3 --with numpy pytest tools/eval/test_performance_stats.py
+uv run --with ruff ruff check tools/eval/performance_stats.py tools/eval/test_performance_stats.py
 ```
 
 The contract tests require no model download. Real-model comparisons should use

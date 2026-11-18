@@ -189,6 +189,21 @@ pub(crate) fn with_a_clip(
     (app, cx, track, clip)
 }
 
+/// [`with_a_clip`], but on a synthesiser lead rather than the default piano: an instrument whose
+/// family says nothing about how it is played, so the performance panel offers every technique.
+pub(crate) fn with_a_synth_clip(
+    cx: &mut TestAppContext,
+) -> (Entity<AurisApp>, &mut VisualTestContext, TrackId, ClipId) {
+    let (app, cx, track, clip) = with_a_clip(cx);
+    app.update(cx, |this, _| {
+        this.session
+            .set_track_instrument(track, "auris.synth.lead")
+            .expect("the built-in lead is registered");
+    });
+    paint(&app, cx);
+    (app, cx, track, clip)
+}
+
 /// [`with_a_clip`], but the clip sits on a singer track: the fixture the lyric gestures need.
 pub(crate) fn with_a_singer_clip(
     cx: &mut TestAppContext,

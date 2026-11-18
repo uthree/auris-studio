@@ -1534,6 +1534,8 @@ pub struct AurisApp {
     pub(crate) score_layer: ScoreLayer,
     pub(crate) score_preview: Option<ScorePreview>,
     pub(crate) performance_details: [bool; 4],
+    /// Techniques added to a clip from the performance section's menu, drawn even at zero.
+    pub(crate) performance_added: Vec<(ClipId, crate::ui::techniques::Technique)>,
     pub(crate) drag: Option<Drag>,
     /// Where each panel is docked, which of them are showing, and how large each dock is.
     pub(crate) panels: PanelLayout,
@@ -2186,6 +2188,7 @@ impl AurisApp {
             score_layer: ScoreLayer::default(),
             score_preview: None,
             performance_details: [false; 4],
+            performance_added: Vec::new(),
             drag: None,
             panels: PanelLayout::load(),
             status,

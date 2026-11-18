@@ -129,6 +129,29 @@ WAV か WAV の入ったディレクトリを渡します。各ファイルの�
 
 `songeval.py` と `song_aesthetics.py` は `--device cuda:0` で GPU を使います（ROCm 版の PyTorch もこの名前で答えます）。Audiobox は GPU が見えれば自動で使います。GPU の点は、CPU の点と 0.001 以内で一致します。gfx1201 の ROCm 7.14 では memory-efficient と flash の attention カーネルが落ちるので、アダプタはこの二つを切ります。`song_aesthetics.py --precision bf16` は約1.6倍速くなりますが、点が最大 0.8 動きます。fp16 では MuQ の出力が NaN になります。
 
+## 演奏のつまみと人間の演奏
+
+演奏セクションの **＋ 奏法を追加** で足した奏法の初期値と、**抑揚** のつまみの始め方は、`tools/eval/performance_stats.py` で人間の演奏から決めています。各段の効果は量に比例するので、人間の演奏で測った統計量を、その段の最大の効果で割れば、同じ効果を出す量になります。ピアノは MAESTRO v3 の 200 曲（シード 0）、ギターのストロークは GuitarSet の伴奏 180 本から測りました。下の値は曲ごとの中央値で、全体の要約は [performance-dials-2026-11-19.json](../tools/eval/references/performance-dials-2026-11-19.json) にあります。
+
+| 奏法 | 人間の演奏の統計量 | 対応する量 | 初期値 |
+| --- | --- | ---: | ---: |
+| 声部バランス | 内声はトップより 13% 弱い／トップが 6 ms 先行 | 0.52／0.38 | 0.5 |
+| 和声ペダル | 71% の音がペダルを踏んだまま離される | 0.71 | 0.7 |
+| サステイン | 離鍵から 0.39 秒伸びる（120 BPM で 0.78 拍） | — | 3/4 拍 |
+| ストローク | ギターのストローク 20 ms／ピアノの和音 22 ms | 0.20／0.22 | 0.2 |
+| アーティキュレーション | 跳躍で 14 ms 離れる／同音連打で 115 ms 早く離す | 0.48／2.9 | 0.5 |
+| 抑揚 | 旋律の強弱が音高に沿う／フレーズのアーチ | 旋律の抑揚 1.26／フレーズの抑揚 0.06 | 旋律の抑揚だけ |
+
+データから決められないことが3つあります。演奏は楽譜ではないので、どの順次進行がレガートで書かれていたかは分からず、アーティキュレーションの順次進行での重なりは測れていません。ゴーストノート、スライド、ミュートには使えるコーパスがなく、初期値は中間の値のままです。また、クラシックのピアノのコーパス1つは1つのレパートリーにすぎず、どの曲にも合う量ではなく出発点です。
+
+同じ測定は、初期値ではなく定数のほうも指しています。音高に沿う強弱（1.26）、トップに対する低音の弱さ（最大で 10% のところ人間は 19%）、同音連打の離鍵（40 ms のところ人間は 115 ms）は、どれも段の最大の効果を超えています。
+
+```sh
+uv run tools/eval/performance_stats.py MAESTRO_DIR GUITARSET_DIR --out stats.json
+```
+
+MAESTRO は CC BY-NC-SA 4.0 です。どちらのコーパスも `target/` の下にダウンロードし、コミットするのは集計値だけにします。
+
 ## 制御したメロディー聴取
 
 `melody_ab.py` は固定した伴奏に器楽リードを移植します。既存の音符、伴奏、ID、ミキサー、演奏変換は編集可能なプロジェクトに残ります。`structure.py`、`melody_continuity.py`、`seed_metrics.py` はモデルスコアとは独立に、書かれたスコアのリズム、フレーズ連続性、重なり、声部移動を検査します。
@@ -141,6 +164,8 @@ WAV か WAV の入ったディレクトリを渡します。各ファイルの�
 ```sh
 uv run --python 3.11 --with pytest --with numpy --with scipy --with soundfile pytest tools/eval/test_music.py
 uv run --with ruff ruff check tools/eval/music.py tools/eval/learned_models.py
+uv run --with pytest --with mido==1.3.3 --with numpy pytest tools/eval/test_performance_stats.py
+uv run --with ruff ruff check tools/eval/performance_stats.py tools/eval/test_performance_stats.py
 ```
 
 契約テストはモデルのダウンロードを必要としません。実モデル比較では固定した評価環境を使い、保持するすべてのアーティファクトを記録してください。

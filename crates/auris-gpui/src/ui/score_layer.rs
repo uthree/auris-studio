@@ -228,6 +228,7 @@ mod tests {
                 )
                 .unwrap();
             this.open_clip_in_editor(clip);
+            this.show_techniques(clip, &[crate::ui::techniques::Technique::Strum]);
             this.session.midi_clip(clip).unwrap().notes.clone()
         });
         paint(&app, cx);

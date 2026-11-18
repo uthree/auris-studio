@@ -817,6 +817,13 @@ pub enum MenuCommand {
     },
     /// Delete a kept preset.
     DeletePerformPreset(String),
+    /// Add a playing technique to a clip's performance.
+    AddPerformTechnique {
+        /// Clip whose performance is being shaped.
+        clip: ClipId,
+        /// The technique to add.
+        technique: crate::ui::techniques::Technique,
+    },
     /// Set the pitch order of a chord stroke.
     SetPerformStrokeDirection {
         /// Clip whose performance is being shaped.
@@ -1644,6 +1651,9 @@ impl AurisApp {
             }
             MenuCommand::SetPerformSwingGrid { clip, subdivision } => {
                 self.set_perform_swing_grid(clip, subdivision)
+            }
+            MenuCommand::AddPerformTechnique { clip, technique } => {
+                self.add_perform_technique(clip, technique)
             }
             MenuCommand::SetPerformStrokeDirection { clip, direction } => {
                 self.set_perform_stroke_direction(clip, direction)
