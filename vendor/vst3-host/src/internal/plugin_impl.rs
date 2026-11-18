@@ -1428,7 +1428,7 @@ impl PluginImpl {
             // Find and create the audio component
             log::debug!("Step 4: Creating audio component...");
             let (component, class_index) =
-                Self::create_component(&factory, target_class_id.as_deref())?;
+                Self::create_component(&factory, module.as_ref(), target_class_id.as_deref())?;
             log::debug!("Component created successfully (class index {class_index})");
 
             // Initialize component with a host-application context. Passing null here
@@ -1845,6 +1845,7 @@ impl PluginImpl {
     /// factory class index it came from (so the reported [`PluginInfo`] describes that class).
     unsafe fn create_component(
         factory: &ComPtr<IPluginFactory>,
+        module: &dyn VstModule,
         target_class_id: Option<&str>,
     ) -> Result<(ComPtr<IComponent>, i32)> {
         let num_classes = factory.countClasses();
@@ -1860,6 +1861,7 @@ impl PluginImpl {
                 });
 
                 if category.contains("Audio Module Class") && is_target {
+                    module.prepare_for_class(&class_id)?;
                     let mut component_ptr: *mut IComponent = ptr::null_mut();
 
                     let result = factory.createInstance(
