@@ -87,6 +87,8 @@ impl Section {
                 Key::RecordQuantizeLabel,
                 Key::RecordQuantizeNote,
                 Key::RecordQuantizeStrength,
+                Key::VoiceInputLabel,
+                Key::VoiceInputNote,
             ],
             Self::Personalization => &[
                 Key::PreferenceHeading,

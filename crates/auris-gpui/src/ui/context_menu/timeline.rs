@@ -59,6 +59,15 @@ impl AurisApp {
         menu
     }
 
+    /// The menu behind the Record button: what a take listens to.
+    pub(crate) fn record_menu(&self, anchor: Point<Pixels>) -> ContextMenu {
+        ContextMenu::new(anchor, self.t(Key::CmdRecord)).toggle(
+            self.t(Key::MenuVoiceInput),
+            MenuCommand::ToggleVoiceInput,
+            self.settings.midi.voice_input,
+        )
+    }
+
     /// The menu for the bar ruler: the cycle above, the tempo below.
     pub(crate) fn ruler_menu(&self, anchor: Point<Pixels>, tick: Ticks) -> ContextMenu {
         ContextMenu::new(anchor, self.t(Key::MenuCycleTitle))

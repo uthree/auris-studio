@@ -92,35 +92,16 @@ fn yin(samples: &[f32], rate: f32, lag_min: usize, lag_max: usize) -> NotePitch 
     for frame in 0..FRAMES {
         let at = first + span * frame / (FRAMES - 1).max(1);
         let x = &samples[at..at + window + lag_max];
-        // The squared difference of the frame against itself `lag` samples on.
-        for (lag, slot) in difference.iter_mut().enumerate().skip(1) {
-            *slot = (0..window).map(|i| (x[i] - x[i + lag]).powi(2)).sum();
+        if let Some(period) = period(
+            x,
+            window,
+            (lag_min, lag_max),
+            THRESHOLD,
+            &mut difference,
+            &mut normalised,
+        ) {
+            found.push(rate / period);
         }
-        // Normalised by its running mean, so a dip means "like itself", whatever the level.
-        let mut sum = 0.0;
-        for lag in 1..=lag_max {
-            sum += difference[lag];
-            normalised[lag] = if sum > 0.0 {
-                difference[lag] * lag as f32 / sum
-            } else {
-                1.0
-            };
-        }
-        let Some(mut lag) = (lag_min..lag_max).find(|lag| normalised[*lag] < THRESHOLD) else {
-            continue;
-        };
-        while lag + 1 < lag_max && normalised[lag + 1] < normalised[lag] {
-            lag += 1;
-        }
-        // A parabola through the dip and its neighbours places it between samples.
-        let (a, b, c) = (normalised[lag - 1], normalised[lag], normalised[lag + 1]);
-        let bend = a - 2.0 * b + c;
-        let shift = if bend.abs() > f32::EPSILON {
-            (0.5 * (a - c) / bend).clamp(-1.0, 1.0)
-        } else {
-            0.0
-        };
-        found.push(rate / (lag as f32 + shift));
     }
     if found.is_empty() {
         return NotePitch::NONE;
@@ -131,6 +112,50 @@ fn yin(samples: &[f32], rate: f32, lag_min: usize, lag_max: usize) -> NotePitch 
         voiced,
         hz: Some(found[found.len() / 2]),
     }
+}
+
+/// The period YIN finds in `x`, in samples between them, or `None` when no dip clears
+/// `threshold`.
+///
+/// `x` holds `window + lags.1` samples; `difference` and `normalised` are scratch at least
+/// `lags.1 + 1` long, passed in so that a caller measuring frame after frame allocates nothing.
+pub(crate) fn period(
+    x: &[f32],
+    window: usize,
+    (lag_min, lag_max): (usize, usize),
+    threshold: f32,
+    difference: &mut [f32],
+    normalised: &mut [f32],
+) -> Option<f32> {
+    debug_assert!(x.len() >= window + lag_max);
+    debug_assert!(lag_min >= 1 && lag_max > lag_min + 1);
+    // The squared difference of the frame against itself `lag` samples on.
+    for (lag, slot) in difference.iter_mut().enumerate().take(lag_max + 1).skip(1) {
+        *slot = (0..window).map(|i| (x[i] - x[i + lag]).powi(2)).sum();
+    }
+    // Normalised by its running mean, so a dip means "like itself", whatever the level.
+    let mut sum = 0.0;
+    for lag in 1..=lag_max {
+        sum += difference[lag];
+        normalised[lag] = if sum > 0.0 {
+            difference[lag] * lag as f32 / sum
+        } else {
+            1.0
+        };
+    }
+    let mut lag = (lag_min..lag_max).find(|lag| normalised[*lag] < threshold)?;
+    while lag + 1 < lag_max && normalised[lag + 1] < normalised[lag] {
+        lag += 1;
+    }
+    // A parabola through the dip and its neighbours places it between samples.
+    let (a, b, c) = (normalised[lag - 1], normalised[lag], normalised[lag + 1]);
+    let bend = a - 2.0 * b + c;
+    let shift = if bend.abs() > f32::EPSILON {
+        (0.5 * (a - c) / bend).clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+    Some(lag as f32 + shift)
 }
 
 #[cfg(test)]

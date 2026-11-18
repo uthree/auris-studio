@@ -126,6 +126,7 @@ pub(crate) mod tuning;
 mod typing;
 mod typing_calibration;
 mod visualizer;
+mod voice_input;
 mod vst3;
 pub use visualizer::{VisualizerFrame, VisualizerLoudness, VisualizerSpectrum, VisualizerTap};
 
@@ -619,6 +620,10 @@ pub struct Session {
     take: Option<record::Take>,
     /// What the typing keyboard is playing onto a track, while Record is on one that holds notes.
     note_take: Option<note_take::NoteTake>,
+    /// The microphone being followed into the note take, while one is. See [`voice_input`].
+    voice: Option<voice_input::VoiceTake>,
+    /// Whether a note take follows the microphone. See [`voice_input`].
+    voice_input: bool,
     /// A tap-along measuring the typing keyboard, while its click plays.
     typing_calibration_run: Option<typing_calibration::TypingCalibrationRun>,
     /// How the last tap-along came out, until a frontend asks.
@@ -870,6 +875,8 @@ impl Session {
             counting: None,
             calibration: None,
             note_take: None,
+            voice: None,
+            voice_input: false,
             typing_calibration_run: None,
             typing_calibration_result: None,
             midi_calibration_result: None,
@@ -1251,6 +1258,7 @@ impl Session {
         self.service_calibration();
         self.service_typing_calibration();
         self.service_midi(std::time::Instant::now());
+        self.service_voice();
         // Writing a parameter is the one edit that reaches a plugin without rebuilding, so it is
         // also the one that can leave the tracks compensated for the wrong number of frames.
         // Rebuilding re-measures every chain and re-sizes the delay lines to match — and going

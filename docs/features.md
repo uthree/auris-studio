@@ -464,6 +464,16 @@ count lands in front of the downbeat.
 **MIDI Learn** in the drum editor takes the next note struck on a MIDI keyboard as it takes one
 from Musical Typing.
 
+**Sing or hum a part instead of playing it.** Turn on **Hum Notes from the Microphone** on the
+**Record** button's right-click menu (or **Voice input** in Settings → MIDI), select an instrument
+track and record: the microphone is followed as you sing, and each note you meant is written down
+where you sang it, with how loudly you sang it as its velocity. A vibrato stays one note, a step
+from one pitch to the next without a breath is two, and a dip in level on one pitch ("dum dum")
+strikes the note again. Everything above applies to a sung take too — the count-in, the recording
+mode, the loop and quantizing while recording, which is worth turning on for a voice. The notes
+are written but not played while you sing; a `Voice` badge on the transport says the microphone
+will be opened, and clicking it turns voice input off.
+
 **What a take does with what is already there** is the note recording mode, in **Settings → MIDI**:
 
 * **Takes** (the default) — every take is a clip of its own. With the loop on, every pass round it

@@ -38,6 +38,7 @@ mod composition_eval;
 pub(crate) mod controls;
 mod conversations;
 pub(crate) mod midi;
+mod midi_record;
 pub(super) mod model_search;
 pub(crate) mod music;
 #[cfg(test)]

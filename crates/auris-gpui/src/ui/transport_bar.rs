@@ -375,20 +375,32 @@ impl AurisApp {
                         .shortcut(self.keystroke_for("transport.play")),
                     )
                     .into_any_element(),
-                ToolbarItem::Record => (icon_button(
-                    "record",
-                    Icon::Record,
-                    recording,
-                    theme.record,
-                    &theme,
-                    cx.listener(|this, _, window, cx| {
-                        this.toggle_recording(window, cx);
-                        cx.notify();
-                    }),
-                )
-                .tooltip(self.t(Key::CmdRecord))
-                .shortcut(self.keystroke_for("transport.record")))
-                .into_any_element(),
+                // What a take listens to hangs off Record the way the count-in hangs off the
+                // click, and for the same reason: see the metronome below.
+                ToolbarItem::Record => div()
+                    .id("record-slot")
+                    .flex()
+                    .flex_none()
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        Self::opens_menu(cx, |this, at| this.record_menu(at)),
+                    )
+                    .child(
+                        icon_button(
+                            "record",
+                            Icon::Record,
+                            recording,
+                            theme.record,
+                            &theme,
+                            cx.listener(|this, _, window, cx| {
+                                this.toggle_recording(window, cx);
+                                cx.notify();
+                            }),
+                        )
+                        .tooltip(self.t(Key::CmdRecord))
+                        .shortcut(self.keystroke_for("transport.record")),
+                    )
+                    .into_any_element(),
                 ToolbarItem::Punch => (icon_button(
                     "punch",
                     Icon::Punch,
@@ -472,6 +484,27 @@ impl AurisApp {
                         };
                         this.apply_midi_preferences(midi);
                         this.set_status(this.t(Key::MidiOctaveNow).replace("{octave}", "0"));
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            );
+        }
+        // A microphone that Record is going to open says so for as long as it is: Record on a
+        // note track would otherwise turn the input light on with nothing on screen to say why.
+        // Clicking it turns voice input off.
+        if self.settings.midi.voice_input {
+            items.push(
+                div()
+                    .id("voice-input-badge")
+                    .px_1()
+                    .rounded_sm()
+                    .bg(theme.accent_soft)
+                    .text_xs()
+                    .text_color(theme.text)
+                    .cursor_pointer()
+                    .child(self.t(Key::VoiceInputBadge).to_owned())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.toggle_voice_input();
                         cx.notify();
                     }))
                     .into_any_element(),
@@ -1085,6 +1118,22 @@ impl AurisApp {
             false => Key::MetronomeOff,
         };
         self.set_status(self.t(key));
+    }
+
+    /// Turns following the microphone into note takes on or off, and says which.
+    pub(crate) fn toggle_voice_input(&mut self) {
+        let on = !self.settings.midi.voice_input;
+        let midi = auris_session::MidiPreferences {
+            voice_input: on,
+            ..self.settings.midi.clone()
+        };
+        self.apply_midi_preferences(midi);
+        let status = if on {
+            Key::VoiceInputOn
+        } else {
+            Key::VoiceInputOff
+        };
+        self.set_status(self.t(status).to_string());
     }
 
     /// Sets how many bars are counted in front of the next take, and says so.

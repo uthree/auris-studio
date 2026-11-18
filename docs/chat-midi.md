@@ -22,6 +22,15 @@ Undo and Redo affect only this copy. Double-click a note to enter its word or
 syllable in the normal lyric prompt, including platform IME input. Imported notes
 keep their original timing until edited.
 
+**Record** plays a part into the shown track instead of drawing it: the MIDI
+keyboard, Musical Typing and — with **Voice** on — singing or humming into the
+microphone, with the song editor's count-in, click and quantize settings. While
+it records, the editor borrows the audio output, the input and the MIDI
+keyboards from every open project, and gives them back when **Stop** is
+pressed; the song is silent meanwhile. The take is merged into the part, never
+left as a clip of its own. **Voice** is the same switch as the song editor's
+voice input. Stop the take before attaching the score.
+
 **Attach score** keeps the edited copy with the message. **Cancel** discards
 the editor's changes. Sending or switching conversations commits an open draft
 first; a validation or storage error keeps it open. The source clip and MIDI
