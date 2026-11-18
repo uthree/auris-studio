@@ -161,6 +161,15 @@ with numeric track, param and value. One parameter is a one-element batch.
 Duplicate targets and invalid/discrete values are refused atomically. Existing
 parameter automation is preserved and may override static values during playback.
 
+`plugin_state` reads or replaces a hosted CLAP instrument's complete native state,
+for sound a plugin keeps outside its parameters, such as a modular patch's modules
+and cables. `read` returns the bytes as UTF-8 text when they are text, otherwise
+base64, with a revision. `write` passes that revision and the complete new state in
+the plugin's own format. The plugin loads it before the document changes, so a state
+it refuses, or one written against a stale revision, changes nothing. A write is one
+Undo step and records the plugin's read-back, with its parameter values; read again
+before the next edit. States are limited to 256 KiB.
+
 `mixer_graph` is the single mixer entry point in every backend. Pass one `operation`
 object tagged by action. Start with `read` and copy the stable track node IDs and the
 effect IDs each node lists; effects are not nodes and never connection ends.

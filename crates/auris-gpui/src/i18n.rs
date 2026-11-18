@@ -275,6 +275,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::LoadSample => Key::EditLoadSample,
         Edit::EditSampleMap => Key::EditSampleMap,
         Edit::ChoosePreset | Edit::ApplySoundPreset => Key::EditChoosePreset,
+        Edit::SetPluginState => Key::EditSetPluginState,
         Edit::SetKey => Key::EditSetKey,
         Edit::SetChord => Key::EditSetChord,
         Edit::MoveChord => Key::EditMoveChord,
@@ -376,6 +377,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         | SessionError::OutputPreview(detail)
         | SessionError::InvalidDrumAssignment(detail)
         | SessionError::SoundPreset(detail)
+        | SessionError::PluginState(detail)
         | SessionError::SampleMap(detail)
         | SessionError::DrumAnalysis(detail)
         | SessionError::PluginDiscovery(detail)

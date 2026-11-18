@@ -97,6 +97,7 @@ mod perform;
 mod performance_presets;
 mod physical_sounds;
 pub(crate) mod plugin_discovery;
+pub mod plugin_state;
 mod plugin_trust;
 mod punch;
 mod readiness;
@@ -1611,11 +1612,17 @@ impl Session {
             return None;
         }
         let edit = self.history.undo_edit()?;
-        if matches!(edit, Edit::Compose | Edit::ApplySoundPreset) {
+        if matches!(
+            edit,
+            Edit::Compose | Edit::ApplySoundPreset | Edit::SetPluginState
+        ) {
             self.collect_hosted_state().ok()?;
         }
         let project = self.history.undo(&self.project)?;
-        if matches!(edit, Edit::Compose | Edit::ApplySoundPreset) {
+        if matches!(
+            edit,
+            Edit::Compose | Edit::ApplySoundPreset | Edit::SetPluginState
+        ) {
             // Either snapshot can reuse track and plugin ids while holding different native
             // patches. Fresh slots restore the history snapshot rather than the outgoing sound.
             self.hosted.clear();
@@ -1635,11 +1642,17 @@ impl Session {
             return None;
         }
         let edit = self.history.redo_edit()?;
-        if matches!(edit, Edit::Compose | Edit::ApplySoundPreset) {
+        if matches!(
+            edit,
+            Edit::Compose | Edit::ApplySoundPreset | Edit::SetPluginState
+        ) {
             self.collect_hosted_state().ok()?;
         }
         let project = self.history.redo(&self.project)?;
-        if matches!(edit, Edit::Compose | Edit::ApplySoundPreset) {
+        if matches!(
+            edit,
+            Edit::Compose | Edit::ApplySoundPreset | Edit::SetPluginState
+        ) {
             self.hosted.clear();
             self.vst3.clear();
         }

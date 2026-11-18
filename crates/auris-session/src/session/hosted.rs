@@ -327,6 +327,35 @@ impl HostedPlugins {
         plugin.save_state().map(Some)
     }
 
+    /// Loads opaque state into a track's hosted instrument, as a preset chosen in its own window
+    /// would be.
+    ///
+    /// The instance that answers is the one rendering, so the change is heard at once; the other
+    /// instance of the pair takes it from this one at the next handover. `Ok(false)` means there
+    /// is no instance to load it into.
+    pub(super) fn load_instrument_state(
+        &mut self,
+        track: TrackId,
+        bytes: &[u8],
+    ) -> Result<bool, ClapError> {
+        let Some(slot) = self.instruments.get_mut(&track) else {
+            return Ok(false);
+        };
+        let Some(plugin) = slot.plugin_mut() else {
+            return Ok(false);
+        };
+        plugin.load_state(bytes)?;
+        plugin.refresh_value_cache();
+        slot.source_revision = slot.source_revision.wrapping_add(1);
+        Ok(true)
+    }
+
+    /// Stands a library in for a `.clap` file, so a test in another module can host a fixture.
+    #[cfg(test)]
+    pub(super) fn insert_library(&mut self, file: PathBuf, library: ClapLibrary) {
+        self.libraries.insert(file, library);
+    }
+
     /// Retires one instrument so the next graph restores the document's opaque patch.
     pub(super) fn forget_instrument(&mut self, track: TrackId) {
         if let Some(slot) = self.instruments.remove(&track) {

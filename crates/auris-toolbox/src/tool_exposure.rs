@@ -95,6 +95,7 @@ pub fn tool_group(name: &str) -> &'static str {
         | "normalize_mix"
         | "section_gain"
         | "set_instrument_params"
+        | "plugin_state"
         | "convert_track_to_audio" => "mix",
         "edit_recipe" | "teach_progression" | "forget_progression" | "list_progressions"
         | "generate_phrase" | "accompaniment" | "candidates" | "suggest_harmony" | "accompany" => {

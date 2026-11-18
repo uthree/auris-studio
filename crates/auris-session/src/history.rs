@@ -22,6 +22,8 @@ use crate::param::ParamTarget;
 pub enum Edit {
     /// A reusable instrument patch and its insert chain were applied.
     ApplySoundPreset,
+    /// A hosted plugin's complete native state was replaced.
+    SetPluginState,
     /// A measured drum assignment was applied, optionally remapping generated drum notes.
     ApplyDrumMap,
     /// A musical drum role's assigned MIDI key was added, changed or removed.

@@ -19,6 +19,9 @@ pub enum SessionError {
     /// A reusable sound is incomplete, unavailable, or has an invalid name or parameter.
     #[error("sound preset: {0}")]
     SoundPreset(String),
+    /// A hosted plugin's native state cannot be read, or a replacement was refused.
+    #[error("plugin state: {0}")]
+    PluginState(String),
     /// The requested whole-mix level cannot be measured or safely applied.
     #[error("mix normalization: {0}")]
     MixNormalization(String),

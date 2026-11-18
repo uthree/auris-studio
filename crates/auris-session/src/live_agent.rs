@@ -419,6 +419,13 @@ pub enum Command {
         #[schemars(length(min = 1, max = 256))]
         edits: Vec<InstrumentControl>,
     },
+    /// Read or replace a hosted CLAP instrument's complete native state: the bytes a project save stores, in the plugin's own format. Use it for sound a plugin keeps outside its parameters, such as a modular patch's modules and cables; use set_instrument_params for single controls. read returns the state as utf8 text when it is UTF-8, otherwise base64, with a revision. write must pass that revision and the complete new state; the plugin loads it before the document changes, so a state it refuses changes nothing. One Undo step; identical writes are no-ops. The plugin may normalise what it accepts: read again before the next edit. Only CLAP instruments; states are limited to 262144 bytes.
+    PluginState {
+        /// Stable instrument or drum track ID.
+        track: u64,
+        /// Read, or write a replacement.
+        operation: crate::session::plugin_state::PluginStateOperation,
+    },
     /// Read a MIDI clip's non-destructive settings and measured note/pitch effects, including whether slide/glide actually contributes. Optional drum_voice addresses one named writer in a drum kit; omit it for the whole clip. Read completeness and warnings: stored settings alone are not verification. Notes, curves and generation recipes are unchanged. Use this before set_performance and independently read back afterward.
     InspectPerformance {
         /// Stable MIDI clip ID from inspect_project or read_notes.
@@ -824,6 +831,7 @@ impl Command {
             Self::EditTimeline { operation } => !operation.is_read_only(),
             Self::Layer { operation } => !operation.is_read_only(),
             Self::PerformancePresets { operation } => operation.is_mutating(),
+            Self::PluginState { operation, .. } => operation.is_mutating(),
             Self::Inspect {}
             | Self::ReportStatus { .. }
             | Self::MelodyShape { .. }
@@ -1253,6 +1261,28 @@ impl Session {
                     .collect();
                 serde_json::to_string(&self.set_instrument_params(&edits)?)
                     .map_err(|e| e.to_string())
+            }
+            Command::PluginState { track, operation } => {
+                use crate::session::plugin_state::{PluginStateOperation, decode_state};
+                let track = TrackId(track);
+                match operation {
+                    PluginStateOperation::Read => {
+                        serde_json::to_string(&self.plugin_state(track).map_err(error)?)
+                    }
+                    PluginStateOperation::Write {
+                        expected_revision,
+                        encoding,
+                        state,
+                    } => {
+                        let bytes = decode_state(encoding, &state).map_err(error)?;
+                        serde_json::to_string(
+                            &self
+                                .set_plugin_state(track, &bytes, &expected_revision)
+                                .map_err(error)?,
+                        )
+                    }
+                }
+                .map_err(|e| e.to_string())
             }
             Command::InspectPerformance { clip, drum_voice } => {
                 self.agent_inspect_performance(ClipId(clip), drum_voice.as_deref())
