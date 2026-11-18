@@ -1070,3 +1070,21 @@ fn an_unsuited_technique_is_applied_with_a_warning_and_inspection_lists_what_sui
     let pedalled = edit(&mut session, clip, json!({"pedal":0.5}), None).unwrap();
     assert!(pedalled.get("instrument_warning").is_none(), "{pedalled}");
 }
+
+#[test]
+fn shape_scales_contour_swell_and_accent_together() {
+    let (mut session, clip) = fixture();
+    edit(
+        &mut session,
+        clip,
+        json!({"contour":0.4,"expression":{"swell":0.2,"accent":-0.2}}),
+        None,
+    )
+    .unwrap();
+    let shaped = edit(&mut session, clip, json!({"shape":0.8}), None).unwrap();
+    assert_eq!(shaped["settings"]["shape"], 0.8);
+    let parts = ShapeParts::of(session.clip_transforms(clip).unwrap());
+    assert_eq!((parts.contour, parts.swell, parts.accent), (0.8, 0.4, -0.4));
+    // One door, one meaning: shape and the fields it moves are not set in the same call.
+    assert!(edit(&mut session, clip, json!({"shape":0.5,"contour":0.1}), None).is_err());
+}

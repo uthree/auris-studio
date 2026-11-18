@@ -295,6 +295,7 @@ mod tests {
                 .add_note(clip, Note::new(60, Ticks::ZERO, Ticks(3840)))
                 .unwrap();
             this.open_clip_in_editor(clip);
+            this.show_techniques(clip, &[crate::ui::techniques::Technique::Pitch]);
         });
         resize(&app, cx, size(px(1920.0), px(3000.0)));
         click("score-performed", cx);

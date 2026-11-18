@@ -7,6 +7,17 @@ and generated clips. They change playback and MIDI export while preserving the
 original score. Save stores the controls and seeds; disabling a control restores the score's
 behaviour for that stage. Dragging a control is one undoable edit.
 
+Every clip has four dials: **Swing**, **Gate**, **Humanize** and **Shape**. Shape moves the
+melodic contour, the phrase swell and the beat accent together, keeping the proportions
+between them, so its value is the strongest of the three; on a clip with none of them it starts
+the contour, or the swell on a drum clip. The three stay separately adjustable under
+**Expression & groove**.
+
+Everything else is a technique — sustain, harmonic pedal, articulation, voicing, ghost notes
+and brush, slide, mute, strum, and melodic expression — listed under **Techniques** only once
+the clip uses it. **+ Add a technique** lists the rest and starts the chosen one at a moderate
+setting; an added technique keeps its row at zero until another clip is selected.
+
 Only the techniques the clip's instrument plays are offered: a keyboard has the sustain and
 harmonic pedals but no mute, slide or pitch bends; a guitar has strums, brushes and mutes but no
 pedal; a kit has neither gate nor phrase shaping. The family is read from the track's sound, as
@@ -21,7 +32,7 @@ inspector control, and after undo or redo. It is read-only: switch to Source to 
 Both tabs share the same scroll and zoom so you can compare them in place. Singer pitch
 contours and editable expression lanes remain in Source.
 
-Open **Ghost note settings** below the main controls for independent density, duration,
+Under the ghost-note technique, open **Ghost note settings** for independent density, duration,
 and placement: sixteenth-note gaps, eighth-note offbeats, pickups before an attack,
 or a repeating bar pattern. Variation changes how often the repeating pattern takes a
 fresh draw in a bar or loop pass. Density changes select more or fewer positions from the
@@ -79,6 +90,7 @@ deleting that clip does not change the result. Select it again to refresh the sn
 | Mute strength | Replaces the final 12 ms inside a note with a same-pitch retrigger at up to 35% of its velocity. The performed source ends where the retrigger starts, and the retrigger ends at the original release. Only notes held for at least an eighth note after earlier stages and clip clipping qualify; conflicting same-pitch tails are skipped. The stored score stays intact. |
 | Stroke spread | Spreads simultaneous notes from first to last across 0–100 ms. Choose low-to-high, high-to-low, or alternating directions. Release times are preserved, and a stroke is bounded by the next attack and its shortest note. |
 | Humanize | Adds related timing and velocity variation: a smooth four-beat gesture, a one-beat gesture, and a smaller individual difference. |
+| Shape | Scales the melodic contour, phrase swell and beat accent together. |
 
 Articulation strengths at zero are off. Slide connects single-note lines with intervals of
 at least two semitones and gaps no longer than a quarter note. Chords and overlapping voices

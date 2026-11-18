@@ -274,6 +274,9 @@ Use `set_performance` with a partial `settings` object, for example
 The inspection names the track's `instrument_family` and lists the stage families that suit it
 in `suited_stages` — the same choice the window makes when it decides which dials to draw.
 A stage outside that list is still applied, with an `instrument_warning` in the result.
+`shape` (0..1) scales `contour`, `expression.swell` and `expression.accent` together, keeping
+their proportions, like the window's Shape dial; it is not combined with those three fields in
+one call, and the result reads it back as `settings.shape`.
 Only supplied fields change. Within a family, the first matching stage is edited in place;
 other stages retain their order. Stored notes, generation recipes, authored controller curves
 and automatic volume contour shapes remain intact. The live host groups changed calls by

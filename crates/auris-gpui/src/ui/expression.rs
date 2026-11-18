@@ -79,6 +79,14 @@ impl AurisApp {
         if crate::ui::performance::dial_fraction(stack, PerformDial::Humanize) > 0.0 {
             rows.push(self.performance_slider(clip, PerformDial::ExpressionBalance, stack, cx));
         }
+        // The shape dial's three parts, each on its own: the contour where there is a line to read.
+        if crate::ui::performance::offers_dial(
+            self.clip_preset_family(clip),
+            stack,
+            PerformDial::Contour,
+        ) {
+            rows.push(self.performance_slider(clip, PerformDial::Contour, stack, cx));
+        }
         for dial in [
             PerformDial::PhraseSwell,
             PerformDial::BeatAccent,

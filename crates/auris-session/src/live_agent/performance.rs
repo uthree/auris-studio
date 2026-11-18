@@ -154,6 +154,81 @@ fn has_update(value: &serde_json::Value) -> bool {
     }
 }
 
+/// The three stages the window's shape dial and the agent's `shape` move together.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShapeParts {
+    /// The melodic contour's strength, 0 to 1.
+    pub contour: f32,
+    /// The phrase swell, 0 to 1.
+    pub swell: f32,
+    /// The signed beat accent, -1 to 1.
+    pub accent: f32,
+}
+
+impl ShapeParts {
+    /// The contour, swell and accent a stack holds.
+    pub fn of(stack: &[NoteTransform]) -> ShapeParts {
+        let settings = expression(stack, 0);
+        let contour = stack
+            .iter()
+            .find_map(|stage| match stage {
+                NoteTransform::Contour { amount } => Some(*amount),
+                _ => None,
+            })
+            .unwrap_or(0.0);
+        ShapeParts {
+            contour: contour.clamp(0.0, 1.0),
+            swell: settings.swell.clamp(0.0, 1.0),
+            accent: settings.accent.clamp(-1.0, 1.0),
+        }
+    }
+
+    /// How shaped the playing is: the strongest of the three.
+    pub fn peak(self) -> f32 {
+        self.contour
+            .max(self.swell)
+            .max(self.accent.abs())
+            .clamp(0.0, 1.0)
+    }
+
+    /// The three at a shape of `fraction`, rounded to whole percent.
+    ///
+    /// What is there is scaled, so the proportions between them survive and the strongest lands
+    /// on `fraction`. With none of them, the shape starts the contour — the one that reads the
+    /// written line and so has nothing to choose — or, where there is no line to read (`line`
+    /// false, a kit), the phrase swell.
+    pub fn scaled(self, fraction: f32, line: bool) -> ShapeParts {
+        let fraction = fraction.clamp(0.0, 1.0);
+        let round = |value: f32| (value * 100.0).round() / 100.0;
+        let peak = self.peak();
+        let next = if peak > 0.0 {
+            let scale = fraction / peak;
+            ShapeParts {
+                contour: self.contour * scale,
+                swell: self.swell * scale,
+                accent: self.accent * scale,
+            }
+        } else if line {
+            ShapeParts {
+                contour: fraction,
+                swell: 0.0,
+                accent: 0.0,
+            }
+        } else {
+            ShapeParts {
+                contour: 0.0,
+                swell: fraction,
+                accent: 0.0,
+            }
+        };
+        ShapeParts {
+            contour: round(next.contour),
+            swell: round(next.swell),
+            accent: round(next.accent),
+        }
+    }
+}
+
 pub(crate) fn measure_arrangement_performance(
     clip: &MidiClip,
     project: &Project,
@@ -310,6 +385,7 @@ impl Session {
                     Some(NoteTransform::Sustain { ticks }) => *ticks,
                     _ => 0
                 },
+                "shape": ShapeParts::of(&stack).peak(),
                 "contour": match scalar(ResetStage::Contour) {
                     Some(NoteTransform::Contour { amount }) => *amount,
                     _ => 0.0
@@ -598,6 +674,27 @@ impl Session {
                 (ticks != 0).then_some(NoteTransform::Lean { ticks }),
             );
         }
+        if let Some(fraction) = patch.shape {
+            let parts = ShapeParts::of(&stack);
+            let next = parts.scaled(fraction, melodic);
+            replace(
+                &mut stack,
+                ResetStage::Contour,
+                (next.contour > 0.0).then_some(NoteTransform::Contour {
+                    amount: next.contour,
+                }),
+            );
+            if next.swell != parts.swell || next.accent != parts.accent {
+                let mut settings = expression(&stack, seed);
+                settings.swell = next.swell;
+                settings.accent = next.accent;
+                replace(
+                    &mut stack,
+                    ResetStage::Expression,
+                    Some(NoteTransform::Expression { settings }),
+                );
+            }
+        }
         if let Some(update) = &patch.strum {
             let settings = merge(strum(&stack), update)?;
             replace(
@@ -774,6 +871,11 @@ pub struct PerformancePatch {
     /// Combined timing/velocity wander, 0..1; individual expression fields override it.
     #[schemars(range(min = 0, max = 1))]
     pub humanize: Option<f32>,
+    /// How shaped the playing is, 0..1: scales contour, expression.swell and expression.accent
+    /// together, keeping their proportions, so the strongest becomes this value. With none set it
+    /// starts contour (swell on a drum clip). Not combinable with those three fields.
+    #[schemars(range(min = 0, max = 1))]
+    pub shape: Option<f32>,
     /// Offbeat position, 50..75 percent; 50 is straight. Swing is the song's feel, not
     /// seasoning: leave a straight song (most pop, rock, J-pop and EDM) at 50. Where the genre
     /// swings (shuffle, jazz, funk), give every part sharing the grid, vocal included, the same
@@ -1096,6 +1198,17 @@ impl PerformancePatch {
         }
         if let Some(value) = self.humanize {
             bounded("PerformancePatch.humanize", value as f64, 0.0, 1.0)?;
+        }
+        if let Some(value) = self.shape {
+            bounded("PerformancePatch.shape", value as f64, 0.0, 1.0)?;
+            let expression = self.expression.as_ref();
+            if self.contour.is_some()
+                || expression.is_some_and(|e| e.swell.is_some() || e.accent.is_some())
+            {
+                return Err(
+                    "shape scales contour, expression.swell and expression.accent together; supply shape or those fields, not both".into(),
+                );
+            }
         }
         if let Some(value) = self.swing_percent {
             bounded("PerformancePatch.swing_percent", value as f64, 50.0, 75.0)?;

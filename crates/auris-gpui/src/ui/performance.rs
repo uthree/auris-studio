@@ -14,7 +14,7 @@
 //! neither has a dial here yet.
 
 use auris_i18n::Key;
-use auris_session::live_agent::performance::ResetStage;
+use auris_session::live_agent::performance::{ResetStage, ShapeParts};
 use auris_session::performance_presets::stage_suits;
 use auris_session::prelude::*;
 
@@ -100,6 +100,10 @@ pub enum PerformDial {
     Sustain,
     /// How strongly the melodic line shapes dynamics and each phrase's ending.
     Contour,
+    /// How much the playing is shaped at all: the melodic contour, the phrase swell and the beat
+    /// accent moved together, keeping the proportions between them. The three stay separately
+    /// reachable under the expression details.
+    Shape,
     /// How strongly each chord's top voice is brought out over the others.
     Voicing,
     /// How strongly written-legato connections are played by what they connect to.
@@ -119,20 +123,14 @@ fn perform_keyboard_step(dial: PerformDial) -> f32 {
     }
 }
 
-/// The sliders in the order the panel shows them — which is also the order the stack plays them.
+/// The four dials every clip is played with, drawn first: how swung, how long, how loose and how
+/// shaped. Everything else is a technique (`crate::ui::techniques`), drawn only once the clip uses
+/// it.
 pub const PERFORM_DIALS: &[PerformDial] = &[
     PerformDial::Swing,
     PerformDial::Gate,
-    PerformDial::Sustain,
-    PerformDial::Pedal,
-    PerformDial::Articulate,
-    PerformDial::Contour,
-    PerformDial::Voicing,
-    PerformDial::Brush,
-    PerformDial::Slide,
-    PerformDial::Mute,
-    PerformDial::Stroke,
     PerformDial::Humanize,
+    PerformDial::Shape,
 ];
 
 /// Whether a top-level dial is drawn for a clip of `family` whose stack is `stack`.
@@ -165,6 +163,7 @@ fn dial_stage(dial: PerformDial) -> Option<ResetStage> {
         PerformDial::Pedal => ResetStage::Pedal,
         PerformDial::Articulate => ResetStage::Articulation,
         PerformDial::Contour => ResetStage::Contour,
+        PerformDial::Shape => ResetStage::Expression,
         PerformDial::Voicing => ResetStage::Voicing,
         PerformDial::Brush
         | PerformDial::GhostDensity
@@ -190,6 +189,26 @@ fn dial_stage(dial: PerformDial) -> Option<ResetStage> {
         }
         PerformDial::Pitch(_) => ResetStage::Pitch,
     })
+}
+
+/// Turns the shape dial to `fraction`: [`ShapeParts::scaled`] decides the three, and this writes
+/// them where the panel's own dials would.
+pub fn with_shape(
+    stack: &[NoteTransform],
+    fraction: f32,
+    seed: u64,
+    line: bool,
+) -> Vec<NoteTransform> {
+    let parts = ShapeParts::of(stack);
+    let next = parts.scaled(fraction, line);
+    let mut out = with_dial(stack, PerformDial::Contour, next.contour, seed);
+    if next.swell != parts.swell || next.accent != parts.accent {
+        let mut settings = expression_settings(&out, seed);
+        settings.swell = next.swell;
+        settings.accent = next.accent;
+        out = with_expression_settings(&out, settings);
+    }
+    out
 }
 
 /// Where the balance dial sits for a wander of `timing` and `velocity`: 0 all timing, 1 all
@@ -250,6 +269,7 @@ impl PerformDial {
             PerformDial::Gate => Key::PartGate,
             PerformDial::Sustain => Key::PerformSustain,
             PerformDial::Contour => Key::PerformContour,
+            PerformDial::Shape => Key::PerformShape,
             PerformDial::Voicing => Key::PerformVoicing,
             PerformDial::Articulate => Key::PerformArticulate,
             PerformDial::Pedal => Key::PerformPedal,
@@ -319,6 +339,7 @@ fn answers_to(transform: &NoteTransform, dial: PerformDial) -> bool {
 /// first paint.
 pub fn dial_fraction(stack: &[NoteTransform], dial: PerformDial) -> f32 {
     match dial {
+        PerformDial::Shape => ShapeParts::of(stack).peak(),
         PerformDial::Pitch(dial) => dial.fraction(stack),
         PerformDial::ExpressionBalance => {
             let settings = expression_settings(stack, 0);
@@ -456,6 +477,9 @@ pub fn with_dial(
     seed: u64,
 ) -> Vec<NoteTransform> {
     let fraction = (fraction.clamp(0.0, 1.0) * 100.0).round() / 100.0;
+    if dial == PerformDial::Shape {
+        return with_shape(stack, fraction, seed, true);
+    }
     if let PerformDial::Pitch(dial) = dial {
         return dial.change(stack, fraction);
     }
@@ -553,7 +577,7 @@ pub fn with_dial(
         return with_ghost_settings(stack, settings);
     }
     let replacement = match dial {
-        PerformDial::Pitch(_) => unreachable!(),
+        PerformDial::Pitch(_) | PerformDial::Shape => unreachable!(),
         PerformDial::ExpressionBalance
         | PerformDial::PhraseSwell
         | PerformDial::BeatAccent
@@ -708,6 +732,7 @@ pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> 
         | PerformDial::Brush
         | PerformDial::Slide
         | PerformDial::Contour
+        | PerformDial::Shape
         | PerformDial::Voicing
         | PerformDial::Articulate
         | PerformDial::Pedal => format!("{:.0}%", dial_fraction(stack, dial) * 100.0),
@@ -759,6 +784,7 @@ fn dial_element_key(dial: PerformDial) -> usize {
         PerformDial::Gate => 2,
         PerformDial::Sustain => 40,
         PerformDial::Contour => 43,
+        PerformDial::Shape => 47,
         PerformDial::Voicing => 44,
         PerformDial::Articulate => 45,
         PerformDial::Pedal => 46,
@@ -806,7 +832,23 @@ impl AurisApp {
         .debug_selector(move || format!("perform-dial-{}", dial_element_key(dial)))
         .into_any_element()
     }
-    fn ghost_detail_rows(
+    /// The order a chord stroke sounds its pitches in.
+    pub(crate) fn stroke_direction_row(
+        &self,
+        clip: ClipId,
+        stack: &[NoteTransform],
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        self.picker_row(
+            "perform-stroke-direction",
+            Key::PerformDirection,
+            self.t(direction_label(stroke_direction(stack))).to_string(),
+            Self::opens_menu(cx, move |this, at| this.perform_stroke_menu(at, clip)),
+        )
+        .into_any_element()
+    }
+
+    pub(crate) fn ghost_detail_rows(
         &self,
         clip: ClipId,
         stack: &[NoteTransform],
@@ -1036,18 +1078,11 @@ impl AurisApp {
             );
         }
 
-        if dial_fraction(&stack, PerformDial::Stroke) > 0.0 {
-            rows.push(
-                self.picker_row(
-                    "perform-stroke-direction",
-                    Key::PerformDirection,
-                    self.t(direction_label(stroke_direction(&stack)))
-                        .to_string(),
-                    Self::opens_menu(cx, move |this, at| this.perform_stroke_menu(at, clip)),
-                )
+        rows.push(
+            self.group_heading(Key::PerformTechniques)
                 .into_any_element(),
-            );
-        }
+        );
+        rows.extend(self.technique_rows(clip, &stack, cx));
 
         if !stack.is_empty() {
             rows.push(
@@ -1070,10 +1105,7 @@ impl AurisApp {
         }
 
         rows.push(divider(&theme).into_any_element());
-        rows.extend(self.ghost_detail_rows(clip, &stack, cx));
-        rows.extend(self.strum_detail_rows(clip, &stack, cx));
         rows.extend(self.expression_detail_rows(clip, &stack, cx));
-        rows.extend(self.pitch_detail_rows(clip, &stack, cx));
         rows
     }
 
@@ -1110,7 +1142,13 @@ impl AurisApp {
         let Ok(stack) = self.session.clip_transforms(clip) else {
             return;
         };
-        let next = with_dial(stack, dial, fraction, clip.0);
+        let next = if dial == PerformDial::Shape {
+            // A kit has no line for the contour to read, so its shape starts from the swell.
+            let line = stage_suits(self.clip_preset_family(clip), ResetStage::Contour);
+            with_shape(stack, fraction, clip.0, line)
+        } else {
+            with_dial(stack, dial, fraction, clip.0)
+        };
         let _ = self.session.set_clip_transforms(clip, next);
     }
 
@@ -1254,6 +1292,25 @@ mod tests {
     }
 
     #[test]
+    fn the_shape_dial_scales_what_is_there_and_starts_from_the_line() {
+        // Nothing yet: the contour, which reads the written line.
+        let started = with_shape(&[], 0.6, 3, true);
+        assert_eq!(started, vec![NoteTransform::Contour { amount: 0.6 }]);
+        // A kit has no line, so its shape starts from the swell.
+        let kit = with_shape(&[], 0.6, 3, false);
+        assert_eq!(ShapeParts::of(&kit).swell, 0.6);
+        assert_eq!(ShapeParts::of(&kit).contour, 0.0);
+        // Proportions survive, the accent keeps its sign, and the strongest lands on the dial.
+        let mut set = with_dial(&[], PerformDial::Contour, 0.4, 3);
+        set = with_dial(&set, PerformDial::PhraseSwell, 0.2, 3);
+        set = with_dial(&set, PerformDial::BeatAccent, 0.4, 3);
+        let doubled = with_shape(&set, 0.8, 3, true);
+        let parts = ShapeParts::of(&doubled);
+        assert_eq!((parts.contour, parts.swell, parts.accent), (0.8, 0.4, -0.4));
+        assert_eq!(dial_fraction(&doubled, PerformDial::Shape), 0.8);
+    }
+
+    #[test]
     fn the_balance_splits_the_wander_without_moving_the_humanise_dial() {
         assert_eq!(split_wander(0.4, 0.5), (0.4, 0.4));
         assert_eq!(split_wander(0.4, 0.0), (0.4, 0.0));
@@ -1319,6 +1376,7 @@ mod tests {
                 serde_json::json!({"strum":{"up_velocity":0.6}}),
             ),
             (PerformDial::Brush, 0.4, serde_json::json!({"brush":0.4})),
+            (PerformDial::Shape, 0.5, serde_json::json!({"shape":0.5})),
             (
                 PerformDial::Contour,
                 0.6,
@@ -1380,6 +1438,14 @@ mod tests {
         app.update(cx, |this, _| {
             this.panels = crate::dock::PanelLayout::default();
             this.open_clip_in_editor(clip);
+            this.show_techniques(
+                clip,
+                &[
+                    crate::ui::techniques::Technique::Ghost,
+                    crate::ui::techniques::Technique::Strum,
+                    crate::ui::techniques::Technique::Pitch,
+                ],
+            );
         });
         crate::harness::resize(&app, cx, gpui::size(px(1920.0), px(3000.0)));
         click("score-performed", cx);
@@ -1492,6 +1558,15 @@ mod tests {
             }
             this.select_track(track);
             this.select_clip(Some(clip));
+            this.show_techniques(
+                clip,
+                &[
+                    crate::ui::techniques::Technique::Strum,
+                    crate::ui::techniques::Technique::Mute,
+                    crate::ui::techniques::Technique::Ghost,
+                    crate::ui::techniques::Technique::Slide,
+                ],
+            );
             this.session.midi_clip(clip).unwrap().notes.clone()
         });
         paint(&app, cx);
