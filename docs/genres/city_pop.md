@@ -14,7 +14,11 @@ Sevenths and ninths as the plain harmony, ii–V motion and passing chords, a si
 - Electric piano voicings (`electric_piano_soul`) in rootless four-note shapes, a clean guitar cutting short chords on sixteenths (`rock_rhythm_guitar` with a short gate), a busy, melodic bass on sixteenths (`finger_bass`) with octave jumps and passing notes.
 - Drums: tight sixteenth hats with accents, snare on two and four, a light kick pattern that leaves room for the bass. A straight sixteenth feel, or a slight swing (52 to 55 on the sixteenth grid) for every part alike.
 - Brass stabs (`brass_section`) or a string line answer the melody in the gaps; a synth or saxophone-like lead can take the hook in the intro.
+- The clean guitar is `auris.physical.electric_guitar` through `auris.fx.guitar_amp` at `drive_db` 0 to 6, then `auris.fx.chorus` (`mix` 0.3 to 0.5). The electric piano may take a light `auris.fx.chorus` too; the bass stays dry.
+- Look up Sounds that need an insert.
 
 ## Mix
 
 - Warm and clean, a moderate room reverb, the bass and kick clear but not dominating. Target -14 LUFS, -1 dBTP.
+- Effects: one `auris.fx.reverb` room (`room_size` 0.4 to 0.6) or `auris.fx.plate` on a return for the keys, snare and lead; a dotted-eighth `auris.fx.delay` (`sync` 6) on the lead's long notes; a gentle `auris.fx.compressor` on the bass for an even line.
+- Look up Choosing a space and Insert order.

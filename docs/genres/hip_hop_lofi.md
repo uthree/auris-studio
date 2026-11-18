@@ -14,7 +14,11 @@ A form built on a four- or eight-bar loop that changes by adding and removing pa
 - Drums: kick on one and the and-of-two (or similar), snare or clap on two and four, hats with ghost notes and velocity variation; humanize so the hits sit loosely. Rests and dropped kicks give the groove its lazy feel.
 - Keys: electric piano (`electric_piano_soul`) or a muted piano (`piano_ballad` with a short gate), voiced close and low-mid; a round bass that follows the chord roots with long notes; an occasional pad or vinyl-like texture.
 - Change the loop by subtraction and addition every four or eight bars: drop the drums for a bar, bring the bass in late, filter the keys.
+- Texture is part of the sound: `auris.fx.tube` on the keys for warmth, and a light bitcrush on the drums when they sound too clean (`auris.fx.distortion` mode 3, `bits` 10 to 12, `mix` 0.2 to 0.3).
+- Look up Sounds that need an insert.
 
 ## Mix
 
 - Soft and warm: roll off the highs (low-pass around 8 to 10 kHz on keys), modest reverb, drums slightly dull. Target -14 to -16 LUFS, -1 dBTP; leave the dynamics.
+- Effects: the low-pass is `auris.fx.eq` with `lp_enabled` and `lp_freq` 8000 to 10000. `auris.fx.tape` on a return (`wow` and `flutter` 0.3 to 0.5, `age` about 0.5, low `feedback`) gives the keys a wobbling echo; a short `auris.fx.reverb` room holds the rest.
+- Look up Choosing a space and Insert order.

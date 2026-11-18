@@ -88,6 +88,7 @@ fn for_phase(text: &str, phase: Phase) -> String {
 mod tests {
     use super::*;
     use auris_session::style::{Genre, Usage};
+    use auris_session::{Session, SessionOptions};
     use serde_json::json;
 
     #[test]
@@ -244,5 +245,116 @@ mod tests {
             assert!(text[usage..].contains(section), "usage lacks {section}");
         }
         assert_eq!(whole(&json!({})), None);
+    }
+
+    const TECHNIQUES: &str = include_str!("../../../docs/composition-techniques.md");
+
+    /// Every page that tells an agent which effect to use: the style pages and the techniques.
+    fn effect_pages() -> Vec<(&'static str, &'static str)> {
+        GENRES
+            .iter()
+            .chain(USAGES)
+            .map(|(_, path, text)| (*path, *text))
+            .chain([("docs/composition-techniques.md", TECHNIQUES)])
+            .collect()
+    }
+
+    /// Words a line about effects may tick that are tools or operations, not parameter keys.
+    const OPERATIONS: &[&str] = &[
+        "mixer_graph",
+        "add_effect",
+        "move_effect",
+        "enable_effect",
+        "parameters",
+        "add_output",
+        "set_sidechain",
+        "set_outputs",
+        "normalize_mix",
+        "inspect_audio",
+        "automation",
+    ];
+
+    #[test]
+    fn every_effect_and_parameter_a_page_names_is_one_the_session_has() {
+        // A page that names a renamed effect or key sends the agent to an argument error, or
+        // worse, to a parameter of another effect with the same key and another meaning.
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        let ids: Vec<String> = session
+            .registry()
+            .effects()
+            .map(|effect| effect.id.to_string())
+            .collect();
+        let mut named_any = 0;
+        for (path, text) in effect_pages() {
+            for line in text.lines() {
+                let ticked: Vec<&str> = line.split('`').skip(1).step_by(2).collect();
+                let effects: Vec<&str> = ticked
+                    .iter()
+                    .copied()
+                    .filter(|token| token.starts_with("auris.fx."))
+                    .collect();
+                for id in &effects {
+                    assert!(ids.iter().any(|known| known == id), "{path} names {id}");
+                }
+                if effects.is_empty() {
+                    continue;
+                }
+                named_any += 1;
+                let keys: Vec<String> = effects
+                    .iter()
+                    .flat_map(|id| {
+                        session
+                            .param_descriptors(id)
+                            .iter()
+                            .map(|param| param.key.to_string())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                let parameter_like = |token: &&&str| {
+                    !token.is_empty() && token.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                };
+                for token in ticked.iter().filter(parameter_like) {
+                    if OPERATIONS.contains(token) {
+                        continue;
+                    }
+                    assert!(
+                        keys.iter().any(|key| key == token),
+                        "{path}: `{token}` is no parameter of {effects:?} in {line:?}"
+                    );
+                }
+            }
+        }
+        assert!(named_any >= 20, "only {named_any} lines name an effect");
+    }
+
+    /// Whether `list` is technique headings joined by ", " and " and ", nothing else.
+    fn headings_only(list: &str, headings: &[&str]) -> bool {
+        list.is_empty()
+            || headings.iter().any(|heading| {
+                list.strip_prefix(heading).is_some_and(|rest| {
+                    rest.is_empty()
+                        || [", ", " and "].iter().any(|joint| {
+                            rest.strip_prefix(joint)
+                                .is_some_and(|rest| headings_only(rest, headings))
+                        })
+                })
+            })
+    }
+
+    #[test]
+    fn every_technique_a_style_page_looks_up_is_a_heading_search_can_find() {
+        let headings: Vec<&str> = TECHNIQUES
+            .lines()
+            .filter_map(|line| line.strip_prefix("### "))
+            .collect();
+        for (path, text) in effect_pages() {
+            for line in text.lines() {
+                let Some(list) = line.strip_prefix("- Look up ") else {
+                    continue;
+                };
+                let list = list.trim_end_matches('.');
+                assert!(headings_only(list, &headings), "{path}: {line}");
+            }
+        }
     }
 }

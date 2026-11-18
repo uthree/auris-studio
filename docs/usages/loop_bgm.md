@@ -16,3 +16,4 @@ Music that repeats under a game or an app: the last bar runs straight into the f
 ## Mix
 
 - Leave headroom for sound effects and dialogue: target -16 to -18 LUFS, -1 dBTP, unless the user names a level. Set the loop region and check the wrap.
+- Reverb and delay tails cross the wrap: from the second cycle on, the first bar is heard with the last bar's tail, and a tail cut at the loop end is heard as a sudden silence. Keep the returns short to moderate and listen across the boundary.

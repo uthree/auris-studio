@@ -14,7 +14,11 @@ Songs in verse, pre-chorus and chorus (Aメロ, Bメロ, サビ), with the choru
 - Band plus keys: drums (`pop_drums`), bass (`finger_bass`), piano (`piano_pop_comp`) or electric guitar (`rock_rhythm_guitar`, `acoustic_strum`), a pad or strings (`string_legato`) in the chorus. Straight feel: swing stays at 50.
 - Aメロ thin (piano and bass, hats only), Bメロ building (half time or toms, a rising line), サビ full with the ride or crash on eighths. Mark every way into a サビ with a fill and a crash.
 - A countermelody on strings or a synth lead fills the gaps between the chorus lines; it never doubles the voice's rhythm.
+- An electric guitar goes through `auris.fx.guitar_amp`: `drive_db` 0 to 8 for clean arpeggios and cutting, 15 to 22 for the chorus's power chords.
+- Look up Sounds that need an insert.
 
 ## Mix
 
 - The voice or lead clearly on top and in the centre, a plate-like reverb and a quarter-note delay on a return. Target -14 LUFS, -1 dBTP.
+- Effects: the plate is `auris.fx.plate` (`decay` 1.5 to 2.2) and the delay `auris.fx.delay` with `sync` 5 and `feedback` about 0.3, both on returns; high-pass everything but the bass and kick with `auris.fx.eq`; a gentle bus `auris.fx.compressor` on the drums.
+- Look up Choosing a space and Insert order.

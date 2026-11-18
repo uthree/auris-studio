@@ -380,6 +380,29 @@ gate on a sustained patch is not a sampled staccato. In orchestral writing, hand
 theme between families or octaves instead of doubling the whole ensemble throughout. Leave
 rests that match the actual instrument's decay.
 
+### Sounds that need an insert
+
+Some built-in sounds are only half an instrument until an insert completes them, and a part
+balanced, voiced and judged without it is judged on the wrong sound. Add these with
+`mixer_graph` `add_effect` when the sound is chosen, in the arrangement, not at the end of the
+mix; read the effect's keys with `parameters` before setting them.
+
+| Sound | Insert | Starting point |
+| --- | --- | --- |
+| `auris.physical.electric_guitar` (a dry pickup, before any amplifier) | `auris.fx.guitar_amp` | `drive_db` about 0 to 6 clean, 15 to 22 crunch and rhythm, 28 to 36 lead; `cabinet` 1 (open) or 2 (closed, tighter and darker) |
+| Clean or crunch electric guitar in city pop, funk, ambient | `auris.fx.chorus` after the amp | `rate_hz` 0.5 to 1, `depth_ms` 2 to 4, `mix` 0.3 to 0.5 |
+| Surf, rockabilly, vintage clean guitar | `auris.fx.spring` after the amp | `mix` 0.2 to 0.35 |
+| Organ | `auris.fx.rotary` | `speed` 1 (chorale) for verses, 2 (tremolo) for the lift; automate it between sections |
+| Electric piano in soul, R&B, lo-fi | `auris.fx.tube`, then `auris.fx.chorus` or none | tube `drive_db` 6 to 12 for warmth, not audible grit |
+| Synth bass meant to growl (dance, anime) | `auris.fx.distortion` mode 0 (soft) | `drive_db` 6 to 18 and `mix` 0.3 to 0.6, so the fundamental stays |
+| A deliberately degraded lo-fi or chip texture | `auris.fx.distortion` mode 3 (bitcrush) | `bits` 8 to 12, `mix` 0.2 to 0.4 |
+
+Leave every other sound dry here. Acoustic and orchestral instruments, the piano, the
+SoundFont voices and the chiptune voices are complete as they are, and their space comes from
+the mix's returns. A clean guitar part is still `auris.fx.guitar_amp` with a low drive: the
+amplifier and cabinet are what make a pickup sound like a guitar in a room, clean or not.
+Compare with the insert bypassed at a matched level (`enable_effect`) before keeping it.
+
 ### Strummed chords
 
 A hand sweeping a pick across strings never strikes them at once. Apply a guitar performance
@@ -421,6 +444,35 @@ level envelope (its attack and release decide how transients and sustain relate)
 the colour. Compare with the processor bypassed at a matched level; a louder version is not a
 clearer one. A pumping or distorted sound that is the idea of the track stays. Processing does
 not replace a missing part or fix two parts that clash; change the notes first.
+
+### Insert order
+
+Inserts process in the order `mixer_graph` lists them, before the fader; `move_effect` reorders
+them without changing their IDs. On one strip the usual order is the sound first, then its
+correction, then its movement: amplifier, distortion or tube (the sound), then `auris.fx.eq` and
+`auris.fx.compressor` (the correction), then `auris.fx.chorus` or `auris.fx.rotary` (the
+movement). An EQ before a drive shapes what distorts; after it, what is heard. Space goes last
+or, better, on a return bus, and `auris.fx.limiter` only on the master or a bus, last of all.
+
+### Choosing a space
+
+Pick the reverb or echo for the space the style implies, and put it on a return bus that the
+parts send to with `add_output`.
+
+- `auris.fx.reverb`: a general room or hall. `room_size` about 0.3 to 0.5 is a room, 0.7 to
+  0.9 a hall; `pre_delay_ms` 10 to 30 keeps attacks in front of the tail.
+- `auris.fx.plate`: a bright, dense tail that flatters a voice, a snare or a lead; `decay` 1.2
+  to 2.5 s in a pop mix.
+- `auris.fx.spring`: the drip of a guitar amp's reverb; vintage, surf, dub. Use it as an
+  insert after the amp or as a return for the guitar alone.
+- `auris.fx.delay`: repeats that keep words clear. `sync` 5 is a quarter note, 6 a dotted
+  eighth, 7 an eighth; `ping_pong` 1 widens a lead; `feedback` 0.2 to 0.4.
+- `auris.fx.tape`: an echo that wobbles and darkens with each repeat; lo-fi, dub, ambient.
+  `wow` and `flutter` set how far it drifts and `age` how worn it sounds.
+
+Use one or two spaces per song, not one per part: a short room or plate for the band and, where
+the style wants depth, a longer hall or a delay for the lead. Check the ending and, in a loop,
+the wrap, for tails that pile up or are cut off.
 
 ### Kick-triggered sidechain
 
