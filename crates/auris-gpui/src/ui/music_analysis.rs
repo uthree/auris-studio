@@ -583,6 +583,54 @@ impl AurisApp {
         }
     }
 
+    /// Follows an audio clip as one voice on a worker, then writes what it sang onto a new
+    /// instrument track under the clip, as one undo step.
+    ///
+    /// Applied as soon as it is ready rather than held as a draft in the analysis panel: what it
+    /// adds is a track of its own beside the audio, which Undo removes, and there is no choice
+    /// among readings to make first.
+    pub(crate) fn begin_hum_transcription(&mut self, clip: ClipId, cx: &mut Context<Self>) {
+        let job = match self.session.audio_analysis_job(clip) {
+            Ok(job) => job,
+            Err(error) => {
+                self.set_failed_status(error.to_string());
+                return;
+            }
+        };
+        let name = self
+            .audio_clip(clip)
+            .map(|found| found.name.clone())
+            .unwrap_or_default();
+        let name = self.t(Key::HumNotesTrackName).replace("{name}", &name);
+        self.set_status(self.t(Key::HumToNotesRunning));
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { job.run_hum(&AnalysisControl::default()) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let landed = result.and_then(|report| {
+                    let count = report.notes.len();
+                    this.session
+                        .import_hum_transcription(&report, &name)
+                        .map(|(track, _)| (track, count))
+                });
+                match landed {
+                    Ok((track, count)) => {
+                        this.selected_track = Some(track);
+                        this.set_status(
+                            this.t(Key::HumToNotesDone)
+                                .replace("{count}", &count.to_string()),
+                        );
+                    }
+                    Err(error) => this.set_failed_status(error.to_string()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Prompts for a prepared model; the source snapshot is captured before the dialog.
     pub(crate) fn choose_instrument_model(&mut self, clip: ClipId, cx: &mut Context<Self>) {
         let job = match self.session.audio_analysis_job(clip) {

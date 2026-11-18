@@ -255,6 +255,21 @@ impl SettingsWindow {
                 },
                 cx,
             );
+            recording =
+                recording.child(
+                    FormField::new(self.t(Key::VoiceInputLabel))
+                        .description(self.t(Key::VoiceInputNote))
+                        .beside()
+                        .child(Switch::new("voice-input", midi.voice_input).on_change(
+                            cx.listener(|this, on: &bool, _, cx| {
+                                let midi = MidiPreferences {
+                                    voice_input: *on,
+                                    ..this.midi.clone()
+                                };
+                                this.apply_midi(midi, cx);
+                            }),
+                        )),
+                );
             recording = recording.child(
                 FormField::new(self.t(Key::NoteRecordModeLabel))
                     .description(self.t(Key::NoteRecordModeNote))

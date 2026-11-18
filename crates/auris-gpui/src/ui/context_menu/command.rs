@@ -136,6 +136,8 @@ pub enum MenuCommand {
     AnalyzeChords(Option<TrackId>),
     /// Analyze tempo and chords in the trimmed source of an audio clip.
     AnalyzeAudio(ClipId),
+    /// Write the notes a hummed or sung audio clip holds onto a track of their own.
+    HumToNotes(ClipId),
     /// Cancel an offline CPU analysis.
     CancelMusicAnalysis,
     /// Display the current draft with its alternatives.
@@ -546,6 +548,8 @@ pub enum MenuCommand {
         /// Where to put the menu.
         at: Point<Pixels>,
     },
+    /// Turn following the microphone into note takes on or off.
+    ToggleVoiceInput,
     /// Set how many bars are counted in front of a take, or none.
     SetCountIn {
         /// Bars to count, or zero for no count-in.
@@ -1004,6 +1008,7 @@ impl AurisApp {
             }
             MenuCommand::AnalyzeChords(track) => self.begin_chord_analysis(track, cx),
             MenuCommand::AnalyzeAudio(clip) => self.begin_audio_analysis(clip, cx),
+            MenuCommand::HumToNotes(clip) => self.begin_hum_transcription(clip, cx),
             MenuCommand::CancelMusicAnalysis => {
                 self.music_analysis.cancel_requested();
                 self.set_status(self.t(Key::AnalysisCancelled));
@@ -1524,6 +1529,7 @@ impl AurisApp {
             }
             MenuCommand::SetTrackInput { track, input } => self.set_track_input(track, input),
             MenuCommand::SetCountIn { bars } => self.set_count_in(bars),
+            MenuCommand::ToggleVoiceInput => self.toggle_voice_input(),
             MenuCommand::ShowSidechainPicker { track, slot, at } => {
                 let menu = self.sidechain_menu(at, track, slot);
                 self.open_menu(menu);

@@ -9,6 +9,8 @@ pub(crate) struct MidiDraft {
     replacing: Option<PathBuf>,
     track: usize,
     editing: bool,
+    /// Whether the editor is recording a take; see `midi_record`.
+    recording: bool,
     claims_keys: bool,
     pub(crate) editor: Option<gpui::Entity<ReferencePianoRoll>>,
     editor_subscription: Option<gpui::Subscription>,
@@ -21,6 +23,7 @@ impl MidiDraft {
             replacing,
             track: 0,
             editing: false,
+            recording: false,
             claims_keys: false,
             editor: None,
             editor_subscription: None,
@@ -45,6 +48,7 @@ impl MidiDraft {
             .position(|id| Some(*id) == app.selected_clip)
             .unwrap_or(self.track);
         self.editing = app.prompt.is_some() || app.drag.is_some();
+        self.recording = app.session.is_recording();
         self.claims_keys = app.keys_are_claimed();
     }
 }
@@ -218,10 +222,15 @@ impl AurisApp {
     /// Commit the visible surface's independent draft before submitting or leaving it.
     pub(crate) fn commit_midi_draft(&mut self) -> bool {
         let limit_error = self.t(Key::AgentAttachmentLimit).to_owned();
+        let stop_first = self.t(Key::AgentMidiStopFirst).to_owned();
         let refs = self.music_references_mut();
         let Some(draft) = refs.midi_draft.as_mut() else {
             return true;
         };
+        if draft.recording {
+            refs.attachment_error = Some(stop_first);
+            return false;
+        }
         if draft.editing {
             return false;
         }
@@ -357,6 +366,8 @@ impl AurisApp {
             });
         }
         let track = draft.track;
+        let recording = draft.recording;
+        let voice = self.settings.midi.voice_input;
         let track_count = draft.score.tracks.len();
         let track_name = draft.score.tracks[track].name.clone();
         div()
@@ -387,6 +398,36 @@ impl AurisApp {
                             .text_sm()
                             .child(draft.score.name.clone()),
                     )
+                    // Voice input is the same switch as the song editor's: a person who hums
+                    // into one hums into the other.
+                    .child(bounded_button_enabled(
+                        "agent-midi-voice",
+                        self.t(Key::AgentMidiVoice),
+                        ButtonStyle::Ghost,
+                        ButtonState::available(voice, !recording),
+                        theme.accent,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.toggle_voice_input();
+                            cx.notify();
+                        }),
+                    ))
+                    .child(bounded_button_enabled(
+                        "agent-midi-record",
+                        if recording {
+                            self.t(Key::AgentMidiStop)
+                        } else {
+                            self.t(Key::AgentMidiRecord)
+                        },
+                        ButtonStyle::Ghost,
+                        ButtonState::available(recording, true),
+                        theme.record,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.toggle_reference_recording(cx);
+                            cx.notify();
+                        }),
+                    ))
                     .child(bounded_button_enabled(
                         "agent-midi-cancel",
                         self.t(Key::Cancel),
@@ -403,7 +444,7 @@ impl AurisApp {
                         "agent-midi-apply",
                         self.t(Key::AgentMidiApply),
                         ButtonStyle::Normal,
-                        ButtonState::available(false, !draft.editing),
+                        ButtonState::available(false, !draft.editing && !recording),
                         theme.accent,
                         &theme,
                         cx.listener(|this, _, window, cx| {
@@ -424,7 +465,7 @@ impl AurisApp {
                         .child(self.midi_track_button(
                             "agent-midi-track-prev",
                             "◀",
-                            track.checked_sub(1),
+                            track.checked_sub(1).filter(|_| !recording),
                             cx,
                         ))
                         .child(div().flex_1().min_w_0().truncate().text_xs().child(format!(
@@ -436,7 +477,7 @@ impl AurisApp {
                         .child(self.midi_track_button(
                             "agent-midi-track-next",
                             "▶",
-                            (track + 1 < track_count).then_some(track + 1),
+                            (track + 1 < track_count && !recording).then_some(track + 1),
                             cx,
                         )),
                 )
@@ -711,6 +752,49 @@ mod tests {
             assert_eq!(this.project(), &before);
         });
     }
+    #[gpui::test]
+    fn a_reference_records_and_will_not_be_attached_mid_take(cx: &mut gpui::TestAppContext) {
+        use crate::harness::*;
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.pointer = crate::gestures::PointerGestures::default();
+            this.start_midi_draft(false);
+        });
+        paint(&app, cx);
+        let editor = reference_editor(&app, cx);
+        click("agent-midi-record", cx);
+        paint(&app, cx);
+        editor.read_with(cx, |child, _| assert!(child.session.is_recording()));
+        app.update(cx, |this, cx| {
+            assert!(this.reference_recording(cx));
+            assert!(this.lent_audio.is_some(), "the hardware is on loan");
+            assert!(
+                !this.commit_midi_draft(),
+                "a take in flight is not attached"
+            );
+            assert!(this.agent_chat.references.attachment_error.is_some());
+        });
+        click("agent-midi-record", cx);
+        paint(&app, cx);
+        editor.read_with(cx, |child, _| {
+            assert!(!child.session.is_recording());
+            let clips: usize = child
+                .project()
+                .tracks
+                .iter()
+                .filter_map(|track| track.kind.note_clips())
+                .map(|clips| clips.len())
+                .sum();
+            assert_eq!(clips, 1, "the take stayed in its part");
+        });
+        app.update(cx, |this, _| {
+            assert!(this.commit_midi_draft());
+            assert_eq!(this.agent_chat.references.attachments.len(), 1);
+        });
+    }
+
     #[gpui::test]
     fn midi_track_switching_preserves_channels_and_unedited_parts(cx: &mut gpui::TestAppContext) {
         use crate::harness::*;

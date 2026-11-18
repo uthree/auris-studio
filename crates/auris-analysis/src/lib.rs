@@ -9,6 +9,7 @@ pub mod transcription;
 
 pub mod audio;
 pub mod chords;
+pub mod hum;
 pub mod instruments;
 pub mod pitch;
 

@@ -175,7 +175,7 @@ pub use session::{
 };
 pub use session::{
     AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,
-    ClipInstrumentAnalysis, analyze_audio_file, analyze_instrument_file,
+    ClipHumTranscription, ClipInstrumentAnalysis, analyze_audio_file, analyze_instrument_file,
 };
 pub use session::{CheckpointJob, CheckpointOperation, CheckpointResult};
 pub use session::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};

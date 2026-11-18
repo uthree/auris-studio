@@ -97,6 +97,11 @@ impl AurisApp {
                 self.t(Key::MenuAnalyzeInstruments),
                 MenuCommand::AnalyzeInstruments(clip),
             )
+            .item_if(
+                !is_midi,
+                self.t(Key::MenuHumToNotes),
+                MenuCommand::HumToNotes(clip),
+            )
             .item(self.t(Key::MenuCut), MenuCommand::CutClips(clip))
             .item(self.t(Key::MenuCopy), MenuCommand::CopyClips(clip))
             .item(self.t(Key::MenuDuplicate), MenuCommand::DuplicateClip(clip))
