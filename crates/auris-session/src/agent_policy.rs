@@ -695,6 +695,7 @@ mod tests {
         "edit_project.offer_choices",
         "edit_project.performance_presets",
         "edit_project.phrase_variation",
+        "edit_project.plugin_state",
         "edit_project.preview",
         "edit_project.read_notes",
         "edit_project.remove_notes",
