@@ -317,6 +317,14 @@ pub fn scan_standard_paths() -> Vec<PathBuf> {
 
     #[cfg(target_os = "windows")]
     {
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            paths.push(
+                PathBuf::from(local)
+                    .join("Programs")
+                    .join("Common")
+                    .join("VST3"),
+            );
+        }
         paths.push(PathBuf::from(r"C:\Program Files\Common Files\VST3"));
         paths.push(PathBuf::from(r"C:\Program Files (x86)\Common Files\VST3"));
     }
