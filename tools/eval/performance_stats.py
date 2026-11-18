@@ -22,7 +22,9 @@ Neither corpus is redistributable here (MAESTRO is CC BY-NC-SA 4.0): download th
 
 Two limits matter when reading the result. A performance is not its score, so nothing here can
 tell a written legato from a detached step; the step-overlap figure mixes both and does not
-measure the articulation stage. And a classical Disklavier corpus is one repertoire: these are
+measure the articulation stage. Repeated keys are the same: their median lift grows with the
+interval (about two thirds of it), so it is the touch of detached repeats, and the lower quartile
+of each player's lifts stands in for a written-legato repeat. And a classical Disklavier corpus is one repertoire: these are
 starting values for a dial, not the right amount for every song.
 """
 
@@ -43,29 +45,34 @@ STRUM_WINDOW_S = 0.080
 
 # Full-strength effects of the Auris stages (auris-core/src/project/interpretation.rs and
 # expression.rs; the stroke dial runs 0..1 over 0..100 ms).
-HIGH_LOUD_PER_OCTAVE = 0.10
-FINAL_SOFTEN = 0.15
+HIGH_LOUD_PER_OCTAVE = 0.20
+DURATION_CONTRAST = 0.03
+FINAL_SOFTEN = 0.07
 SWELL_PEAK = 0.6
 INNER_SOFTEN = 0.25
-BASS_SOFTEN = 0.10
+BASS_SOFTEN = 0.30
 MELODY_LEAD_MS = 15.0
 STEP_OVERLAP_MS = 25.0
 LEAP_GAP_MS = 30.0
-REPEAT_GAP_MS = 40.0
+REPEAT_GAP_MS = 140.0
 STROKE_FULL_MS = 100.0
 
 PIANO_KEYS = (
     "inner_ratio",
     "bass_ratio",
+    "bass_ratio_three",
     "lead_ms",
     "chord_spread_ms",
     "contour_slope",
     "final_ratio",
     "joint_pitch",
+    "joint_duration",
+    "joint_final",
     "joint_swell",
     "step_overlap_ms",
     "leap_gap_ms",
     "repeat_gap_ms",
+    "repeat_gap_q1_ms",
     "pedalled",
     "pedal_extension_s",
 )
@@ -143,12 +150,17 @@ def piano_stats(notes: list[list[float]]) -> dict[str, list[float]]:
     for group in chords(notes):
         top = max(group, key=lambda note: note[3])
         line.append(top)
-        if len({note[3] for note in group}) < 3:
+        pitches = len({note[3] for note in group})
+        if pitches < 2:
             continue
+        # The stage softens the lowest note of every chord of two pitches or more.
         bottom = min(group, key=lambda note: note[3])
+        out["bass_ratio"].append(bottom[4] / top[4])
+        if pitches < 3:
+            continue
         inner = [note[4] for note in group if note[3] not in (top[3], bottom[3])]
         out["inner_ratio"].append(float(np.mean(inner)) / top[4])
-        out["bass_ratio"].append(bottom[4] / top[4])
+        out["bass_ratio_three"].append(bottom[4] / top[4])
         others = [note[0] for note in group if note is not top]
         out["lead_ms"].append((float(np.mean(others)) - top[0]) * 1000)
         onsets = [note[0] for note in group]
@@ -165,7 +177,12 @@ def piano_stats(notes: list[list[float]]) -> dict[str, list[float]]:
 
 
 def phrase_stats(phrase: list[list[float]], out: dict[str, list[float]]) -> None:
-    """Dynamics against pitch and position, and the joins between neighbouring notes."""
+    """Dynamics against pitch and position, and the joins between neighbouring notes.
+
+    The joint fit reads the contour stage's three terms together — pitch against the phrase
+    mean, each inter-onset interval against the phrase median, and the last attack — with the
+    phrase arch beside them, so a final note that is soft because it is low is not read twice.
+    """
     velocity = np.array([note[4] for note in phrase], float)
     pitch = np.array([note[3] for note in phrase], float)
     onset = np.array([note[0] for note in phrase], float)
@@ -176,12 +193,23 @@ def phrase_stats(phrase: list[list[float]], out: dict[str, list[float]]) -> None
         out["contour_slope"].append(float(np.polyfit(octaves, relative - 1.0, 1)[0]))
         if onset[-1] > onset[0]:
             arch = np.sin(np.pi * (onset - onset[0]) / (onset[-1] - onset[0]))
-            design = np.column_stack([np.ones_like(octaves), octaves, arch])
-            (level, per_octave, swell), *_ = np.linalg.lstsq(
+            intervals = np.maximum(np.diff(onset), 1e-3)
+            duration = np.zeros_like(octaves)
+            duration[:-1] = np.clip(
+                np.log2(intervals / max(float(np.median(intervals)), 1e-3)), -1.0, 1.0
+            )
+            final = np.zeros_like(octaves)
+            final[-1] = 1.0
+            design = np.column_stack(
+                [np.ones_like(octaves), octaves, duration, final, arch]
+            )
+            (level, per_octave, per_doubling, last, swell), *_ = np.linalg.lstsq(
                 design, relative, rcond=None
             )
             if level > 0:
                 out["joint_pitch"].append(float(per_octave / level))
+                out["joint_duration"].append(float(per_doubling / level))
+                out["joint_final"].append(float(last / level))
                 out["joint_swell"].append(float(swell / level))
     for before, after in itertools.pairwise(phrase):
         if after[0] - before[0] > 1.0:
@@ -237,10 +265,12 @@ def amounts(
         "voicing_from_bass": (1 - m["bass_ratio"]) / BASS_SOFTEN,
         "voicing_from_lead": m["lead_ms"] / MELODY_LEAD_MS,
         "contour_from_pitch": m["joint_pitch"] / HIGH_LOUD_PER_OCTAVE,
-        "contour_from_final": (1 - m["final_ratio"]) / FINAL_SOFTEN,
+        "contour_from_duration": m["joint_duration"] / DURATION_CONTRAST,
+        "contour_from_final": -m["joint_final"] / FINAL_SOFTEN,
         "swell_from_arch": m["joint_swell"] / SWELL_PEAK,
         "articulate_from_leap": m["leap_gap_ms"] / LEAP_GAP_MS,
         "articulate_from_repeat": m["repeat_gap_ms"] / REPEAT_GAP_MS,
+        "articulate_from_repeat_q1": m["repeat_gap_q1_ms"] / REPEAT_GAP_MS,
         "pedal_from_share": m["pedalled"],
         "piano_chord_spread": m["chord_spread_ms"] / STROKE_FULL_MS,
         "guitar_stroke": strums["median"] / STROKE_FULL_MS,
@@ -267,7 +297,14 @@ def main() -> None:
         if len(notes) < 50:
             continue
         used += 1
-        for key, values in piano_stats(notes).items():
+        stats = piano_stats(notes)
+        if stats["repeat_gap_ms"]:
+            # The most legato quarter of a player's repeats: the lift a written-legato repeat
+            # needs, since a performance cannot say which repeats were written detached.
+            stats["repeat_gap_q1_ms"] = [
+                float(np.percentile(stats["repeat_gap_ms"], 25))
+            ]
+        for key, values in stats.items():
             pooled[key].extend(values)
             if values:
                 per_piece[key].append(

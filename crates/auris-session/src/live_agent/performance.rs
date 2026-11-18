@@ -199,8 +199,8 @@ impl ShapeParts {
     /// false, a kit), the phrase swell.
     ///
     /// The contour alone is also what players do: in MAESTRO's piano performances a melody's
-    /// dynamics follow its pitch at about 1.26 of the contour's full strength and its phrase arch
-    /// at about 0.06 of the swell's (`tools/eval/performance_stats.py`), so starting the swell
+    /// dynamics follow its pitch at about 0.62 of the contour's full strength and its phrase arch
+    /// at about 0.05 of the swell's (`tools/eval/performance_stats.py`), so starting the swell
     /// alongside would add a shape nobody measured.
     pub fn scaled(self, fraction: f32, line: bool) -> ShapeParts {
         let fraction = fraction.clamp(0.0, 1.0);

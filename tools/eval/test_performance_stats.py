@@ -30,7 +30,7 @@ def test_a_voiced_chord_reads_as_its_soften_and_lead(tmp_path):
         events += [
             (at, mido.Message("note_on", note=72, velocity=100)),
             (at + 0.010, mido.Message("note_on", note=64, velocity=75)),
-            (at + 0.010, mido.Message("note_on", note=48, velocity=90)),
+            (at + 0.010, mido.Message("note_on", note=48, velocity=70)),
             (at + 0.5, mido.Message("note_off", note=72)),
             (at + 0.5, mido.Message("note_off", note=64)),
             (at + 0.5, mido.Message("note_off", note=48)),
@@ -39,9 +39,9 @@ def test_a_voiced_chord_reads_as_its_soften_and_lead(tmp_path):
     write_midi(path, events)
     stats = ps.piano_stats(ps.read_piano(path))
     assert stats["inner_ratio"][0] == pytest.approx(0.75)
-    assert stats["bass_ratio"][0] == pytest.approx(0.90)
+    assert stats["bass_ratio"][0] == pytest.approx(0.70)
     assert stats["lead_ms"][0] == pytest.approx(10.0, abs=1.5)
-    # Inner 25% softer and bass 10% softer is the voicing stage at full strength.
+    # Inner 25% softer and bass 30% softer is the voicing stage at full strength.
     per_piece = {key: ps.summary(values) for key, values in stats.items() if values}
     implied = ps.amounts(per_piece, ps.summary([20.0]))
     assert implied["voicing_from_inner"] == pytest.approx(1.0)
@@ -82,3 +82,20 @@ def test_a_strum_spans_its_first_and_last_string():
         ]
     }
     assert ps.strum_spreads(jams) == pytest.approx([20.0, 30.0])
+
+
+def test_a_final_note_soft_only_because_it_is_low_reads_as_no_final_soften():
+    # Velocity follows pitch exactly, 0.2 an octave; the last note is the lowest.
+    pitches = [64, 67, 72, 69, 65, 60, 62, 55]
+    mean = sum(pitches) / len(pitches)
+    phrase = [
+        [0.25 * i, 0.25 * i + 0.2, 0.25 * i + 0.2, p, 80 * (1 + 0.2 * (p - mean) / 12)]
+        for i, p in enumerate(pitches)
+    ]
+    out = {key: [] for key in ps.PIANO_KEYS}
+    ps.phrase_stats(phrase, out)
+    assert out["joint_pitch"][0] == pytest.approx(0.2, abs=1e-6)
+    assert out["joint_final"][0] == pytest.approx(0.0, abs=1e-6)
+    assert out["joint_duration"][0] == pytest.approx(0.0, abs=1e-6)
+    # The plain ratio would have read the low last note as a final soften.
+    assert out["final_ratio"][0] < 0.9

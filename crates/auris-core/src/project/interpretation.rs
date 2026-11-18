@@ -16,22 +16,31 @@
 //!   pedal itself as controller 64, which an instrument with dampers hears as dampers lifted
 //!   from every string, not only from the keys that were played.
 //!
-//! The constants are first guesses in the sizes the performance literature reports (the KTH
-//! rule system's high-loud, duration-contrast and final-ritard rules; piano melody lead), and
-//! are meant to be re-measured against recorded performances before they move.
+//! The rules are the KTH rule system's high-loud, duration-contrast and final-ritard rules and
+//! piano melody lead. The level and lift constants are measured on MAESTRO's piano performances
+//! (`tools/eval/performance_stats.py`, `docs/evaluation.md`), sized so that an amount between
+//! 0.5 and 0.7 plays what the pianists did; the timing constants are still the literature's
+//! sizes.
 
 use super::performance::{chords, milliseconds};
 use super::{CurvePoint, Note, PerformanceContext};
 use crate::Ticks;
 
 /// Velocity gained per octave above the phrase's mean top pitch, at full contour.
-const HIGH_LOUD_PER_OCTAVE: f32 = 0.10;
+///
+/// Pianists play a melody about 12% louder an octave up, which this reaches at 0.62.
+const HIGH_LOUD_PER_OCTAVE: f32 = 0.20;
 /// The furthest a note's pitch is read from its phrase's mean, in octaves.
 const HIGH_LOUD_MAX_OCTAVES: f32 = 1.5;
 /// Velocity gained per doubling of an inter-onset interval against the phrase median.
-const DURATION_CONTRAST: f32 = 0.06;
+///
+/// About 2% in MAESTRO, reached at 0.63.
+const DURATION_CONTRAST: f32 = 0.03;
 /// How much softer a phrase's last attack is, at full contour.
-const FINAL_SOFTEN: f32 = 0.15;
+///
+/// Measured with pitch fitted beside it, since a phrase often ends low: about 4%, reached at
+/// 0.61. The plain ratio of the last attack to the rest (0.90) counts the low ending twice.
+const FINAL_SOFTEN: f32 = 0.07;
 /// How late a phrase's last attack is, as a fraction of the interval before it.
 const FINAL_DELAY_FRACTION: f32 = 0.10;
 /// The cap on that delay, in milliseconds, so a long final interval does not stall.
@@ -40,7 +49,10 @@ const FINAL_DELAY_MAX_MS: f32 = 40.0;
 /// How much softer inner chord voices are than the top voice, at full voicing.
 const INNER_SOFTEN: f32 = 0.25;
 /// How much softer the lowest chord voice is than the top voice, at full voicing.
-const BASS_SOFTEN: f32 = 0.10;
+///
+/// Pianists play it about 14% under the top over every chord of two pitches or more (0.48),
+/// and 19% in chords of three or more — softer than the inner voices.
+const BASS_SOFTEN: f32 = 0.30;
 /// How far the top voice sounds ahead of its chord, in milliseconds, at full voicing.
 const MELODY_LEAD_MS: f32 = 15.0;
 
@@ -54,8 +66,12 @@ const LEAP_SEMITONES: u8 = 5;
 const STEP_OVERLAP_MS: f32 = 25.0;
 /// The silence left before a leap, in milliseconds, at full articulation.
 const LEAP_GAP_MS: f32 = 30.0;
-/// The silence left before the same key is struck again, in milliseconds.
-const REPEAT_GAP_MS: f32 = 40.0;
+/// The silence left before the same key is struck again, in milliseconds, at full articulation.
+///
+/// A pianist's lift grows with the interval (about two thirds of it), so the median lift is the
+/// touch of detached repeats. Only written-legato repeats are lifted here, matched to the most
+/// legato quarter of each pianist's lifts, 86 ms, at 0.61; half the written note always stays.
+const REPEAT_GAP_MS: f32 = 140.0;
 
 /// How long after a pedal change the dampers fall on what the old pedal held, in milliseconds.
 /// The change is a legato pedal: lifted as the new harmony is struck, so the two touch.
@@ -275,17 +291,17 @@ mod tests {
         let v: Vec<_> = notes.iter().map(|n| n.velocity).collect();
         // Mean top pitch 65: middle C sits five semitones under it, the top C seven over.
         assert!(
-            (v[0] - 0.5 * (1.0 - 0.10 * 5.0 / 12.0)).abs() < 1e-4,
+            (v[0] - 0.5 * (1.0 - 0.20 * 5.0 / 12.0)).abs() < 1e-4,
             "{v:?}"
         );
         // The quarter at the top is both high and twice the median interval long.
         assert!(
-            (v[3] - 0.5 * (1.0 + 0.10 * 7.0 / 12.0 + 0.06)).abs() < 1e-4,
+            (v[3] - 0.5 * (1.0 + 0.20 * 7.0 / 12.0 + 0.03)).abs() < 1e-4,
             "{v:?}"
         );
-        // The last note: slightly above the mean, then 15 % softer.
+        // The last note: slightly above the mean, then 7 % softer.
         assert!(
-            (v[4] - 0.5 * (1.0 + 0.10 * 2.0 / 12.0) * 0.85).abs() < 1e-4,
+            (v[4] - 0.5 * (1.0 + 0.20 * 2.0 / 12.0) * 0.93).abs() < 1e-4,
             "{v:?}"
         );
         // Arrives late by 10 % of the 960-tick interval before it, capped at 40 ms = 77 ticks,
@@ -309,7 +325,7 @@ mod tests {
         assert_eq!(notes, written);
         contour(&mut notes, 1.0, with(&signatures));
         // The low second phrase is judged against its own mean, not the first phrase's.
-        assert!(notes[3].velocity < 0.5 && notes[2].velocity < notes[3].velocity / 0.85);
+        assert!(notes[3].velocity < 0.5 && notes[2].velocity < notes[3].velocity / 0.93);
         assert!(notes[2].velocity > 0.45, "{:?}", notes[2]);
     }
 
@@ -323,7 +339,7 @@ mod tests {
             n(72, 960, 960),
         ];
         voicing(&mut notes, 1.0, with(&signatures));
-        assert!((notes[0].velocity - 0.45).abs() < 1e-6);
+        assert!((notes[0].velocity - 0.35).abs() < 1e-6);
         assert!((notes[1].velocity - 0.375).abs() < 1e-6);
         assert!((notes[2].velocity - 0.375).abs() < 1e-6);
         assert_eq!(notes[3].velocity, 0.5);
@@ -360,17 +376,18 @@ mod tests {
     #[test]
     fn articulation_overlaps_steps_breathes_before_leaps_and_lifts_repeats() {
         let signatures = SignatureMap::default();
+        // At half articulation, where the dial starts.
         let mut notes = vec![
-            n(60, 0, 480),    // step up to D: overlaps 25 ms = 48 ticks
-            n(62, 480, 480),  // leap up to A: leaves 30 ms = 58 ticks
-            n(69, 960, 480),  // repeated A: lifts 40 ms = 77 ticks
+            n(60, 0, 480),    // step up to D: overlaps 12.5 ms = 24 ticks
+            n(62, 480, 480),  // leap up to A: leaves 15 ms = 29 ticks
+            n(69, 960, 480),  // repeated A: lifts 70 ms = 134 ticks
             n(69, 1440, 480), // third down to F#: as written
             n(66, 1920, 240), // detached: left alone
             n(64, 2400, 480), // last note: nothing follows
         ];
-        articulate(&mut notes, 1.0, with(&signatures));
+        articulate(&mut notes, 0.5, with(&signatures));
         let ends: Vec<_> = notes.iter().map(|n| n.end().raw()).collect();
-        assert_eq!(ends, vec![528, 902, 1363, 1920, 2160, 2880]);
+        assert_eq!(ends, vec![504, 931, 1306, 1920, 2160, 2880]);
         assert!(
             notes
                 .iter()

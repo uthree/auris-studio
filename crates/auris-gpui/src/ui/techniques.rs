@@ -100,9 +100,9 @@ impl Technique {
             Technique::Sustain => (PerformDial::Sustain, 0.1875),
             // About seven notes in ten are released under the pedal (0.71).
             Technique::Pedal => (PerformDial::Pedal, 0.7),
-            // Leaps are detached by about half the stage's full gap (0.48). Repeated keys are
-            // let go far earlier than the stage reaches (2.9), and a performance cannot show
-            // which steps were written legato, so those two do not set it.
+            // Leaps are detached by about half the stage's full gap (0.48) and the most legato
+            // quarter of repeated keys lifted at 0.61. A performance cannot show which steps
+            // were written legato, so the step overlap does not set it.
             Technique::Articulate => (PerformDial::Articulate, 0.5),
             // Inner voices about 13% under the top (0.52) and the top about 6 ms ahead (0.38).
             Technique::Voicing => (PerformDial::Voicing, 0.5),
