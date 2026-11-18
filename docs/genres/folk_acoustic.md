@@ -13,8 +13,11 @@ Strummed and fingerpicked guitars, plain I–IV–V harmony, a small band, and a
 
 - An acoustic guitar (`auris.physical.guitar`) strumming (`acoustic_strum`) or fingerpicking, a bass (`finger_bass`) on roots and fifths, light percussion (`pop_drums` at a low intensity, or hats alone), and one melodic colour: violin (`string_legato`), whistle (`woodwind_solo` on `auris.physical.tin_whistle`) or piano.
 - Build by adding one instrument per section: guitar alone, then bass, then the second melodic voice and the percussion. Groove `eight-beat` or `six-eight`; straight feel, swing at 50, a little humanize.
+- The acoustic instruments take no inserts: no amplifier, chorus or distortion.
 - Look up Strummed chords and Subtract before adding.
 
 ## Mix
 
 - Natural and close: the guitar and the melody in front, a small room reverb, light compression. Target -14 to -16 LUFS, -1 dBTP.
+- Effects: one `auris.fx.reverb` room (`room_size` 0.2 to 0.4) on a return; a light `auris.fx.compressor` (`ratio` about 2) on the guitar or the melody.
+- Look up Choosing a space and Insert order.

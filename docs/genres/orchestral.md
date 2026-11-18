@@ -13,8 +13,11 @@ No drum kit: families of instruments hand material on, dynamics and orchestratio
 
 - Strings carry the harmony (`string_legato` on `auris.physical.violin` in several registers, `string_pizzicato` for motion), woodwinds the theme (`auris.physical.clarinet` or `auris.physical.tin_whistle` with `woodwind_solo`), brass for weight and the climax (`brass_section` on `auris.synth.brass`), bell or mallet for colour, low strings or a sustained bass for the floor. No drum kit; low toms only at the climax, if at all.
 - Build by adding families and register, not drums: the first statement on one woodwind over held strings, the second with the theme doubled in octaves and the brass entering, the climax with everything at its widest spread. Keep it human: a little humanize, swing at 50.
+- Every section is complete as it is: no inserts on the instruments, whose space comes from the mix's hall.
 - Look up Part roles and registers and Build-up and break.
 
 ## Mix
 
 - A large hall reverb on everything, sections placed left to right as they would sit, no bus limiting that flattens the build. Target -18 to -21 LUFS, -1 dBTP.
+- Effects: one `auris.fx.reverb` hall (`room_size` 0.8 to 0.9, `pre_delay_ms` 20 to 40) on a return that every section sends to; no distortion, chorus or sidechain.
+- Look up Choosing a space and Insert order.

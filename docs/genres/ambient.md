@@ -13,8 +13,11 @@ Little or no pulse, harmony that moves slowly or not at all, long notes, and tex
 
 - A pad as the ground (`synth_pad` on `auris.synth.pad`, long attack and release), bell or mallet fragments (`auris.physical.bell`, `auris.physical.mallet`) placed sparsely, a piano with the pedal held (`piano_ballad`) for a few notes, a low pad note or sub-bass that changes rarely. No drums, or only a soft pulse.
 - Contrast comes from register and density over the whole piece, not bar by bar: bring in one layer at a time, keep each note's start soft, and let tails overlap. Swing stays at 50; humanize the fragments so they do not sit on the grid.
-- Look up Subtract before adding and Part roles and registers.
+- Pads may take a slow `auris.fx.chorus` (`rate_hz` 0.1 to 0.3) for motion; a guitar is clean, through `auris.fx.guitar_amp` at a low drive.
+- Look up Sounds that need an insert, Subtract before adding and Part roles and registers.
 
 ## Mix
 
 - Wide and deep: long reverb and a slow delay on the fragments, gentle highs, no audible compression. Target -18 to -21 LUFS, -1 dBTP.
+- Effects: a hall `auris.fx.reverb` (`room_size` 0.8 to 0.95) or a long `auris.fx.plate` (`decay` 5 to 8) on a return; `auris.fx.tape` or a slow synced `auris.fx.delay` (`feedback` 0.5 to 0.7) for the fragments; high-pass the returns.
+- Look up Choosing a space and Insert order.

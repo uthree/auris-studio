@@ -13,8 +13,11 @@ Rhythm organised by the clave or the bossa pattern, syncopated bass and guitar, 
 
 - A nylon-string-style guitar (`auris.physical.guitar`) comping the bossa pattern in short chords, bass on root and fifth in the bossa's dotted rhythm (`finger_bass`), percussion from the drum kit (groove `bossa-nova`: a rim click on the clave, soft hats, a light kick), the melody on whistle, clarinet (`woodwind_solo`) or piano, strings (`string_legato`) holding a pad in the B section.
 - Bossa nova keeps the grid straight (swing 50) with gentle humanize; samba pushes the sixteenths a little (swing 52 to 54 on the sixteenth grid, every part alike).
+- The nylon-style guitar and the winds take no inserts; their space comes from the mix's room.
 - Look up Bass and inner voices and Voicings out of the voice.
 
 ## Mix
 
 - Warm and intimate: guitar and melody in front, percussion light and wide, a short room reverb. Target -14 to -16 LUFS, -1 dBTP.
+- Effects: a short `auris.fx.reverb` room (`room_size` 0.3 to 0.4) on a return; the guitar dry or lightly compressed; no distortion or chorus.
+- Look up Choosing a space and Insert order.

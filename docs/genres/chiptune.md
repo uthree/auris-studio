@@ -13,8 +13,10 @@ The sound of game consoles: few voices at once, chords played as fast arpeggios,
 
 - Voices on `auris.synth.chiptune`: a pulse lead (12.5 or 25 percent duty) for the melody, a second pulse for the harmony or an echo of the lead, a triangle bass (`synth_bass_tight`) in eighths or octave jumps, noise drums on `auris.synth.noisedrum` for kick, snare and hats. Chords as fast arpeggios (`synth_arp_tight`) rather than held stacks.
 - Keep it exact: swing 50, no humanize, short gates on the bass and the arpeggio. Build by adding the second pulse and doubling the drum pattern in the B section.
+- The chiptune voices are the sound: no inserts on them.
 - Look up Loop return and Copy, then vary.
 
 ## Mix
 
 - Dry and direct: no reverb, a short echo on the lead at most, the lead clearly on top. Target -12 to -14 LUFS, -1 dBTP.
+- Effects: at most an `auris.fx.delay` echo on the lead (`sync` 6 or 7, `mix` 0.15 to 0.25, `ping_pong` 0). No reverb, chorus, amplifier or distortion.

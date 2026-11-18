@@ -14,8 +14,11 @@ Swing eighths, ii–V–I progressions with extended chords, walking bass, compi
 - Piano trio or a small combo: piano comping in rootless voicings off the beat (`jazz_piano_comp`), upright-style bass walking in quarter notes (`finger_bass` on `auris.physical.bass`), drums on the ride with hats on two and four (`jazz_drums`), the head on a lead (clarinet with `woodwind_solo`, or the piano's right hand).
 - Every part swings alike on the eighth grid: swing_percent 60 to 67, swing_grid eighth, on drums, bass, piano and lead. A slower tempo takes the higher value.
 - Comping is sparse and conversational: short chords between the melody's phrases, not on every beat. The bass walks chord tones and approach notes and lands on the next chord's root on its first beat.
-- Look up Bass and inner voices and Voicings out of the voice.
+- A jazz guitar is `auris.physical.electric_guitar` through `auris.fx.guitar_amp` with `drive_db` 0 to 4, `treble_db` -3 to -6 and `cabinet` 2; an organ takes `auris.fx.rotary` at `speed` 1.
+- Look up Sounds that need an insert, Bass and inner voices and Voicings out of the voice.
 
 ## Mix
 
 - Natural and open: little compression, a room reverb, the ride and the bass clear. Leave the dynamics: target -16 to -18 LUFS, -1 dBTP.
+- Effects: one `auris.fx.reverb` room (`room_size` 0.3 to 0.5, a low `mix`) on a return for every part; no distortion, chorus or sidechain, and compression only to steady the bass.
+- Look up Choosing a space and Insert order.
