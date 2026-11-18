@@ -415,21 +415,32 @@ the full summary is
 
 | Technique | Human statistic | Implied amount | Start |
 | --- | --- | ---: | ---: |
-| Voicing | inner voices 13% under the top; top 6 ms ahead | 0.52; 0.38 | 0.5 |
+| Voicing | inner voices 13% under the top; bass 14% under; top 6 ms ahead | 0.52; 0.48; 0.38 | 0.5 |
 | Pedal | 71% of notes released under the pedal | 0.71 | 0.7 |
 | Sustain | 0.39 s held past release (0.78 beat at 120 BPM) | — | ¾ beat |
 | Strum | 20 ms guitar stroke; 22 ms piano chord | 0.20; 0.22 | 0.2 |
-| Articulation | leaps detached by 14 ms; repeated keys released 115 ms early | 0.48; 2.9 | 0.5 |
-| Shape | melody dynamics follow pitch; phrase arch | contour 1.26; swell 0.06 | contour only |
+| Articulation | leaps detached by 14 ms; repeated keys lifted 86 ms early (most legato quarter) | 0.48; 0.61 | 0.5 |
+| Shape | melody 12% louder an octave up; 2% a doubled interval; last attack 4% softer; phrase arch | contour 0.62, 0.63, 0.61; swell 0.05 | contour only |
 
 The data cannot set three things. A performance is not its score, so it cannot show which
 steps were written legato; the articulation's step overlap is not measured. Ghost notes,
 slides and mutes have no corpus here and start halfway. And one classical piano corpus is
 one repertoire: these are starting points, not the right amount for every song.
 
-The same measurement points at constants rather than starting values. The pitch slope (1.26),
-the bass under the top (19% against the stage's 10% at full) and the repeated-key release (115 ms
-against 40 ms) all lie beyond what the stages reach at full strength.
+The stages' own constants are set from the same measurement, so that an amount between 0.5 and
+0.7 plays what the pianists did rather than an amount past full. Three readings need saying:
+
+* The contour's three terms — pitch against the phrase mean, each interval against the phrase
+  median, and the last attack — are fitted together, with the phrase arch beside them. A phrase
+  often ends low, so its last note is soft partly because of its pitch; the plain ratio of the
+  last attack to the rest (0.90) counted that twice, and with pitch fitted the last attack is
+  only about 4% softer.
+* The bass is read over every chord of two pitches or more, which is what the voicing stage
+  softens: 14% under the top. In chords of three or more it is 19%, below the inner voices.
+* A repeated key's lift grows with the interval, about two thirds of it from sixteenths to half
+  notes, so the median (115 ms, amount 0.82) is the touch of repeats played detached. The stage
+  lifts only written-legato repeats, and is matched to the most legato quarter of each pianist's
+  lifts instead. It still keeps at least half of every written note.
 
 ```sh
 uv run tools/eval/performance_stats.py MAESTRO_DIR GUITARSET_DIR --out stats.json
