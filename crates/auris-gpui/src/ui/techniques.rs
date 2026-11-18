@@ -86,19 +86,31 @@ impl Technique {
         }
     }
 
-    /// The dial adding the technique turns, and how far: a moderate start that is audible and
-    /// easy to judge from. Melodic expression has no single dial to start, so it only opens.
+    /// The dial adding the technique turns, and how far. Melodic expression has no single dial
+    /// to start, so it only opens.
+    ///
+    /// Where a corpus measures the technique, the start is the amount that reproduces the median
+    /// human performance (`tools/eval/performance_stats.py`, MAESTRO piano and GuitarSet
+    /// strums; the figures are in `tools/eval/references/performance-dials-2026-11-19.json`).
+    /// Ghost notes, slides and mutes have no such corpus here and start halfway.
     pub fn start(self) -> Option<(PerformDial, f32)> {
         Some(match self {
-            // One beat of hold, out of the dial's whole note.
-            Technique::Sustain => (PerformDial::Sustain, 0.25),
-            Technique::Pedal => (PerformDial::Pedal, 0.5),
+            // Pianists hold a released key on for about three quarters of a beat at 120 BPM
+            // (0.78), in sixteenth steps of the dial's whole note.
+            Technique::Sustain => (PerformDial::Sustain, 0.1875),
+            // About seven notes in ten are released under the pedal (0.71).
+            Technique::Pedal => (PerformDial::Pedal, 0.7),
+            // Leaps are detached by about half the stage's full gap (0.48). Repeated keys are
+            // let go far earlier than the stage reaches (2.9), and a performance cannot show
+            // which steps were written legato, so those two do not set it.
             Technique::Articulate => (PerformDial::Articulate, 0.5),
+            // Inner voices about 13% under the top (0.52) and the top about 6 ms ahead (0.38).
             Technique::Voicing => (PerformDial::Voicing, 0.5),
             Technique::Ghost => (PerformDial::GhostDensity, 0.5),
             Technique::Slide => (PerformDial::Slide, 0.5),
             Technique::Mute => (PerformDial::Mute, 0.5),
-            // Twenty milliseconds across the chord: heard as a strum, not as a smear.
+            // A guitarist's stroke spans 20 ms from first to last string (0.20); a pianist's
+            // chord about 22 ms (0.22).
             Technique::Strum => (PerformDial::Stroke, 0.2),
             Technique::Pitch => return None,
         })
@@ -344,7 +356,7 @@ mod tests {
         app.update(cx, |this, _| {
             assert_eq!(
                 this.session.clip_transforms(clip).unwrap(),
-                &[NoteTransform::Pedal { amount: 0.5 }]
+                &[NoteTransform::Pedal { amount: 0.7 }]
             );
             // Turned back to nothing, the stage goes but the row stays under the pointer.
             this.set_perform_dial(clip, PerformDial::Pedal, 0.0);
