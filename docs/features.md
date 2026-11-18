@@ -474,6 +474,14 @@ mode, the loop and quantizing while recording, which is worth turning on for a v
 are written but not played while you sing; a `Voice` badge on the transport says the microphone
 will be opened, and clicking it turns voice input off.
 
+**A hummed recording can be converted afterwards, too.** Right-click an audio clip holding one
+voice and choose **Convert Humming to Notes**: the notes are written onto a new instrument track
+under the clip, through its trim, stretch and repeats, as one undo step, and the audio is left in
+place to check them against. Done after the fact, each note's pitch is read from its middle rather
+than its first frames, so a scoop into a note does not decide it, and velocity is scaled against
+the loudest note of the clip. A recording with an accompaniment or chords in it is not one voice
+and will not come out right.
+
 **What a take does with what is already there** is the note recording mode, in **Settings → MIDI**:
 
 * **Takes** (the default) — every take is a clip of its own. With the loop on, every pass round it

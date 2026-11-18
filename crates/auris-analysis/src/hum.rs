@@ -28,12 +28,22 @@
 //!   which is how "dum dum dum" on one pitch is three notes rather than one long one.
 //! * **It ends** after [`RELEASE`] frames with no pitch, where the first of them was.
 //!
+//! # After the fact
+//!
+//! [`transcribe`] runs the same tracker over a whole recording, and then does what a tracker
+//! that has to answer as the voice arrives cannot: it reads each note's pitch from the middle of
+//! the note rather than its first frames, so a scoop into a note does not decide it; it gives a
+//! note too short to have been meant to the note it leads into or out of; and it scales velocity
+//! against the loudest note of the take rather than a fixed level.
+//!
 //! How hard the note was struck is the loudest of the frames that began it, mapped from
 //! [`VELOCITY_FLOOR_DB`]..[`VELOCITY_CEIL_DB`] onto a velocity. That is a level at the
 //! microphone, so it depends on the microphone and how far away it is; what it keeps is which
 //! notes were sung louder than which.
 
 use crate::pitch::period;
+use crate::transcription::TranscribedNote;
+use crate::{AnalysisControl, AnalysisError};
 
 /// The lowest fundamental followed: C2, under a bass voice's comfortable bottom.
 pub const VOICE_LOWEST_HZ: f32 = 65.0;
@@ -197,6 +207,8 @@ pub struct HumTracker {
     difference: Vec<f32>,
     normalised: Vec<f32>,
     state: State,
+    /// Every frame measured, when [`transcribe`] wants them read back.
+    log: Option<Vec<Frame>>,
 }
 
 impl HumTracker {
@@ -222,6 +234,7 @@ impl HumTracker {
             difference: vec![0.0; lag_max + 1],
             normalised: vec![1.0; lag_max + 1],
             state: State::Idle { run: Vec::new() },
+            log: None,
         }
     }
 
@@ -284,12 +297,16 @@ impl HumTracker {
             })
             .flatten()
             .map(|period| 69.0 + 12.0 * (self.analysis_rate / period / 440.0).log2());
-        Frame {
+        let frame = Frame {
             start: self.next * self.factor as u64,
             at: (self.next + span as u64 / 2) * self.factor as u64,
             semitone,
             db,
+        };
+        if let Some(log) = self.log.as_mut() {
+            log.push(frame);
         }
+        frame
     }
 
     /// Moves the note decision on by one frame.
@@ -439,6 +456,145 @@ pub fn velocity(db: f32) -> f32 {
     ((db - VELOCITY_FLOOR_DB) / (VELOCITY_CEIL_DB - VELOCITY_FLOOR_DB)).clamp(VELOCITY_LEAST, 1.0)
 }
 
+/// Notes shorter than this, in seconds, were not meant: a scoop, a consonant, a breath.
+const SHORTEST_SECONDS: f64 = 0.06;
+
+/// Notes shorter than this, in seconds, that run straight into a note within [`SCOOP_SEMITONES`]
+/// of them are the voice sliding into that note rather than a note of their own.
+const SCOOP_SECONDS: f64 = 0.12;
+
+/// How far from the note it slides into a scoop may start, in semitones.
+const SCOOP_SEMITONES: i16 = 2;
+
+/// How far below the loudest note of a take, in decibels, the softest velocity lies.
+const TAKE_RANGE_DB: f32 = 30.0;
+
+/// The velocity of the loudest note of a take: not the hardest there is, since a hummed take
+/// at its loudest is still a hum.
+const TAKE_LOUDEST: f32 = 0.9;
+
+/// Writes down the notes a recording of one voice sang, in seconds from its first sample.
+///
+/// The recording is mono. Cancellation and progress are checked a second of audio at a time.
+pub fn transcribe(
+    samples: &[f32],
+    rate: f64,
+    control: &AnalysisControl,
+) -> Result<Vec<TranscribedNote>, AnalysisError> {
+    if !(rate.is_finite() && rate > 0.0) {
+        return Err(AnalysisError::Invalid("the sample rate must be positive"));
+    }
+    let mut tracker = HumTracker::new(rate);
+    tracker.log = Some(Vec::new());
+    let mut events = Vec::new();
+    let chunk = (rate as usize).max(1);
+    for (index, block) in samples.chunks(chunk).enumerate() {
+        control.check(index as f32 * chunk as f32 / samples.len().max(1) as f32)?;
+        tracker.push(block, &mut events);
+    }
+    tracker.finish(&mut events);
+    control.check(1.0)?;
+    let frames = tracker.log.take().unwrap_or_default();
+    let notes = refine(&pair(&events), &frames, rate);
+    Ok(notes)
+}
+
+/// A note as frames: pitch, first input frame, end input frame.
+type Span = (u8, u64, u64);
+
+/// Pairs each `On` with the `Off` that follows it.
+fn pair(events: &[HumEvent]) -> Vec<Span> {
+    let mut open: Option<(u8, u64)> = None;
+    let mut spans = Vec::new();
+    for event in events {
+        match *event {
+            HumEvent::On { pitch, frame, .. } => open = Some((pitch, frame)),
+            HumEvent::Off { frame, .. } => {
+                if let Some((pitch, start)) = open.take()
+                    && frame > start
+                {
+                    spans.push((pitch, start, frame));
+                }
+            }
+        }
+    }
+    spans
+}
+
+/// Reads each note's pitch from its middle, folds away notes too short to be meant, and scales
+/// velocity against the loudest note.
+fn refine(spans: &[Span], frames: &[Frame], rate: f64) -> Vec<TranscribedNote> {
+    // Pitch from the body: past a fifth of the note, short of its last tenth.
+    let mut notes: Vec<Span> = spans
+        .iter()
+        .map(|&(pitch, start, end)| {
+            let length = end - start;
+            let from = start + length / 5;
+            let to = end - length / 10;
+            let body: Vec<Frame> = frames
+                .iter()
+                .filter(|f| f.start >= from && f.start < to && f.semitone.is_some())
+                .copied()
+                .collect();
+            let pitch = if body.is_empty() {
+                pitch
+            } else {
+                nearest(median(&body))
+            };
+            (pitch, start, end)
+        })
+        .collect();
+    // A note too short to be meant goes to its neighbour: the note it leads into, or failing that
+    // the one it trails out of; on its own it was not a note.
+    let shortest = (SHORTEST_SECONDS * rate) as u64;
+    let scoop = (SCOOP_SECONDS * rate) as u64;
+    let mut index = 0;
+    while index < notes.len() {
+        let (pitch, start, end) = notes[index];
+        let slides_in = notes.get(index + 1).is_some_and(|next| {
+            next.1 == end && (i16::from(next.0) - i16::from(pitch)).abs() <= SCOOP_SEMITONES
+        });
+        if end - start >= shortest && !(slides_in && end - start < scoop) {
+            index += 1;
+            continue;
+        }
+        if notes.get(index + 1).is_some_and(|next| next.1 == end) {
+            notes[index + 1].1 = start;
+        } else if index > 0 && notes[index - 1].2 == start {
+            notes[index - 1].2 = end;
+        }
+        notes.remove(index);
+    }
+    // Two notes the body reading put on one pitch, with nothing between them, were one note.
+    let mut merged: Vec<Span> = Vec::with_capacity(notes.len());
+    for note in notes {
+        match merged.last_mut() {
+            Some(last) if last.0 == note.0 && last.2 == note.1 => last.2 = note.2,
+            _ => merged.push(note),
+        }
+    }
+    let level = |&(_, start, end): &Span| {
+        frames
+            .iter()
+            .filter(|f| f.start >= start && f.start < end)
+            .map(|f| f.db)
+            .fold(f32::MIN, f32::max)
+    };
+    let levels: Vec<f32> = merged.iter().map(level).collect();
+    let loudest = levels.iter().copied().fold(f32::MIN, f32::max);
+    merged
+        .iter()
+        .zip(levels)
+        .map(|(&(pitch, start, end), db)| TranscribedNote {
+            pitch,
+            start: start as f64 / rate,
+            end: end as f64 / rate,
+            strength: (TAKE_LOUDEST + (db - loudest) / TAKE_RANGE_DB * (TAKE_LOUDEST - 0.1))
+                .clamp(0.1, 1.0),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,6 +607,8 @@ mod tests {
         seconds: f64,
         level: f32,
         vibrato_cents: f32,
+        /// Semitones below the note the voice starts, sliding up over its first 80 ms.
+        scoop: f32,
     }
 
     fn note(pitch: f32, seconds: f64) -> Sung {
@@ -459,6 +617,7 @@ mod tests {
             seconds,
             level: 0.2,
             vibrato_cents: 0.0,
+            scoop: 0.0,
         }
     }
 
@@ -468,6 +627,7 @@ mod tests {
             seconds,
             level: 0.0,
             vibrato_cents: 0.0,
+            scoop: 0.0,
         }
     }
 
@@ -484,7 +644,8 @@ mod tests {
             let legato_out = phrase.get(index + 1).is_some_and(|next| next.level > 0.0);
             for i in 0..frames {
                 let t = i as f64 / rate;
-                let cents = sung.vibrato_cents as f64 * (std::f64::consts::TAU * 5.5 * t).sin();
+                let cents = sung.vibrato_cents as f64 * (std::f64::consts::TAU * 5.5 * t).sin()
+                    - sung.scoop as f64 * 100.0 * (1.0 - t / 0.08).max(0.0);
                 let hz = 440.0 * 2f64.powf((sung.pitch as f64 - 69.0 + cents / 100.0) / 12.0);
                 phase += hz / rate;
                 let mut envelope = 1.0f32;
@@ -662,6 +823,69 @@ mod tests {
         for chunk in [1, 64, 333, 1024] {
             assert_eq!(track(&samples, rate, chunk), whole, "{chunk}");
         }
+    }
+
+    fn offline(phrase: &[Sung], rate: f64) -> Vec<TranscribedNote> {
+        transcribe(&sing(phrase, rate), rate, &AnalysisControl::default()).unwrap()
+    }
+
+    #[test]
+    fn a_recording_is_written_down_in_seconds() {
+        let rate = 16_000.0;
+        let found = offline(
+            &[
+                rest(0.25),
+                note(62.0, 0.4),
+                rest(0.1),
+                note(69.0, 0.4),
+                rest(0.2),
+            ],
+            rate,
+        );
+        let pitches: Vec<u8> = found.iter().map(|n| n.pitch).collect();
+        assert_eq!(pitches, vec![62, 69], "{found:?}");
+        assert!((found[0].start - 0.25).abs() < 0.012, "{found:?}");
+        assert!((found[1].start - 0.75).abs() < 0.012, "{found:?}");
+        assert!((found[1].end - 1.15).abs() < 0.015, "{found:?}");
+    }
+
+    #[test]
+    fn a_scoop_into_a_note_does_not_decide_it_or_become_a_note() {
+        let rate = 48_000.0;
+        let mut scooped = note(64.0, 0.5);
+        scooped.scoop = 1.5;
+        let found = offline(&[rest(0.1), scooped, rest(0.2)], rate);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].pitch, 64);
+        assert!((found[0].start - 0.1).abs() < 0.015, "{found:?}");
+    }
+
+    #[test]
+    fn the_loudest_note_of_a_take_is_struck_hard_and_the_rest_against_it() {
+        let rate = 48_000.0;
+        let mut soft = note(60.0, 0.3);
+        soft.level = 0.01;
+        let mut loud = note(60.0, 0.3);
+        loud.level = 0.05;
+        let found = offline(&[rest(0.1), soft, rest(0.15), loud, rest(0.1)], rate);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!((found[1].strength - TAKE_LOUDEST).abs() < 0.01, "{found:?}");
+        // Fourteen decibels down is a little under half the take's range.
+        assert!(
+            found[0].strength > 0.45 && found[0].strength < 0.6,
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_transcription_says_so() {
+        let control = AnalysisControl::default();
+        control.cancel();
+        let samples = sing(&[note(60.0, 0.5)], 16_000.0);
+        assert!(matches!(
+            transcribe(&samples, 16_000.0, &control),
+            Err(AnalysisError::Cancelled)
+        ));
     }
 
     #[test]

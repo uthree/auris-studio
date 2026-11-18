@@ -88,6 +88,21 @@ pub struct ClipAudioAnalysis {
     job: AudioAnalysisJob,
 }
 
+/// The notes a hummed or sung audio clip was heard to hold, before they are placed.
+#[derive(Clone, Debug, Serialize)]
+pub struct ClipHumTranscription {
+    /// Clip that supplied the audio and placement information.
+    pub clip: ClipId,
+    /// Notes relative to the analyzed trim, in unstretched seconds.
+    pub notes: Vec<TranscribedNote>,
+    #[serde(skip)]
+    job: AudioAnalysisJob,
+}
+
+/// The rate a clip is resampled to before it is followed as a voice: what
+/// [`auris_analysis::hum`] would decimate to anyway, so the resampler's filter is the only one.
+const HUM_RATE: f64 = 16_000.0;
+
 /// Instrument-presence hypotheses for a trimmed, immutable audio source.
 #[derive(Clone, Debug, Serialize)]
 pub struct ClipInstrumentAnalysis {
@@ -130,6 +145,26 @@ impl AudioAnalysisJob {
         Ok(ClipInstrumentAnalysis {
             source_offset_seconds: self.source_offset_seconds(),
             analysis,
+            job: self.clone(),
+        })
+    }
+
+    /// Follows the trimmed first pass as one voice and writes down the notes it sang.
+    ///
+    /// The channels are averaged: a voice recorded in stereo is the same voice twice.
+    pub fn run_hum(&self, control: &AnalysisControl) -> Result<ClipHumTranscription, SessionError> {
+        check_cancel(control)?;
+        let prepared = self.prepared(HUM_RATE)?;
+        let channels: Vec<&[f32]> = prepared.iter_channels().collect();
+        let count = channels.len().max(1) as f32;
+        let mono: Vec<f32> = (0..prepared.frame_count())
+            .map(|i| channels.iter().map(|c| c[i]).sum::<f32>() / count)
+            .collect();
+        let notes = auris_analysis::hum::transcribe(&mono, prepared.sample_rate(), control)
+            .map_err(failure)?;
+        Ok(ClipHumTranscription {
+            clip: self.clip.id,
+            notes,
             job: self.clone(),
         })
     }
@@ -425,6 +460,64 @@ impl Session {
                 .is_some_and(|b| Arc::ptr_eq(b, &report.job.audio))
     }
 
+    /// Rejects a hummed transcription after document edits or source replacement.
+    pub fn hum_transcription_is_current(&self, report: &ClipHumTranscription) -> bool {
+        self.recognition_fingerprint()
+            .is_ok_and(|f| f == report.job.fingerprint)
+            && self
+                .bank
+                .get(report.job.clip.source)
+                .is_some_and(|b| Arc::ptr_eq(b, &report.job.audio))
+    }
+
+    /// Writes a hummed clip's notes onto a new instrument track under it, as one undo step.
+    ///
+    /// Placed through the clip's trim, stretch and repeats, the way its chords are: each pass of
+    /// a looping clip is sung again. The audio is left where it is, to be checked against.
+    pub fn import_hum_transcription(
+        &mut self,
+        report: &ClipHumTranscription,
+        name: &str,
+    ) -> Result<(TrackId, ClipId), SessionError> {
+        if !self.hum_transcription_is_current(report) {
+            return Err(failure("the audio or document changed; analyze it again"));
+        }
+        if report.notes.is_empty() {
+            return Err(failure("no sung notes were found in the clip"));
+        }
+        let source = &report.job.clip;
+        let content = self.audio_clip_length_ticks(source);
+        if content.raw() <= 0 || source.loop_end.raw() / content.raw() > 16_384 {
+            return Err(failure("invalid or excessive audio repeats"));
+        }
+        let stretch = source.stretch_in(&self.project.tempo_map);
+        let mut notes = Vec::new();
+        for (offset, span) in loop_passes(content, source.loop_end) {
+            let pass = source.start + offset;
+            let origin = self.project.tempo_map.ticks_to_seconds(pass).0;
+            notes.extend(self.map_transcription(
+                &report.notes,
+                origin,
+                stretch,
+                source.start,
+                pass + span,
+            ));
+            if notes.len() > 65_536 {
+                return Err(failure("too many repeated notes"));
+            }
+        }
+        if notes.is_empty() {
+            return Err(failure("no sung notes were found in the clip"));
+        }
+        let start = source.start;
+        self.create_analysis_track(
+            notes,
+            start,
+            name,
+            Some(crate::registry::DEFAULT_INSTRUMENT),
+        )
+    }
+
     /// Rejects instrument results after document edits or source replacement.
     pub fn instrument_analysis_is_current(&self, report: &ClipInstrumentAnalysis) -> bool {
         self.recognition_fingerprint()
@@ -619,6 +712,81 @@ mod tests {
     use auris_core::theory::key::Key;
     fn session() -> Session {
         Session::new(SessionOptions::headless()).unwrap()
+    }
+
+    #[test]
+    fn a_hummed_clip_becomes_a_note_track_under_it_in_one_undo() {
+        let mut s = session();
+        s.set_bpm(120.0);
+        let rate = s.project().sample_rate;
+        // Rest a quarter, hum A3 for a half note, rest, then C4 for a quarter: at 120 bpm.
+        let mut samples = Vec::new();
+        let mut phase = 0.0f64;
+        for (pitch, seconds) in [
+            (0.0, 0.5),
+            (57.0, 1.0),
+            (0.0, 0.25),
+            (60.0, 0.5),
+            (0.0, 0.5),
+        ] {
+            for _ in 0..(seconds * rate) as usize {
+                if pitch == 0.0 {
+                    samples.push(0.0);
+                    continue;
+                }
+                phase += 440.0 * 2f64.powf((pitch - 69.0) / 12.0) / rate;
+                let voice: f64 = (1..=6)
+                    .map(|k| (std::f64::consts::TAU * phase * k as f64).sin() / k as f64)
+                    .sum();
+                samples.push((0.2 * voice) as f32);
+            }
+        }
+        let buffer = AudioBuffer::from_planar(vec![samples], rate).unwrap();
+        let clip = s
+            .place_audio(std::path::Path::new("hum.wav"), buffer, Ticks(3840))
+            .unwrap();
+        let report = s
+            .audio_analysis_job(clip)
+            .unwrap()
+            .run_hum(&AnalysisControl::default())
+            .unwrap();
+        let before = s.project().clone();
+        let (_, written) = s.import_hum_transcription(&report, "Hum notes").unwrap();
+        let (_, found) = s.project().midi_clip(written).unwrap();
+        assert_eq!(found.start, Ticks(3840), "under the audio clip");
+        let notes: Vec<(u8, i64, i64)> = found
+            .notes
+            .iter()
+            .map(|n| (n.pitch, n.start.raw(), n.length.raw()))
+            .collect();
+        // A quarter is 960 ticks; allow a few milliseconds either way.
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert_eq!((notes[0].0, notes[1].0), (57, 60), "{notes:?}");
+        assert!((notes[0].1 - 960).abs() <= 24, "{notes:?}");
+        assert!((notes[0].2 - 1920).abs() <= 48, "{notes:?}");
+        assert!((notes[1].1 - 3360).abs() <= 24, "{notes:?}");
+        s.undo().unwrap();
+        assert_eq!(s.project(), &before);
+    }
+
+    #[test]
+    fn a_hummed_clip_analyzed_before_an_edit_is_not_imported_after_it() {
+        let mut s = session();
+        let rate = s.project().sample_rate;
+        let samples: Vec<f32> = (0..rate as usize)
+            .map(|i| (i as f32 * 220.0 / rate as f32 * std::f32::consts::TAU).sin() * 0.2)
+            .collect();
+        let buffer = AudioBuffer::from_planar(vec![samples], rate).unwrap();
+        let clip = s
+            .place_audio(std::path::Path::new("hum.wav"), buffer, Ticks::ZERO)
+            .unwrap();
+        let report = s
+            .audio_analysis_job(clip)
+            .unwrap()
+            .run_hum(&AnalysisControl::default())
+            .unwrap();
+        s.set_bpm(100.0);
+        assert!(s.import_hum_transcription(&report, "Hum notes").is_err());
     }
 
     #[test]

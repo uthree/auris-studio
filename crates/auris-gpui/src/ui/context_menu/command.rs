@@ -136,6 +136,8 @@ pub enum MenuCommand {
     AnalyzeChords(Option<TrackId>),
     /// Analyze tempo and chords in the trimmed source of an audio clip.
     AnalyzeAudio(ClipId),
+    /// Write the notes a hummed or sung audio clip holds onto a track of their own.
+    HumToNotes(ClipId),
     /// Cancel an offline CPU analysis.
     CancelMusicAnalysis,
     /// Display the current draft with its alternatives.
@@ -999,6 +1001,7 @@ impl AurisApp {
             }
             MenuCommand::AnalyzeChords(track) => self.begin_chord_analysis(track, cx),
             MenuCommand::AnalyzeAudio(clip) => self.begin_audio_analysis(clip, cx),
+            MenuCommand::HumToNotes(clip) => self.begin_hum_transcription(clip, cx),
             MenuCommand::CancelMusicAnalysis => {
                 self.music_analysis.cancel_requested();
                 self.set_status(self.t(Key::AnalysisCancelled));
