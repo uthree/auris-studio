@@ -309,7 +309,7 @@ pub enum Command {
         /// Required for writes; copied from the latest read.
         expected_revision: Option<String>,
     },
-    /// Inspect, partially edit or explicitly regenerate 1..16 generated clips. Writes preserve other clips and mix state; hand-edited generated notes require explicit replacement permission. Recipe controls change stored notes; performance controls are separate. Subdivision is a grid, not note duration: eighth, sixteenth, eighth-triplet or sixteenth-triplet. Rhythm must use repeating grid steps: x hit, X accent, o ghost, dot/tilde/hyphen rest (example x...x...); empty clears it. Adjust note count and held duration with density and gate, not subdivision. For a piano-style chord comp, low_root adds the root under the voicing and strum staggers onsets upward by a note value (32 or 64). For chords and pad, centre sets the MIDI note the voicings average to (finer than octave) and voices sets notes per chord (2..6, 0 = the chord's own).
+    /// Inspect, partially edit or explicitly regenerate 1..16 generated clips. Writes preserve other clips and mix state; hand-edited generated notes require explicit replacement permission. Recipe controls change stored notes; performance controls are separate. Subdivision is a grid, not note duration: eighth, sixteenth, eighth-triplet or sixteenth-triplet. Rhythm must use repeating grid steps: x hit, X accent, o ghost, dot/tilde/hyphen rest (example x...x...); empty clears it. Adjust note count with density, not subdivision. Held length and swing are not written: set them with set_performance gate and swing_percent. For a piano-style chord comp, low_root adds the root under the voicing and strum staggers onsets upward by a note value (32 or 64). For chords and pad, centre sets the MIDI note the voicings average to (finer than octave) and voices sets notes per chord (2..6, 0 = the chord's own).
     EditRecipe {
         /// Unique stable generated clip IDs.
         #[schemars(length(min = 1, max = 16))]
@@ -426,7 +426,7 @@ pub enum Command {
         /// Exact drum writer name from the clip's notes or recipe; omit for the whole clip.
         drum_voice: Option<String>,
     },
-    /// Adjust only supplied non-destructive playing controls and return measured note/pitch effects. Read inspect_performance first and independently afterward. Ratios use 0..1, swing 50..75 percent, times milliseconds and pitch semitones. slide inserts a discrete intermediate note; pitch.glide_ms creates a continuous pitch connection. Strum spreads simultaneous pitches, not single-note arpeggios. Check note_effects, pitch_effects, completeness and warnings before claiming an effective change. Omitted fields, stored notes, curves and recipes are preserved. settings.reset removes selected stages. Optional drum_voice scopes edits to one writer. More specific expression/ghost fields override humanize/brush. Edits validate atomically; identical retries are no-ops.
+    /// Adjust only supplied non-destructive playing controls and return measured note/pitch effects. Read inspect_performance first and independently afterward. Ratios use 0..1, swing 50..75 percent, times milliseconds and pitch semitones. slide inserts a discrete intermediate note; pitch.glide_ms creates a continuous pitch connection. Strum spreads simultaneous pitches, not single-note arpeggios. Check note_effects, pitch_effects, completeness and warnings before claiming an effective change. Omitted fields, stored notes, curves and recipes are preserved. settings.reset removes selected stages. Optional drum_voice scopes edits to one writer. More specific expression/ghost fields override humanize/brush. Use the stages inspect_performance lists in suited_stages for the clip's instrument_family; another is applied with an instrument_warning. Edits validate atomically; identical retries are no-ops.
     SetPerformance {
         /// Stable MIDI clip ID.
         clip: u64,
@@ -753,7 +753,8 @@ pub enum Command {
         /// Deterministic take seed; defaults to zero. A different seed selects a different take.
         #[serde(default)]
         seed: u64,
-        /// Optional starting controls: density, pitch range, a grid rhythm and swing.
+        /// Optional starting controls: density, pitch range and a grid rhythm. The phrase is
+        /// written straight; swing it with set_performance swing_percent.
         #[serde(default)]
         settings: recipes::PhraseSettings,
     },
@@ -2012,20 +2013,19 @@ mod tests {
             result.unwrap()["notes"].as_u64().unwrap()
         };
         assert!(count(0.1) < count(0.9));
-        let (session, result) = generate(
-            "chords",
-            serde_json::json!({"rhythm":"x..x..x.","swing":62}),
-        );
+        let (session, result) = generate("chords", serde_json::json!({"rhythm":"x..x..x."}));
         let clip = auris_core::ClipId(result.unwrap()["clip"].as_u64().unwrap());
         let recipe = session.clip_recipe(clip).unwrap();
-        assert_eq!(
-            (recipe.rhythm.as_deref(), recipe.swing),
-            (Some("x~~x~~x~"), 62)
+        assert_eq!(recipe.rhythm.as_deref(), Some("x~~x~~x~"));
+        // Swing is performance: the writing tool has no such setting to store it in.
+        assert!(
+            serde_json::from_value::<Command>(serde_json::json!({"action":"generate_phrase",
+                "track":1,"part":"lead","start_bar":1,"bars":4,"settings":{"swing":62}}))
+            .is_err()
         );
         for (part, settings) in [
             ("drums", serde_json::json!({"range":{"low":36,"high":60}})),
             ("lead", serde_json::json!({"range":{"low":60,"high":65}})),
-            ("lead", serde_json::json!({"swing":90})),
             ("lead", serde_json::json!({"density":1.5})),
             ("lead", serde_json::json!({"rhythm":"x?x"})),
         ] {

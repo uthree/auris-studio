@@ -428,7 +428,7 @@ impl AurisApp {
                             stack.len(),
                         );
                         let swing = crate::ui::performance::swing_percent(stack);
-                        if swing > crate::ui::part::SWING_MIN {
+                        if swing > crate::ui::performance::SWING_MIN {
                             format!("{} {swing}% · {summary}", self.t(Key::PartSwing))
                         } else {
                             summary

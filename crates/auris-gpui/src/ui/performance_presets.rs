@@ -72,7 +72,7 @@ impl AurisApp {
     }
 
     /// The family the clip's instrument suggests.
-    fn clip_preset_family(&self, clip: ClipId) -> PresetFamily {
+    pub(crate) fn clip_preset_family(&self, clip: ClipId) -> PresetFamily {
         self.project()
             .midi_clip(clip)
             .and_then(|(track, _)| self.project().track(track))

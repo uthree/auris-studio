@@ -7,6 +7,13 @@ and generated clips. They change playback and MIDI export while preserving the
 original score. Save stores the controls and seeds; disabling a control restores the score's
 behaviour for that stage. Dragging a control is one undoable edit.
 
+Only the techniques the clip's instrument plays are offered: a keyboard has the sustain and
+harmonic pedals but no mute, slide or pitch bends; a guitar has strums, brushes and mutes but no
+pedal; a kit has neither gate nor phrase shaping. The family is read from the track's sound, as
+the preset picker reads it, and a synthesiser or an unrecognised instrument is offered
+everything. A technique already on a clip stays visible wherever it came from, so it can always
+be turned off. Agents read the same list from `inspect_performance`'s `suited_stages`.
+
 The piano roll and drum editor have two tabs: **Source** edits the stored notes;
 **Performance** previews the notes sent to playback, including inserted articulations,
 timing and velocity changes, and each loop pass. The preview updates while you drag an
@@ -40,8 +47,10 @@ need about 15 to 20 ms to tell which of two sounds came first, so a whole-chord 
 about 10 ms is heard as every string at once; `lint_project` reports such a guitar part, and
 `inspect_performance` returns the measured spread of the performed chords.
 
-**Expression & groove** separates timing wander from velocity wander without changing the
-take's seed. The main Humanize control scales both while preserving their current ratio.
+**Expression & groove** splits the Humanize wander between timing and velocity without
+changing the take's seed: the balance dial runs from all timing to all velocity, with both
+alike in the middle, and appears once there is a wander to split. Humanize sets how much;
+the balance sets what kind.
 Phrase swell adds a crescendo and decrescendo between the first and last attacks; a rest
 longer than a quarter note starts a new phrase. Beat accent is signed: positive emphasizes
 quarter-note beats, negative emphasizes eighth-note offbeats. Push / lay back moves the

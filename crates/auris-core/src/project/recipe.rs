@@ -237,6 +237,10 @@ pub fn strum_ticks(value: u16) -> crate::time::Ticks {
 /// saved*: asking a newer composer to write the recipe again is a redraw in the current style,
 /// not a reproduction of the old take. A seed names a take within a build, not an archival
 /// format — the way to keep a take is to freeze it, not to remember its number.
+///
+/// Swing and gate are not here: they are how the text is *played*, and live on the clip's
+/// performance stack like every other feel. A file that still carries the old `swing` and `gate`
+/// keys loads with them ignored.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClipRecipe {
     /// Score-writing palette retained by explicit regeneration.
@@ -282,24 +286,15 @@ pub struct ClipRecipe {
     pub intensity: f32,
     /// Which drum groove the kit plays, and the one a bass follows the kick of.
     ///
-    /// Every part reads it for which pairs a swing delays; nothing else reads its patterns.
+    /// Nothing but the kit and the bass reads its patterns.
     #[serde(default = "default_groove")]
     pub groove: String,
-    /// How far the offbeats are delayed, as a percentage where 50 is straight.
-    #[serde(default = "default_swing")]
-    pub swing: u8,
     /// How finely the beat is divided, which is the grid the part's figures land on.
     ///
     /// A drum kit ignores it: a groove is written in sixteenths, and reading one on a triplet
     /// grid would scatter it rather than swing it.
     #[serde(default)]
     pub subdivision: Subdivision,
-    /// How long a note is held, as a fraction of the gap to the one after it.
-    ///
-    /// 1 is legato — each note lasts until the next begins. Turning it down detaches them, and
-    /// far down is the sound of a chord hammered on every sixteenth with the release cut off.
-    #[serde(default = "default_gate")]
-    pub gate: f32,
     /// How far apart the hardest and softest notes are struck, from 0 to 1.
     ///
     /// Not how hard the part is played, which is [`intensity`](Self::intensity), but how much the
@@ -404,14 +399,6 @@ fn digest_is_unknown(digest: &u64) -> bool {
     *digest == 0
 }
 
-fn default_swing() -> u8 {
-    50
-}
-
-fn default_gate() -> f32 {
-    1.0
-}
-
 fn default_dynamics() -> f32 {
     1.0
 }
@@ -438,7 +425,9 @@ impl ClipRecipe {
 
     /// A recipe for `preset`, with the dials where a first attempt should start.
     ///
-    /// Density and gate independently control how often and how briefly a chord is struck.
+    /// The text is written straight and legato. How late the offbeats fall and how much of each
+    /// note is held are played by the clip's performance stages
+    /// ([`NoteTransform`](crate::NoteTransform)), not written, so the recipe holds neither.
     pub fn new(preset: ClipPreset, seed: u64) -> Self {
         Self {
             style: None,
@@ -452,9 +441,7 @@ impl ClipRecipe {
             density: 0.5,
             intensity: 0.7,
             groove: default_groove(),
-            swing: 50,
             subdivision: Subdivision::default(),
-            gate: default_gate(),
             dynamics: default_dynamics(),
             syncopation: default_syncopation(),
             octave: 0,
@@ -507,7 +494,6 @@ mod tests {
     fn a_saved_stab_recipe_loads_as_chords_without_changing_its_dials() {
         let mut expected = ClipRecipe::new(ClipPreset::Chords, 42);
         expected.density = 0.95;
-        expected.gate = 0.3;
         expected.intensity = 0.85;
         expected.dynamics = 0.45;
         let mut stored = serde_json::to_value(&expected).unwrap();

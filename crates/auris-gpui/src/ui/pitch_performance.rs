@@ -228,6 +228,13 @@ impl AurisApp {
         {
             return Vec::new();
         }
+        let family = self.clip_preset_family(clip);
+        let offered = |dial: PitchDial| {
+            crate::ui::performance::offers_dial(family, stack, PerformDial::Pitch(dial))
+        };
+        if !offered(PitchDial::Scoop) && !offered(PitchDial::OctaveAbove) {
+            return Vec::new();
+        }
         let mut rows = vec![
             disclosure(
                 "perform-pitch-details",
@@ -261,6 +268,9 @@ impl AurisApp {
                 PitchDial::OctaveAbove,
                 PitchDial::OctaveBelow,
             ] {
+                if !offered(dial) {
+                    continue;
+                }
                 rows.push(self.performance_slider(clip, PerformDial::Pitch(dial), stack, cx));
                 if dial == PitchDial::VolumeSwell {
                     rows.extend(self.volume_contour_rows(clip, stack, cx));
@@ -274,14 +284,14 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness::{click, drag_to, paint, press, release, resize, with_a_clip};
+    use crate::harness::{click, drag_to, paint, press, release, resize};
     use gpui::{TestAppContext, point, px, size};
 
     #[gpui::test]
     fn controller_and_octave_dials_edit_performance_and_undo_without_changing_source(
         cx: &mut TestAppContext,
     ) {
-        let (app, cx, _, clip) = with_a_clip(cx);
+        let (app, cx, _, clip) = crate::harness::with_a_synth_clip(cx);
         app.update(cx, |this, _| {
             this.panels = crate::dock::PanelLayout::default();
             this.session
@@ -333,7 +343,7 @@ mod tests {
 
     #[gpui::test]
     fn pitch_controls_refresh_the_read_only_curve_during_drag_and_undo(cx: &mut TestAppContext) {
-        let (app, cx, _, clip) = with_a_clip(cx);
+        let (app, cx, _, clip) = crate::harness::with_a_synth_clip(cx);
         app.update(cx, |this, _| {
             this.panels = crate::dock::PanelLayout::default();
             this.session

@@ -210,6 +210,14 @@ impl Session {
         Ok((scoped.unwrap_or_default(), false))
     }
 
+    /// The instrument family of the clip's track, which decides what is offered on it.
+    fn performance_family(&self, clip: ClipId) -> PresetFamily {
+        self.project()
+            .midi_clip(clip)
+            .and_then(|(track, _)| self.project().track(track))
+            .map_or(PresetFamily::Other, crate::performance_presets::family_hint)
+    }
+
     pub(super) fn agent_inspect_performance(
         &self,
         clip: ClipId,
@@ -263,6 +271,11 @@ impl Session {
             "available_drum_voices": voices.iter().take(64).collect::<Vec<_>>(),
             "drum_voice_count": voices.len(),
             "melodic_pitch_supported": melodic,
+            "instrument_family": self.performance_family(clip),
+            "suited_stages": ResetStage::ALL
+                .into_iter()
+                .filter(|stage| crate::performance_presets::stage_suits(self.performance_family(clip), *stage))
+                .collect::<Vec<_>>(),
             "stage_order": stack.iter().filter_map(family).take(64).collect::<Vec<_>>(),
             "stage_count": stack.len(),
             "note_effects": note_effects,
@@ -376,6 +389,10 @@ impl Session {
         let swing_changed = patch.swing_percent.is_some()
             || patch.swing_grid.is_some()
             || patch.reset.contains(&ResetStage::Swing);
+        let held = |stack: &[NoteTransform]| -> Vec<ResetStage> {
+            stack.iter().filter_map(family).collect()
+        };
+        let before = held(&self.performance_scope(clip, voice)?.0);
         let outer = self.prepare_agent_performance(clip, voice, patch)?;
         self.begin_transaction(crate::Edit::SetClipTransforms(clip));
         let result = self
@@ -383,16 +400,34 @@ impl Session {
             .map_err(|e| e.to_string());
         self.end_transaction();
         result?;
+        let instrument = self.performance_family(clip);
+        let mut unsuited: Vec<ResetStage> = held(&self.performance_scope(clip, voice)?.0)
+            .into_iter()
+            .filter(|stage| {
+                !before.contains(stage)
+                    && !crate::performance_presets::stage_suits(instrument, *stage)
+            })
+            .collect();
+        unsuited.dedup();
         let report = self.agent_inspect_performance(clip, voice)?;
-        match swing_changed.then(|| mixed_swing(self.project())).flatten() {
-            Some(warning) => {
-                let mut report: serde_json::Value =
-                    serde_json::from_str(&report).map_err(|e| e.to_string())?;
-                report["swing_warning"] = warning.into();
-                Ok(report.to_string())
-            }
-            None => Ok(report),
+        let swing = swing_changed.then(|| mixed_swing(self.project())).flatten();
+        if swing.is_none() && unsuited.is_empty() {
+            return Ok(report);
         }
+        let mut report: serde_json::Value =
+            serde_json::from_str(&report).map_err(|e| e.to_string())?;
+        if let Some(warning) = swing {
+            report["swing_warning"] = warning.into();
+        }
+        if !unsuited.is_empty() {
+            let names = serde_json::to_value(&unsuited).map_err(|e| e.to_string())?;
+            report["instrument_warning"] = format!(
+                "Applied, but {names} is not a technique a {} instrument usually plays; suited_stages lists what is. Remove it with settings.reset unless it was deliberate.",
+                serde_json::to_value(instrument).map_err(|e| e.to_string())?.as_str().unwrap_or("this")
+            )
+            .into();
+        }
+        Ok(report.to_string())
     }
 
     pub(crate) fn prepare_agent_performance(
@@ -972,6 +1007,8 @@ pub struct GroovePatch {
 }
 
 /// A family of performance stages to remove explicitly.
+///
+/// Also the vocabulary [`stage_suits`](crate::performance_presets::stage_suits) answers in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResetStage {
@@ -1009,6 +1046,34 @@ pub enum ResetStage {
     Transpose,
     /// Remove the lean family, including its legacy representation.
     Lean,
+}
+
+impl ResetStage {
+    /// The family a stored stage belongs to, or none for a drum writer's scoped stack.
+    pub fn of(stage: &NoteTransform) -> Option<ResetStage> {
+        family(stage)
+    }
+
+    /// Every stage family, in the order the stack plays them.
+    pub const ALL: [ResetStage; 17] = [
+        Self::Swing,
+        Self::Groove,
+        Self::Transpose,
+        Self::Gate,
+        Self::Articulation,
+        Self::Contour,
+        Self::Voicing,
+        Self::Ghost,
+        Self::Slide,
+        Self::Mute,
+        Self::Strum,
+        Self::Lean,
+        Self::Expression,
+        Self::Sustain,
+        Self::Pedal,
+        Self::Pitch,
+        Self::Octaves,
+    ];
 }
 
 fn bounded(name: &str, value: f64, min: f64, max: f64) -> Result<(), String> {
