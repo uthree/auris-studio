@@ -7,6 +7,79 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## 0.22.0 — 2026-11-18
+
+**Play and record from a MIDI keyboard, and tune a song to something other than equal
+temperament.** Every built-in sound now plays at the same loudness by default, and seven effects
+model the thing that moves rather than the curve it is usually reduced to.
+
+### Playing and recording
+
+* **MIDI keyboard input.** Every input is opened and plugged-in keyboards are picked up; notes
+  sound on the selected track and are recorded with velocity, pitch bend and controllers.
+* Step input (Ctrl+Shift+K / ⌘⇧K), loop recording into takes, merged or replaced, record
+  quantize, octave shift (Shift+Z / Shift+X) and latency calibration for MIDI.
+* Settings → MIDI turns MIDI and each input on or off and sets the octave, latency, velocity curve,
+  record mode and quantize; the first-run guide has a MIDI keyboard step.
+
+### Tuning and performance
+
+* **A document has a tuning** that every instrument follows: equal divisions from 19 to 53, just
+  intonation, quarter-comma meantone and Pythagorean on the song's key, Werckmeister III,
+  Bohlen–Pierce, or any Scala `.scl`/`.kbm`. It is on the harmony lane's menu.
+* Clips gain performance stages that read the score — contour, voicing, articulation and a
+  pedal that follows the clip's harmony — and the player's touch: brightness that follows the
+  attack, per-note vibrato and intonation.
+* **Tempo changes can glide** to the next one, so a ritardando is one point rather than one per
+  beat.
+
+### Arranging and sound
+
+* **Add seven physical-model effects** with live views: sympathetic strings tuned to the song's
+  chords, body resonance, plate and spring reverbs, tape echo, a tube stage and a rotary speaker.
+* **Every built-in instrument and factory patch plays at −23 LUFS by default**; they were 22 dB
+  apart, so changing a sound no longer means moving its fader.
+* Chord and pad parts are placed around a centre note and can sound a chosen number of notes.
+* Hosted plugins are no longer reloaded on every edit or on opening a project, and a VST3 plugin
+  that crashed on its instance being released (Ample Guitar M Lite) no longer takes the
+  application down.
+* Imported SoundFonts can be removed from the library.
+
+### Composing with the agent
+
+* A song says its genre and usage, and is held to the checks that style keeps: a loop or a cue
+  is not asked for an intro, and every genre has its own guidance and loudness.
+* The lead, kit, bass and arpeggio that `write_phrase` writes are retuned against measured
+  pop and rock scores: a lead moves like a sung line, and the kit has a crash, a tom and fills.
+* Agents read a modulation spectrogram in beats, and `inspect_audio` chooses its range and frames
+  its picture.
+* Tool results and note lists cost fewer tokens, and the composer tool calls that failed or
+  round-tripped most are fixed.
+* The agent's tool calls are folded under one line; workshop conversations are listed by their
+  last message; agent CLIs are updated from their settings row.
+* `normalize_mix` says when its target lies outside the style's range, and lyric lines too long
+  for a video subtitle are linted.
+
+### Interface
+
+* The visualizer gains a chromagram card, a finer spectrogram and a spectrum drawn as a curve.
+* The drum editor edits neighbouring clips, the piano roll zooms on its own axis, and the track
+  grid has its own way back to the arrangement.
+* The model list opens wide enough to tell models apart.
+
+### Fixes
+
+* Curves keep their shape when clips are split or joined, and a folded send keeps its automation.
+* The audio sampler ends one note per release; MIDI import plays a part on the program another
+  track gave its channel.
+* Project sample rates outside 8 kHz–768 kHz are refused, and the analog synth no longer panics at
+  a very low one.
+* The desktop no longer panics on Windows while measuring truncated text.
+* `auris` builds on Linux again.
+
+Projects are now saved as format 39, which adds the document's tuning, the score-reading
+performance stages and gliding tempo changes; earlier builds cannot open them.
+
 ## 0.21.0 — 2026-11-13
 
 **The whole-song composition engine is gone.** Songs are written by the agent, phrase by phrase,
