@@ -497,6 +497,12 @@ impl Vst3Plugins {
         Some(self.slots.get(&slot)?.plugin.parameters())
     }
 
+    /// Whether a track's VST3 instrument hears MIDI controller `number`, or `None` when there
+    /// is no instance to ask.
+    pub(super) fn instrument_maps_controller(&self, track: TrackId, number: u8) -> Option<bool> {
+        Some(self.instruments.get(&track)?.plugin.maps_controller(number))
+    }
+
     pub(super) fn instrument_parameters(&self, track: TrackId) -> Option<&[ParamDescriptor]> {
         Some(self.instruments.get(&track)?.plugin.parameters())
     }

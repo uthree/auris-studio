@@ -25,11 +25,21 @@
 //!
 //! # The sustain pedal
 //!
-//! Held here, not by the instruments. A built-in voice has no idea what controller 64 means,
-//! and a take that wrote the pedal as a controller would play back with notes the instrument
-//! never held. So a note let go of under the pedal is released when the pedal comes up, and a
-//! take writes down the note as long as it was *heard* — the same thing the typing keyboard's
-//! sustain key does.
+//! Held here, for most instruments. A built-in synth voice has no idea what controller 64
+//! means, and a take that wrote the pedal as a controller would play back with notes the
+//! instrument never held. So a note let go of under the pedal is released when the pedal comes
+//! up, and a take writes down the note as long as it was *heard* — the same thing the typing
+//! keyboard's sustain key does.
+//!
+//! An instrument that answers the pedal itself — a [`LiveTarget`] that [`holds_pedal`], such as
+//! a piano with dampers or a SoundFont — is sent the pedal instead, as the controller it is and
+//! at every depth it passes through, and its keys are let go when they come up. Holding the
+//! notes here would give it long notes and no pedal: the strings no key was down on would never
+//! be freed, and a half pedal would be a full one.
+//! Its take writes the keys as long as they were held and the pedal as a lane, which is what
+//! plays the instrument back the way it was played.
+//!
+//! [`holds_pedal`]: LiveTarget::holds_pedal
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -182,6 +192,10 @@ pub struct LiveTarget {
     pub index: usize,
     /// The track itself, which is how the session addresses it.
     pub track: TrackId,
+    /// Whether the track's instrument answers the sustain pedal itself — dampers it lifts, or a
+    /// player that holds its own voices: it is sent the pedal rather than having its notes held
+    /// for it.
+    pub holds_pedal: bool,
 }
 
 /// What an instrument was asked to do by something played on a keyboard.
@@ -372,7 +386,7 @@ impl LivePlayer {
                     return Vec::new();
                 };
                 let held = self.held.remove(position);
-                if self.pedal & (1 << channel) != 0 {
+                if self.pedal & (1 << channel) != 0 && !held.target.holds_pedal {
                     self.sustained.push(held);
                     return Vec::new();
                 }
@@ -383,16 +397,34 @@ impl LivePlayer {
                 number: CC_SUSTAIN,
                 value,
             } => {
+                // Every instrument holding its own pedal that this one has reached hears it move: the one
+                // being played, and any it went down on before the keyboard moved elsewhere.
+                let mut out = Vec::new();
+                if let Some(target) = target.filter(|target| target.holds_pedal) {
+                    self.touch(target, Some(CC_SUSTAIN));
+                }
+                let pedalled = Performed::Controller {
+                    number: CC_SUSTAIN,
+                    value: f32::from(value) / 127.0,
+                };
+                for (target, _) in self
+                    .touched
+                    .iter()
+                    .filter(|(_, controller)| *controller == Some(CC_SUSTAIN))
+                {
+                    out.push((*target, pedalled));
+                }
                 if value >= 64 {
                     self.pedal |= 1 << channel;
-                    return Vec::new();
+                    return out;
                 }
                 self.pedal &= !(1 << channel);
                 let (released, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.sustained)
                     .into_iter()
                     .partition(|held| held.channel == channel);
                 self.sustained = kept;
-                released.iter().map(Key::release).collect()
+                out.extend(released.iter().map(Key::release));
+                out
             }
             MidiMessage::Controller { number, value, .. } => {
                 let Some(target) = target else {
@@ -728,10 +760,17 @@ mod tests {
     const LEAD: LiveTarget = LiveTarget {
         index: 0,
         track: TrackId(1),
+        holds_pedal: false,
     };
     const PAD: LiveTarget = LiveTarget {
         index: 1,
         track: TrackId(2),
+        holds_pedal: false,
+    };
+    const PIANO: LiveTarget = LiveTarget {
+        index: 2,
+        track: TrackId(3),
+        holds_pedal: true,
     };
 
     fn on(pitch: u8) -> MidiMessage {
@@ -824,6 +863,55 @@ mod tests {
         let mut player = LivePlayer::default();
         assert!(player.play(on(60), None).is_empty());
         assert!(player.play(off(60), Some(LEAD)).is_empty());
+    }
+
+    #[test]
+    fn an_instrument_with_dampers_is_sent_the_pedal_and_its_keys_let_go() {
+        let mut player = LivePlayer::default();
+        let down = player.play(pedal(true), Some(PIANO));
+        let sustain = |value: f32| Performed::Controller {
+            number: CC_SUSTAIN,
+            value,
+        };
+        assert_eq!(down, vec![(PIANO, sustain(1.0))]);
+        player.play(on(60), Some(PIANO));
+        // The key comes up when it does: the dampers are the instrument's to hold off.
+        assert_eq!(
+            player.play(off(60), Some(PIANO)),
+            vec![(PIANO, Performed::NoteOff { pitch: 60 })]
+        );
+        assert_eq!(player.sounding().count(), 0);
+        // Every depth the pedal passes through reaches it, a half pedal included.
+        let half = MidiMessage::Controller {
+            channel: 0,
+            number: CC_SUSTAIN,
+            value: 64,
+        };
+        assert_eq!(
+            player.play(half, Some(PIANO)),
+            vec![(PIANO, sustain(64.0 / 127.0))]
+        );
+        // Moved to a track without dampers, the pedal still lifts the piano's as it comes up,
+        // and holds the new track's notes for it.
+        player.play(on(62), Some(LEAD));
+        assert!(
+            player.play(off(62), Some(LEAD)).is_empty(),
+            "held for the lead"
+        );
+        let up = player.play(pedal(false), Some(LEAD));
+        assert_eq!(
+            up,
+            vec![
+                (PIANO, sustain(0.0)),
+                (LEAD, Performed::NoteOff { pitch: 62 })
+            ]
+        );
+        // And letting go of everything puts the piano's pedal back up.
+        player.play(pedal(true), Some(PIANO));
+        assert!(
+            player.release_all().contains(&(PIANO, sustain(0.0))),
+            "the pedal was left down"
+        );
     }
 
     #[test]

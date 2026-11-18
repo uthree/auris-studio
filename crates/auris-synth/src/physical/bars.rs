@@ -247,8 +247,11 @@ struct Voice {
     contact: f32,
     sounding: bool,
     held: bool,
+    /// Released, but kept from the damper bar by the pedal.
     deferred: bool,
-    damped: bool,
+    /// How much of the damper bar is on this bar, from none (0) to all of it (1). A pedal half
+    /// down lets the felt brush the bar, and a released note between the two.
+    damped: f32,
     /// Frames the mallet is still on the bar, for the picture.
     touching: usize,
     /// How long the mallet stayed on the bar, in seconds, and how hard it came down.
@@ -308,7 +311,7 @@ impl Bars {
             return 1.0;
         }
         // A disc across the mouth shuts the tube off; turning, it opens and shuts.
-        let open = 1.0 - self.settings.tremolo * (0.5 - 0.5 * (TAU * self.motor).cos());
+        let open = 1.0 - self.motor_depth() * (0.5 - 0.5 * (TAU * self.motor).cos());
         1.0 + 2.5 * self.settings.tubes * open
     }
 
@@ -331,18 +334,29 @@ impl Bars {
                 // with the tubes as they are by default, which is how a marimba is measured.
                 nepers *= (1.0 + 0.6 * settings.tubes) / (1.0 + 0.6 * TUBES);
             }
-            if voice.damped {
-                nepers += decay_rate(settings.release);
-            }
+            nepers += voice.damped * decay_rate(settings.release);
             voice.nepers[mode] = nepers;
         }
     }
 
-    fn damp(&mut self, index: usize) {
-        if let Some(voice) = self.voices.get_mut(index)
-            && !voice.damped
-        {
-            voice.damped = true;
+    /// How far the motor's discs shut the tubes: the Tremolo control, or the modulation wheel
+    /// where that is further up — the wheel is the motor, as it is a vibrato elsewhere.
+    fn motor_depth(&self) -> f32 {
+        self.settings
+            .tremolo
+            .max(self.performance.modulation.clamp(0.0, 1.0))
+    }
+
+    /// Lowers or lifts the damper bar on `index` to where its key and the pedal now put it.
+    fn settle_damper(&mut self, index: usize) {
+        let damping = self.performance.damping();
+        let Some(voice) = self.voices.get_mut(index) else {
+            return;
+        };
+        let target = if voice.held { 0.0 } else { damping };
+        voice.deferred = !voice.held && target < 0.5;
+        if (target - voice.damped).abs() > 1.0e-6 {
+            voice.damped = target;
             self.set_rates(index);
             let rate = self.rate;
             let voice = &mut self.voices[index];
@@ -417,7 +431,7 @@ impl Engine for Bars {
         // A small bar throws the mallet back sooner, and no mallet a player would choose stays
         // on a bar for longer than it takes the bar to swing back.
         let seconds = (0.002_5
-            * 0.06_f32.powf(settings.hardness)
+            * 0.06_f32.powf(self.performance.hardness(settings.hardness))
             * note.velocity.max(0.05).powf(-0.2)
             * (REFERENCE_HZ / fundamental).clamp(0.1, 8.0).powf(0.6))
         .min(0.45 / fundamental);
@@ -442,7 +456,7 @@ impl Engine for Bars {
         voice.pan_now = note.pan * pan_width;
         voice.held = true;
         voice.deferred = false;
-        voice.damped = false;
+        voice.damped = 0.0;
         voice.sounding = true;
         voice.touching = (seconds * rate) as usize;
         voice.blow = (seconds, amplitude);
@@ -485,7 +499,6 @@ impl Engine for Bars {
     }
 
     fn stop(&mut self, index: usize) {
-        let pedal = self.performance.pedal;
         let Some(voice) = self.voices.get_mut(index) else {
             return;
         };
@@ -493,11 +506,7 @@ impl Engine for Bars {
             return;
         }
         voice.held = false;
-        if pedal {
-            voice.deferred = true;
-        } else {
-            self.damp(index);
-        }
+        self.settle_damper(index);
     }
 
     fn silence(&mut self, index: usize) {
@@ -511,7 +520,7 @@ impl Engine for Bars {
 
     fn perform(&mut self, performance: &Performance) {
         let bent = performance.bend != self.performance.bend;
-        let lifted = self.performance.pedal && !performance.pedal;
+        let pedalled = performance.lift() != self.performance.lift();
         self.performance = *performance;
         if bent {
             let (cents, rate) = (performance.bend * 100.0, self.rate);
@@ -519,11 +528,11 @@ impl Engine for Bars {
                 voice.retune(cents, rate);
             }
         }
-        if lifted {
+        if pedalled {
+            // Like a piano's, the damper bar comes off a note already fading.
             for index in 0..self.voices.len() {
-                if self.voices[index].sounding && self.voices[index].deferred {
-                    self.voices[index].deferred = false;
-                    self.damp(index);
+                if self.voices[index].sounding && !self.voices[index].held {
+                    self.settle_damper(index);
                 }
             }
         }
@@ -535,7 +544,7 @@ impl Engine for Bars {
         if tick {
             self.motor =
                 (self.motor + self.settings.tremolo_rate * TICK as f32 / self.rate).fract();
-            let turning = self.settings.tremolo > 0.0;
+            let turning = self.motor_depth() > 0.0;
             for index in 0..self.voices.len() {
                 if !self.voices[index].sounding {
                     continue;

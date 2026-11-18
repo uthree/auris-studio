@@ -451,8 +451,12 @@ count lands in front of the downbeat.
   keyboard, and is written into the clip's bend curve.
 * **The modulation wheel and every other controller** are written into the clip's controller
   lanes, which **Lanes** opens in the piano roll.
-* **A sustain pedal** holds notes past their keys, and a take writes each note as long as it was
-  heard — held notes become long notes rather than a pedal lane.
+* **A sustain pedal** goes as the pedal it is, half pedals included, to an instrument that
+  answers it itself: the physical piano, hammered strings, mallets and bells, a SoundFont, and a
+  plugin the pedal can reach — a CLAP plugin that takes MIDI, or a VST3 plugin that assigns
+  CC64 to one of its parameters. A take writes the keys as long as they were held and the pedal
+  as a CC64 lane. Every other instrument has its notes held past their keys instead, and its
+  take writes each note as long as it was heard, with no pedal lane.
 * **Quantize while recording** (Settings → MIDI) pulls each note of a take towards a grid — 1/4 to
   1/32, triplets included — by a strength of 25 to 100 %, as the take is written. Each note keeps
   the length it was held for, and nothing already on the track is touched.

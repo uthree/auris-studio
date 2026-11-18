@@ -98,7 +98,33 @@ for the next one. On the strings, **Bow Position** moves the bow at once.
 
 MIDI CC7 is channel volume. CC11 is expression: level, and also bow speed and breath. CC1
 deepens the vibrato of the bowed and blown instruments. CC64 lifts the piano's dampers and the
-vibraphone's; pressing it after a key has come up catches a note that is already fading.
+vibraphone's; pressing it after a key has come up catches a note that is already fading. It is
+read as a depth, not a switch: the first quarter of its travel is free play, and between a
+quarter and three quarters the dampers rise off the strings, so a half pedal shortens a released
+note without stopping it. CC66 is the piano's sostenuto, holding up only the dampers that were up
+as it went down. CC67 is its soft pedal: a note struck with it down meets two strings of three,
+with softer felt, and comes out quieter and darker. CC68 is the legato footswitch: on the
+strings, reeds and whistles it slurs as the **Legato** control does, for as long as it is down.
+CC75, the General MIDI 2 decay-time controller, rests at its middle; below it the guitars and
+the bass hear a palm laid on the strings at the bridge. It shortens notes that are held, the
+upper partials first, so at the bottom a note is its pick's click and a short, dark thump. It
+reaches notes already sounding, and the open strings too. Above the middle it does nothing.
+Letting a key go is the fretting hand easing off: the note stops within **Release**.
+CC74, brightness, also rests at its middle; on the strings it is where the bow is drawn. Above
+the middle the bow moves toward the bridge, as near as a third of **Bow Position** (sul
+ponticello, glassy). Below it the bow goes out over the end of the fingerboard, up to twice as
+far, with a lighter stroke (sul tasto, veiled). CC65 turns portamento on for the strings, reeds
+and whistles: a slurred note slides to the next instead of moving the finger at once, taking the
+time CC5 gives, from a fiftieth of a second to a second and a half. Pitch bend is not slowed.
+On everything struck or plucked (the pianos, guitars, bass, mallets and bells), CC74 is how hard
+the next hammer, pick, mallet or beater is: harder above its middle and softer below it, by up
+to half of the instrument's own hardness control. A soft mallet high on a xylophone is already
+off the bar as fast as the bar throws it back, so there it can only go harder. CC2, the breath
+controller, blows the reeds and whistles beneath the expression pedal. It rests all the way up;
+a wind controller sends it, and in the bottom tenth of its travel the pipe stops speaking. On the
+vibraphone the modulation wheel turns the motor, wherever it is further up than **Tremolo**.
+CC64 is also the damper pedal of the tubular chimes and of the hammered strings, like a
+cimbalom's.
 Pitch bend reaches sounding notes, up to two octaves either way. On the piano **Release** is
 the damper: the time it takes to remove 80 dB, longer in the bass, and the keys above F6 have
 none.

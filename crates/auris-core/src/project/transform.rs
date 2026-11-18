@@ -192,6 +192,11 @@ pub enum NoteTransform {
     /// not hold, a different bass, or any note under the bass changes it, and the old pedal's
     /// notes are damped 30 ms after the new harmony is struck. A note stops where its key is
     /// struck again and no later than a whole note past its written release.
+    ///
+    /// The pedal is played as well as heard: the stage writes controller 64 alongside the
+    /// lengthened notes, down through each harmony and changed with it, at `amount` deep. An
+    /// instrument that ignores the controller hears the long notes; one with dampers also hears
+    /// every other string freed, which the long notes alone cannot give it.
     Pedal {
         /// How far towards the next change each release is carried, from 0 (off) to 1 (all
         /// the way, a full pedal).

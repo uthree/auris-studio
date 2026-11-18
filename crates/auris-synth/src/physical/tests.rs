@@ -1651,3 +1651,421 @@ fn open_guitar_strings_answer_a_note_that_shares_their_partials() {
         "B♭3 leaves {between} dB, against A3's {shared} dB"
     );
 }
+
+#[test]
+fn half_a_pedal_shortens_a_released_note_without_stopping_it() {
+    // A damper brushing the string: the note dies faster than under the pedal and slower than
+    // under the damper.
+    let fall = |depth: f32| {
+        let mut piano = rig(Model::Piano, 48_000.0);
+        piano.set_param("sympathetic", 0.0);
+        let audio = piano.render(
+            48_000,
+            &[controller(0, 64, depth), on(60, 0.65), off(4_800, 60)],
+        );
+        level_db(&audio[..4_800]) - level_db(&audio[19_200..24_000])
+    };
+    let (up, half, down) = (fall(0.0), fall(0.5), fall(1.0));
+    assert!(up > 40.0, "with the pedal up the note fell {up} dB");
+    assert!(down < 15.0, "under the pedal the note fell {down} dB");
+    assert!(
+        down + 10.0 < half && half < up - 10.0,
+        "half a pedal fell {half} dB, between {down} and {up}"
+    );
+    // The free play: a pedal barely touched has not reached the dampers.
+    assert!((fall(0.2) - up).abs() < 0.5);
+}
+
+#[test]
+fn the_sostenuto_holds_the_keys_down_when_it_went_down_and_no_others() {
+    let mut piano = rig(Model::Piano, 48_000.0);
+    piano.set_param("sympathetic", 0.0);
+    piano.render(
+        4_800,
+        &[on(48, 0.7), controller(2_400, 66, 1.0), off(4_000, 48)],
+    );
+    // Caught: C3 goes on ringing with its key up. E4, struck after, is damped as usual.
+    let after = piano.render(24_000, &[on(64, 0.7), off(4_800, 64)]);
+    let (c3, e4) = (hz(48), hz(64));
+    let held = goertzel(&after[19_200..], 48_000.0, c3);
+    let damped = goertzel(&after[19_200..], 48_000.0, e4);
+    // The same, with C3 held by its key instead: E4 is damped there, so what is left at its
+    // pitch is C3's leakage and nothing of E4's own.
+    piano.instrument.reset();
+    piano.render(4_800, &[on(48, 0.7)]);
+    let reference = piano.render(24_000, &[on(64, 0.7), off(4_800, 64)]);
+    let leakage = goertzel(&reference[19_200..], 48_000.0, e4);
+    assert!(held > 1.0e-3, "the sostenuto let C3 go");
+    assert!(
+        damped < leakage * 2.0,
+        "the sostenuto caught E4 as well: {damped} against {leakage}"
+    );
+    piano.instrument.reset();
+    piano.render(
+        4_800,
+        &[on(48, 0.7), controller(2_400, 66, 1.0), off(4_000, 48)],
+    );
+    piano.render(24_000, &[on(64, 0.7), off(4_800, 64)]);
+    // Let up, and C3's damper falls.
+    let lifted = piano.render(24_000, &[controller(0, 66, 0.0)]);
+    assert!(goertzel(&lifted[19_200..], 48_000.0, c3) < held * 1.0e-2);
+}
+
+#[test]
+fn the_soft_pedal_strikes_two_strings_of_three_with_softer_felt() {
+    let blow = |soft: f32| {
+        let mut piano = rig(Model::Piano, 48_000.0);
+        piano.set_param("sympathetic", 0.0);
+        let audio = piano.render(24_000, &[controller(0, 67, soft), on(72, 0.7)]);
+        let upper: f64 = (6..=10)
+            .map(|n| partial(&audio[..9_600], hz(72), f64::from(n)))
+            .sum();
+        let fundamental = partial(&audio[..9_600], hz(72), 1.0);
+        (
+            level_db(&audio[..9_600]),
+            20.0 * (upper / fundamental).log10(),
+        )
+    };
+    let ((level, bright), (soft_level, soft_bright)) = (blow(0.0), blow(1.0));
+    assert!(
+        (1.0..8.0).contains(&(level - soft_level)),
+        "the soft pedal took {} dB off",
+        level - soft_level
+    );
+    assert!(
+        soft_bright < bright - 2.0,
+        "brightness {bright} dB, with the soft pedal {soft_bright} dB"
+    );
+}
+
+#[test]
+fn the_legato_footswitch_slurs_only_while_it_is_down() {
+    let mut clarinet = rig(Model::Clarinet, 48_000.0);
+    // Struck before the footswitch: an ordinary note, which its own release stops.
+    clarinet.render(12_000, &[on(60, 0.8), controller(6_000, 68, 1.0)]);
+    let slurred = clarinet.render(12_000, &[on(64, 0.8)]);
+    assert_eq!(
+        clarinet.instrument.active_voices(),
+        2,
+        "the footswitch went down over a sounding note, which is not the line"
+    );
+    let quietest = slurred.chunks(480).map(rms).fold(f32::INFINITY, f32::min);
+    assert!(quietest > 1.0e-4);
+    clarinet.render(12_000, &[on(67, 0.8)]);
+    assert_eq!(clarinet.instrument.active_voices(), 2, "E4 to G4 is a slur");
+    // Releasing the key struck before the footswitch stops that note, not the line.
+    clarinet.render(24_000, &[off(0, 60)]);
+    assert_eq!(clarinet.instrument.active_voices(), 1);
+    // Releasing G4 falls back to E4, which is still down.
+    let back = clarinet.render(12_000, &[off(0, 67)]);
+    assert!(
+        goertzel(&back[6_000..], 48_000.0, hz(64))
+            > goertzel(&back[6_000..], 48_000.0, hz(67)) * 3.0
+    );
+    // Up again: the next key is another note.
+    clarinet.render(12_000, &[controller(0, 68, 0.0), on(72, 0.8)]);
+    assert_eq!(clarinet.instrument.active_voices(), 2);
+    clarinet.render(48_000, &[off(0, 64), off(0, 72)]);
+    assert_eq!(
+        clarinet.instrument.active_voices(),
+        0,
+        "a note was left sounding"
+    );
+}
+
+#[test]
+fn a_vibraphone_pedal_half_down_lets_the_felt_brush_the_bars() {
+    let tail = |depth: f32| {
+        let mut vibes = bare(Model::Mallet);
+        vibes.set_param_by_key("bar", 1.0);
+        vibes.set_param_by_key("tremolo", 0.0);
+        let mut rig = Rig::new(Box::new(vibes), 48_000.0, 256, 2);
+        rig.set_param("release", 0.5);
+        let audio = rig.render(
+            24_000,
+            &[controller(0, 64, depth), on(60, 0.8), off(2_400, 60)],
+        );
+        level_db(&audio[2_400..4_800]) - level_db(&audio[14_400..16_800])
+    };
+    let (up, half, down) = (tail(0.0), tail(0.5), tail(1.0));
+    assert!(
+        down + 5.0 < half && half + 10.0 < up,
+        "a quarter of a second after release, up {up} dB, half {half} dB, down {down} dB"
+    );
+}
+
+#[test]
+fn a_palm_at_the_bridge_shortens_a_held_note_and_takes_its_top_first() {
+    // An open low string, held throughout: only the palm (controller 75 below its middle)
+    // shortens it.
+    let pluck = |model: Model, key: u8, decay: f32| {
+        let mut guitar = rig(model, 48_000.0);
+        let audio = guitar.render(24_000, &[controller(0, 75, decay), on(key, 0.8)]);
+        let (early, late) = (&audio[..4_800], &audio[14_400..19_200]);
+        // The fundamental's own fall, beneath what little the body and the attack leave.
+        let fall = 20.0 * (partial(early, hz(key), 1.0) / partial(late, hz(key), 1.0)).log10();
+        // The tone after the pick's click, which the palm does not touch.
+        let after = &audio[1_200..6_000];
+        let upper: f64 = (6..=10)
+            .map(|n| partial(after, hz(key), f64::from(n)))
+            .sum();
+        let bright = 20.0 * (upper / partial(after, hz(key), 1.0)).log10();
+        (fall, bright)
+    };
+    for (model, key, least) in [
+        (Model::Guitar, 40, 60.0),
+        (Model::ElectricGuitar, 40, 60.0),
+        (Model::Bass, 28, 25.0),
+    ] {
+        let (open, open_bright) = pluck(model, key, 0.5);
+        let (half, _) = pluck(model, key, 0.25);
+        let (muted, muted_bright) = pluck(model, key, 0.0);
+        assert!(open < 15.0, "{model:?} rang only {open} dB down");
+        assert!(muted > least, "{model:?} under the palm fell {muted} dB");
+        assert!(
+            open + 5.0 < half && half + 5.0 < muted,
+            "{model:?}: {half} dB half muted"
+        );
+        assert!(
+            muted_bright < open_bright - 10.0,
+            "{model:?}: top {open_bright} dB, under the palm {muted_bright} dB"
+        );
+        // Above the middle the controller leaves the string as it is.
+        assert!((pluck(model, key, 1.0).0 - open).abs() < 0.1);
+    }
+}
+
+#[test]
+fn a_palm_laid_on_a_ringing_string_stops_it_and_lifted_lets_the_next_ring() {
+    let mut guitar = rig(Model::Guitar, 48_000.0);
+    let e3 = hz(52);
+    guitar.render(9_600, &[on(52, 0.8)]);
+    let ringing = guitar.render(4_800, &[]);
+    let laid = guitar.render(19_200, &[controller(0, 75, 0.0)]);
+    let fall = 20.0 * (partial(&ringing, e3, 1.0) / partial(&laid[14_400..], e3, 1.0)).log10();
+    assert!(fall > 40.0, "the palm took {fall} dB off");
+    guitar.render(48_000, &[controller(0, 75, 0.5), off(0, 52)]);
+    let next = guitar.render(19_200, &[on(52, 0.8)]);
+    let rings =
+        20.0 * (partial(&next[..4_800], e3, 1.0) / partial(&next[14_400..], e3, 1.0)).log10();
+    assert!(rings < 15.0, "lifted, the next note fell {rings} dB");
+}
+
+#[test]
+fn letting_a_fretted_note_go_mutes_it_from_the_top_down() {
+    // The fretting finger eases off and lies on the string: a released note stops within its
+    // release time, and its upper partials go before its fundamental.
+    let mut guitar = rig(Model::Guitar, 48_000.0);
+    let e3 = hz(52);
+    let held = guitar.render(24_000, &[on(52, 0.8)]);
+    guitar.instrument.reset();
+    let let_go = guitar.render(24_000, &[on(52, 0.8), off(4_800, 52)]);
+    let fall = |audio: &[f32], n: f64| {
+        20.0 * (partial(&audio[..4_800], e3, n) / partial(&audio[9_600..14_400], e3, n)).log10()
+    };
+    assert!(
+        fall(&held, 1.0) < 10.0,
+        "held, it fell {} dB",
+        fall(&held, 1.0)
+    );
+    assert!(
+        fall(&let_go, 1.0) > 40.0,
+        "let go, it fell {} dB",
+        fall(&let_go, 1.0)
+    );
+    assert!(
+        fall(&let_go, 6.0) > fall(&let_go, 1.0) + 5.0,
+        "the sixth partial fell {} dB, the fundamental {} dB",
+        fall(&let_go, 6.0),
+        fall(&let_go, 1.0)
+    );
+}
+
+#[test]
+fn controller_74_draws_the_bow_toward_the_bridge_or_over_the_fingerboard() {
+    let bowed = |events: &[NoteEvent]| {
+        let mut violin = rig(Model::Violin, 48_000.0);
+        violin.set_param("vibrato", 0.0);
+        let mut all = events.to_vec();
+        all.push(on(69, 0.7));
+        violin.render(48_000, &all)
+    };
+    // The spectral centroid, in harmonics: one band of partials would sit on a different
+    // notch of the bow's comb at every place.
+    let top = |audio: &[f32]| {
+        let steady = &audio[24_000..48_000];
+        let partials: Vec<f64> = (1..=30)
+            .map(|n| partial(steady, hz(69), f64::from(n)))
+            .collect();
+        let weighted: f64 = partials
+            .iter()
+            .enumerate()
+            .map(|(n, a)| (n + 1) as f64 * a)
+            .sum();
+        weighted / partials.iter().sum::<f64>()
+    };
+    let plain = bowed(&[]);
+    // At its middle the controller is where the bow already was.
+    assert!(bowed(&[controller(0, 74, 0.5)]) == plain);
+    let (tasto, normal, ponticello) = (
+        top(&bowed(&[controller(0, 74, 0.0)])),
+        top(&plain),
+        top(&bowed(&[controller(0, 74, 1.0)])),
+    );
+    assert!(
+        tasto < normal * 0.9 && normal * 1.5 < ponticello,
+        "centroid sul tasto {tasto}, ordinario {normal}, sul ponticello {ponticello} harmonics"
+    );
+}
+
+#[test]
+fn portamento_slides_a_slur_and_lets_the_finger_jump_without_it() {
+    for model in [Model::Violin, Model::Clarinet, Model::TinWhistle] {
+        let (from, to) = (home(model), home(model) + 7);
+        let slur = |portamento: f32| {
+            let mut line = rig(model, 48_000.0);
+            line.set_param("legato", 1.0);
+            line.render(
+                24_000,
+                &[
+                    controller(0, 65, portamento),
+                    controller(0, 5, 0.6),
+                    on(from, 0.8),
+                ],
+            );
+            line.render(96_000, &[on(to, 0.8)])
+        };
+        // A tenth of a second into the slur, and two seconds on.
+        let arrived = |audio: &[f32], at: std::ops::Range<usize>| {
+            goertzel(&audio[at.clone()], 48_000.0, hz(to))
+                / goertzel(&audio[at], 48_000.0, hz(from)).max(1.0e-9)
+        };
+        let (jumped, slid) = (slur(0.0), slur(1.0));
+        assert!(
+            arrived(&jumped, 2_400..7_200) > 3.0,
+            "{model:?} without portamento was still on the old note"
+        );
+        assert!(
+            arrived(&slid, 2_400..7_200) < 1.0,
+            "{model:?} with portamento was already on the new note"
+        );
+        assert!(
+            arrived(&slid, 86_400..96_000) > 3.0,
+            "{model:?} with portamento never arrived"
+        );
+    }
+}
+
+#[test]
+fn the_breath_controller_blows_a_pipe_and_without_breath_it_is_silent() {
+    for model in [Model::Clarinet, Model::TinWhistle] {
+        let key = home(model);
+        let blown = |events: &[NoteEvent]| {
+            let mut wind = rig(model, 48_000.0);
+            let mut all = events.to_vec();
+            all.push(on(key, 0.7));
+            let audio = wind.render(48_000, &all);
+            level_db(&audio[24_000..])
+        };
+        let plain = blown(&[]);
+        assert!((blown(&[controller(0, 2, 1.0)]) - plain).abs() < 0.01);
+        let (half, none) = (
+            blown(&[controller(0, 2, 0.5)]),
+            blown(&[controller(0, 2, 0.0)]),
+        );
+        assert!(
+            half < plain - 2.0,
+            "{model:?} half a breath is {half} dB against {plain}"
+        );
+        assert!(
+            none < plain - 60.0,
+            "{model:?} with no breath sounded at {none} dB"
+        );
+    }
+}
+
+#[test]
+fn controller_74_is_a_harder_or_softer_mallet_hammer_or_pick() {
+    // How bright the first tenth of a second is: the level of its slope against its own, which
+    // reads the same for a bar's or a bell's partials as for a string's harmonics.
+    let centroid = |model: Model, key: u8, brightness: Option<f32>| {
+        let mut rig = rig(model, 48_000.0);
+        let mut events = vec![on(key, 0.7)];
+        if let Some(value) = brightness {
+            events.insert(0, controller(0, 74, value));
+        }
+        let audio = rig.render(4_800, &events);
+        let slope: Vec<f32> = audio.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        (f64::from(rms(&slope) / rms(&audio)), audio)
+    };
+    for (model, key) in [
+        (Model::Piano, 60),
+        (Model::HammeredDulcimer, 67),
+        (Model::Guitar, 52),
+        // Low enough that a soft mallet is not already held to the bar's swing.
+        (Model::Mallet, 48),
+        (Model::Bell, 72),
+    ] {
+        let (plain, plain_audio) = centroid(model, key, None);
+        assert!(
+            centroid(model, key, Some(0.5)).1 == plain_audio,
+            "{model:?} moved at the middle"
+        );
+        let (soft, _) = centroid(model, key, Some(0.0));
+        let (hard, _) = centroid(model, key, Some(1.0));
+        assert!(
+            soft < plain && plain < hard && hard > soft * 1.2,
+            "{model:?}: centroid soft {soft}, plain {plain}, hard {hard}"
+        );
+    }
+}
+
+#[test]
+fn the_modulation_wheel_turns_a_vibraphones_motor() {
+    let mut vibes = bare(Model::Mallet);
+    vibes.set_param_by_key("bar", 1.0);
+    vibes.set_param_by_key("body", 1.0);
+    vibes.set_param_by_key("tremolo", 0.0);
+    vibes.set_param_by_key("tremolo_rate", 5.0);
+    let mut rig = Rig::new(Box::new(vibes), 48_000.0, 256, 2);
+    let swing = |audio: &[f32]| {
+        let levels: Vec<f64> = audio[4_800..].chunks(960).map(level_db).collect();
+        levels
+            .windows(6)
+            .map(|w| (w[5] - w[0]).abs())
+            .fold(0.0_f64, f64::max)
+    };
+    let still = rig.render(48_000, &[on(60, 0.8)]);
+    rig.instrument.reset();
+    let turning = rig.render(48_000, &[controller(0, 1, 1.0), on(60, 0.8)]);
+    assert!(
+        swing(&still) < 1.5,
+        "the motor turned with the wheel down: {}",
+        swing(&still)
+    );
+    assert!(
+        swing(&turning) > 3.0,
+        "the wheel swings {} dB",
+        swing(&turning)
+    );
+}
+
+#[test]
+fn a_damper_pedal_lets_chimes_and_a_cimbalom_ring_after_release() {
+    for model in [Model::Bell, Model::HammeredDulcimer] {
+        let tail = |depth: f32| {
+            let mut rig = rig(model, 48_000.0);
+            rig.set_param("release", 0.3);
+            let audio = rig.render(
+                48_000,
+                &[controller(0, 64, depth), on(72, 0.8), off(4_800, 72)],
+            );
+            level_db(&audio[4_800..9_600]) - level_db(&audio[24_000..28_800])
+        };
+        let (up, half, down) = (tail(0.0), tail(0.5), tail(1.0));
+        assert!(
+            down + 5.0 < half && half + 5.0 < up,
+            "{model:?} after release: up {up} dB, half {half} dB, down {down} dB"
+        );
+    }
+}

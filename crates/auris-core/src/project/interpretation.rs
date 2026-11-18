@@ -11,14 +11,17 @@
 //! * `articulate` reads each written-legato connection: steps overlap, leaps breathe and a
 //!   repeated key is lifted before it is struck again.
 //! * `pedal` holds a sustain pedal through each harmony and changes it where the harmony
-//!   changes, the harmony being what the clip itself plays.
+//!   changes, the harmony being what the clip itself plays. It does so twice over: it carries
+//!   each release on to the change, which every instrument hears, and `pedal_points` writes the
+//!   pedal itself as controller 64, which an instrument with dampers hears as dampers lifted
+//!   from every string, not only from the keys that were played.
 //!
 //! The constants are first guesses in the sizes the performance literature reports (the KTH
 //! rule system's high-loud, duration-contrast and final-ritard rules; piano melody lead), and
 //! are meant to be re-measured against recorded performances before they move.
 
 use super::performance::{chords, milliseconds};
-use super::{Note, PerformanceContext};
+use super::{CurvePoint, Note, PerformanceContext};
 use crate::Ticks;
 
 /// Velocity gained per octave above the phrase's mean top pitch, at full contour.
@@ -488,6 +491,71 @@ pub(super) fn pedal(notes: &mut [Note], amount: f32, context: PerformanceContext
     }
 }
 
+/// The sustain pedal the pedal stage plays, as controller 64 over `span`, read from `notes` as
+/// that stage sees them.
+///
+/// It goes down as the first harmony sounds and is changed as a legato pedal: up when the old
+/// harmony's notes are let go, the same moment `pedal` ends them, and down again once their
+/// dampers have fallen. `amount` is how far down it goes, so a half-pedalled clip is half
+/// pedalled on an instrument that reads the depth.
+pub(super) fn pedal_points(notes: &[Note], amount: f32, bpm: f64, span: Ticks) -> Vec<CurvePoint> {
+    let amount = amount.clamp(0.0, 1.0);
+    let mut points = vec![CurvePoint {
+        at: Ticks::ZERO,
+        value: 0.0,
+    }];
+    if amount <= 0.0 || notes.is_empty() {
+        return points;
+    }
+    let lift = milliseconds(PEDAL_LIFT_MS, bpm);
+    let groups = chords(notes);
+    let mut steps = Vec::new();
+    for (k, g) in pedal_changes(notes, &groups).into_iter().enumerate() {
+        let at = notes[groups[g][0]].start + lift;
+        if k == 0 {
+            steps.push((at, amount));
+        } else {
+            steps.extend([(at, 0.0), (at + lift, amount)]);
+        }
+    }
+    // And up for good where `pedal` lets the last notes go: a whole note past the last release.
+    if let Some(last) = notes.iter().map(Note::end).max() {
+        let up = last + Ticks(super::SUSTAIN_MAX_TICKS);
+        if steps.last().is_some_and(|(at, _)| *at < up) {
+            steps.push((up, 0.0));
+        }
+    }
+    let mut now = 0.0;
+    for (at, value) in steps {
+        let last = points.last().map_or(Ticks::ZERO, |point| point.at);
+        if at >= span {
+            break;
+        }
+        if at <= last {
+            // Two changes closer than the pedal can move: the later stands.
+            if let Some(point) = points.last_mut() {
+                point.value = value;
+            }
+        } else {
+            if at - Ticks(1) > last {
+                points.push(CurvePoint {
+                    at: at - Ticks(1),
+                    value: now,
+                });
+            }
+            points.push(CurvePoint { at, value });
+        }
+        now = value;
+    }
+    if points.last().is_some_and(|point| point.at < span) {
+        points.push(CurvePoint {
+            at: span,
+            value: now,
+        });
+    }
+    points
+}
+
 #[cfg(test)]
 mod pedal_tests {
     use super::*;
@@ -531,6 +599,39 @@ mod pedal_tests {
         // The last pedal holds a whole note past each release, inside the clip.
         assert_eq!(notes[5].end(), Ticks(4320 + 3840));
         assert!(notes.iter().all(|note| note.start.raw() % 480 == 0));
+    }
+
+    #[test]
+    fn the_pedal_is_written_down_through_a_harmony_and_changed_with_it() {
+        let notes = vec![
+            n(48, 0, 480),
+            n(64, 0, 480),
+            n(67, 0, 480),
+            n(74, 960, 480),
+            n(72, 1920, 480),
+            n(53, 3840, 480),
+            n(69, 3840, 480),
+            n(72, 3840, 480),
+        ];
+        let points = pedal_points(&notes, 1.0, 120.0, Ticks(3840 * 4));
+        let at = |tick: i64| super::super::curve_at(&points, Ticks(tick));
+        // Down 30 ms (58 ticks) after the C chord, through the melody note.
+        assert_eq!(at(0), 0.0);
+        assert_eq!(at(58), 1.0);
+        assert_eq!(at(1920), 1.0);
+        // Up as the C pedal's notes are let go, 58 ticks after the F chord, and down again
+        // once their dampers have fallen.
+        assert_eq!(at(3840 + 57), 1.0);
+        assert_eq!(at(3840 + 58), 0.0);
+        assert_eq!(at(3840 + 115), 0.0);
+        assert_eq!(at(3840 + 116), 1.0);
+        // Up for good a whole note past the last release, as the notes end.
+        assert_eq!(at(4320 + 3840 - 1), 1.0);
+        assert_eq!(at(4320 + 3840), 0.0);
+        assert!(points.windows(2).all(|pair| pair[0].at < pair[1].at));
+        // Half a pedal is half way down.
+        let half = pedal_points(&notes, 0.5, 120.0, Ticks(3840 * 4));
+        assert_eq!(super::super::curve_at(&half, Ticks(1920)), 0.5);
     }
 
     #[test]

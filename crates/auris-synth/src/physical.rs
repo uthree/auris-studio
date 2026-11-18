@@ -185,6 +185,16 @@ impl Model {
         }
     }
 
+    /// Whether this instrument has dampers that the sustain pedal (controller 64) lifts: the
+    /// piano, the hammered strings, the tuned bars and the bells. A keyboard plays the pedal to
+    /// these rather than holding their notes for them.
+    pub const fn has_dampers(self) -> bool {
+        matches!(
+            self,
+            Self::Piano | Self::HammeredDulcimer | Self::Mallet | Self::Bell
+        )
+    }
+
     /// The model a plugin id names.
     pub fn from_id(id: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|model| model.id() == id)
@@ -358,10 +368,112 @@ pub(crate) struct Performance {
     pub expression: f32,
     /// Controller 1: the modulation wheel.
     pub modulation: f32,
-    /// Controller 64: the sustain pedal.
-    pub pedal: bool,
+    /// Controller 64: how far down the sustain pedal is, from resting (0) to the floor (1).
+    ///
+    /// Read through [`Performance::lift`], never as a switch: between the two ends the dampers
+    /// only brush the strings, which is the half pedal a pianist plays with.
+    pub pedal: f32,
+    /// Controller 66: the sostenuto pedal, holding up only the dampers that were up when it
+    /// went down.
+    pub sostenuto: bool,
+    /// Controller 67: the soft pedal, which on a grand shifts the action so the hammers strike
+    /// one string fewer.
+    pub soft: bool,
+    /// Controller 68: the legato footswitch. While it is down, a note played before the last
+    /// is let go moves the sounding string or air column to it instead of starting another.
+    pub legato: bool,
+    /// Controller 75, the decay time of the General MIDI 2 sound controllers: resting at the
+    /// middle, and shorter below it. A plucked string hears it as a palm laid on the strings at
+    /// the bridge, which is how a guitarist shortens a note while it is held.
+    pub decay: f32,
+    /// Controller 74, brightness: resting at the middle. A bowed string hears it as where the
+    /// bow is drawn, nearer the bridge above the middle and over the fingerboard below it.
+    pub brightness: f32,
+    /// Controller 65: portamento. While it is on, a slur slides from one note to the next in
+    /// the time controller 5 gives instead of moving the finger at once.
+    pub portamento: bool,
+    /// Controller 5: the portamento time, from nothing to all the way up.
+    pub portamento_time: f32,
+    /// Controller 2, the breath controller: how hard a wind player blows, under the expression
+    /// pedal. It rests all the way up, so a part that never sends it is blown as the expression
+    /// says; a wind controller sends it, and with no breath a pipe is silent.
+    pub breath: f32,
     /// The stereo width control.
     pub width: f32,
+}
+
+/// Pedal travel, as a fraction of controller 64, at which the dampers begin to leave the
+/// strings. The travel before it is the pedal's free play.
+const DAMPERS_LEAVE: f32 = 0.25;
+/// Pedal travel at which the dampers are clear of the strings.
+const DAMPERS_CLEAR: f32 = 0.75;
+/// The breath controller's travel below which a pipe no longer speaks.
+const BREATH_SPEAKS: f32 = 0.1;
+/// The quickest and slowest portamento, as the time constant of a slide, in seconds.
+const PORTAMENTO_FASTEST: f32 = 0.02;
+const PORTAMENTO_SLOWEST: f32 = 1.5;
+
+/// Moves `slid`, the key a slurred line is sounding, toward `key`: at once, or with portamento
+/// on, over the time it gives. Called once a control tick, at `ticks_per_second`.
+pub(crate) fn slide(slid: &mut f32, key: f32, performance: &Performance, ticks_per_second: f32) {
+    match performance.portamento_seconds() {
+        Some(seconds) => {
+            *slid += (key - *slid) * (1.0 - (-1.0 / (seconds * ticks_per_second)).exp());
+        }
+        None => *slid = key,
+    }
+}
+
+impl Performance {
+    /// How far the sustain pedal holds the dampers off the strings: 0 with them resting on the
+    /// strings, 1 with them clear, and in between a damper that only brushes the string — the
+    /// half pedal, which shortens a note without stopping it.
+    pub fn lift(&self) -> f32 {
+        let travel =
+            ((self.pedal - DAMPERS_LEAVE) / (DAMPERS_CLEAR - DAMPERS_LEAVE)).clamp(0.0, 1.0);
+        travel * travel * (3.0 - 2.0 * travel)
+    }
+
+    /// How much of a resting damper's grip the sustain pedal leaves on the strings: all of it
+    /// with the pedal up, none with it down. A damper's grip goes with how hard its felt is
+    /// pressed on the string, and that falls away faster than the damper rises: half lifted,
+    /// it takes a quarter of what it would resting.
+    pub fn damping(&self) -> f32 {
+        let resting = 1.0 - self.lift();
+        resting * resting
+    }
+
+    /// How long a slurred slide takes with portamento on, in seconds — the time constant of its
+    /// approach to the new note — or `None` with it off, when the finger moves at once.
+    ///
+    /// Controller 5 at the bottom is a quick slide, a fiftieth of a second, and all the way up
+    /// a slow one of a second and a half; it rises as the square, so the useful slides are
+    /// spread across the travel.
+    pub fn portamento_seconds(&self) -> Option<f32> {
+        self.portamento.then(|| {
+            let time = self.portamento_time.clamp(0.0, 1.0);
+            PORTAMENTO_FASTEST + (PORTAMENTO_SLOWEST - PORTAMENTO_FASTEST) * time * time
+        })
+    }
+
+    /// How much of a pipe's threshold the breath controller still reaches: all of it above the
+    /// bottom tenth of its travel, where the breath gives out and the pipe stops speaking.
+    pub fn speaking(&self) -> f32 {
+        (self.breath / BREATH_SPEAKS).clamp(0.0, 1.0)
+    }
+
+    /// How hard the next blow, strike or pluck is: the instrument's own `control`, moved by
+    /// controller 74 — a harder mallet, hammer or pick above its middle, a softer one below,
+    /// as far as half the control's range either way.
+    pub fn hardness(&self, control: f32) -> f32 {
+        (control + self.brightness.clamp(0.0, 1.0) - 0.5).clamp(0.0, 1.0)
+    }
+
+    /// How hard a palm is laid on the strings: none with controller 75 at or above its middle,
+    /// all the way at the bottom of it.
+    pub fn palm(&self) -> f32 {
+        ((0.5 - self.decay) * 2.0).clamp(0.0, 1.0)
+    }
 }
 
 impl Default for Performance {
@@ -370,7 +482,15 @@ impl Default for Performance {
             bend: 0.0,
             expression: 1.0,
             modulation: 0.0,
-            pedal: false,
+            pedal: 0.0,
+            sostenuto: false,
+            soft: false,
+            legato: false,
+            decay: 0.5,
+            brightness: 0.5,
+            portamento: false,
+            portamento_time: 0.0,
+            breath: 1.0,
             width: 1.0,
         }
     }
@@ -705,9 +825,11 @@ impl Physical {
         }))
     }
 
+    /// Whether a note played over a held one slurs to it: the instrument's own legato control,
+    /// or the legato footswitch. Only an instrument that has the control can slur at all.
     fn is_legato(&self) -> bool {
         self.legato_param
-            .is_some_and(|param| self.params.at(param) >= 0.5)
+            .is_some_and(|param| self.performance.legato || self.params.at(param) >= 0.5)
     }
 
     fn note(&mut self, key: u8, pitch: f32, velocity: f32, stolen: bool) -> Note {
@@ -752,13 +874,14 @@ impl Physical {
             self.note_off(key);
             return;
         }
-        if self.is_legato() {
-            self.legato.note_on(key, pitch, velocity);
-            if let Some(index) = self.legato.voice
-                && self.glide(index, key, pitch, velocity)
-            {
-                return;
-            }
+        // Which keys are down is kept whether or not the line is slurred, so the footswitch
+        // can go down over a key already held and slur from it.
+        self.legato.note_on(key, pitch, velocity);
+        if self.is_legato()
+            && let Some(index) = self.legato.voice
+            && self.glide(index, key, pitch, velocity)
+        {
+            return;
         }
         let Some(assignment) = self.allocator.note_on(key, velocity) else {
             return;
@@ -776,28 +899,41 @@ impl Physical {
 
     fn note_off(&mut self, key: u8) {
         let key = key.min(127);
+        let counted = self.legato.note_off(key);
         if self.is_legato() {
-            if !self.legato.note_off(key) {
+            if !counted {
                 return;
             }
-            if let Some(index) = self.legato.voice
-                && let Some(down) = self.legato.last()
-            {
-                // The key underneath is still down: the line falls back to it.
-                self.glide(index, down.key, down.pitch, down.velocity);
-                return;
+            let line = self.legato.voice.filter(|index| {
+                self.allocator
+                    .slot(*index)
+                    .is_some_and(|slot| slot.state == VoiceState::Held && slot.pitch == key)
+            });
+            if let Some(index) = line {
+                if let Some(down) = self.legato.last() {
+                    // The key underneath is still down: the line falls back to it.
+                    self.glide(index, down.key, down.pitch, down.velocity);
+                    return;
+                }
+                self.legato.voice = None;
             }
-            self.legato.voice = None;
+            // A key the line has moved off holds no voice; one struck before the footswitch
+            // went down holds its own, and lets it go.
         }
         for index in self.allocator.note_off(key) {
+            if self.legato.voice == Some(index) {
+                self.legato.voice = None;
+            }
             self.engine.stop(index);
         }
     }
 
     fn release_everything(&mut self, at_once: bool) {
         self.legato.clear();
-        if self.performance.pedal {
-            self.performance.pedal = false;
+        let pedals = (self.performance.pedal, self.performance.sostenuto);
+        if pedals != (0.0, false) {
+            self.performance.pedal = 0.0;
+            self.performance.sostenuto = false;
             self.engine.perform(&self.performance);
         }
         for index in self.allocator.release_all() {
@@ -840,7 +976,7 @@ impl Physical {
             active: self.allocator.active_count(),
             expression: self.expression,
             pressure: self.engine.pressure(),
-            pedal: self.performance.pedal,
+            pedal: self.performance.lift() > 0.0,
             ..MotionFrame::default()
         };
         let engine = &self.engine;
@@ -924,7 +1060,26 @@ impl SegmentRenderer for Physical {
                             self.expression = value;
                         }
                     }
-                    64 => self.performance.pedal = value >= 0.5,
+                    64 => self.performance.pedal = value,
+                    66 => self.performance.sostenuto = value >= 0.5,
+                    75 => self.performance.decay = value,
+                    74 => self.performance.brightness = value,
+                    65 => self.performance.portamento = value >= 0.5,
+                    5 => self.performance.portamento_time = value,
+                    2 => self.performance.breath = value,
+                    67 => self.performance.soft = value >= 0.5,
+                    68 => {
+                        let legato = value >= 0.5;
+                        if legato == self.performance.legato {
+                            return;
+                        }
+                        self.performance.legato = legato;
+                        if !self.is_legato() {
+                            // The line ends here; whatever it still holds is an ordinary note.
+                            self.legato.voice = None;
+                        }
+                        return;
+                    }
                     TOUCH_CONTROLLER => {
                         self.touch = Some(value);
                         return;

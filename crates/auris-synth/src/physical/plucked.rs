@@ -61,6 +61,22 @@ const FLOOR: f32 = 3.0e-6;
 /// Scale of the picture a frontend draws, chosen so a full pluck fills its lane.
 const DISPLAY: f32 = 0.05;
 
+/// Where a palm mute lies, as a fraction of the open string from the saddle: two or three
+/// centimetres of a guitar's 650 mm, about the same distance on a bass's longer string.
+const PALM_AT: f32 = 0.04;
+const BASS_PALM_AT: f32 = 0.03;
+/// How hard a palm pressed all the way down grips a string, as the decay it adds to a partial
+/// with all of its motion at the palm, in nepers a second per hertz of the fundamental.
+///
+/// A palm is a resistance at one point, and a resistance at a point takes from each partial in
+/// proportion to how far that partial moves there: `sin²(n π x)`, which near the saddle is
+/// tiny for the fundamental and grows with the square of the order. A palm-muted note is
+/// therefore its pluck's click and its lowest partials, gone in a fraction of a second. The
+/// grip is chosen, not measured: it takes a guitar's open low E down 80 dB in about a third of
+/// a second, and a bass's open E, whose fundamental moves still less at the palm, in about
+/// twice that.
+const PALM_GRIP: f32 = 30.0;
+
 /// How far a player goes toward evening out a note the box favours or refuses, as the power
 /// of how much it does.
 const EVENING: f32 = 0.6;
@@ -386,9 +402,14 @@ impl Plucked {
         let spec = self.body_spec();
         let scale = self.body_scale();
         let release = self.settings.release;
+        let (palm, palm_at) = (self.performance.palm(), self.palm_at());
         let Some(voice) = self.voices.get_mut(index) else {
             return;
         };
+        // The palm stays at the saddle while the fretting hand shortens the string, so it lies
+        // further along the sounding one.
+        let palm_at = (palm_at * voice.fret).min(0.5);
+        let gripped = palm * PALM_GRIP * voice.fundamental;
         for n in 0..voice.partials {
             let order = (n + 1) as f32;
             let across = voice.across(n);
@@ -399,6 +420,10 @@ impl Plucked {
             if !voice.held {
                 // A finger laid on the string takes the top first.
                 nepers += decay_rate(release) * (1.0 + n as f32 / 6.0);
+            }
+            if gripped > 0.0 {
+                let moves = (PI * order * palm_at).sin();
+                nepers += gripped * moves * moves;
             }
             if n < voice.paired
                 && let Some(slot) = voice.nepers.get_mut(across + 1)
@@ -411,6 +436,15 @@ impl Plucked {
             if let Some(slot) = voice.nepers.get_mut(across) {
                 *slot = drained;
             }
+        }
+    }
+
+    /// Where a palm mute lies on an open string of this instrument.
+    fn palm_at(&self) -> f32 {
+        if self.model == Model::Bass {
+            BASS_PALM_AT
+        } else {
+            PALM_AT
         }
     }
 
@@ -436,11 +470,14 @@ impl Plucked {
         let acoustic = self.acoustic() * (1.0 - self.settings.saddle);
         let spec = self.body_spec();
         let scale = self.body_scale();
+        // A palm across the strings mutes the ones not played as well.
+        let moves = (PI * self.palm_at()).sin();
+        let gripped = self.performance.palm() * PALM_GRIP * moves * moves;
         for (index, pitch) in self.build.strings.iter().enumerate() {
             let pitch = f32::from(*pitch);
             let hz = hertz(pitch);
             let drained = 0.006 * hz * spec.conductance(hz, scale);
-            let nepers = self.fundamental_rate(pitch) + self.acoustic() * drained;
+            let nepers = self.fundamental_rate(pitch) + self.acoustic() * drained + gripped * hz;
             let takes = OPEN_COUPLING * acoustic * (0.25 + spec.conductance(hz, scale));
             self.open.tune(index, hz, nepers, takes, self.rate);
         }
@@ -579,7 +616,7 @@ impl Engine for Plucked {
             None => (settings.position * fret * wobble).clamp(0.02, 0.5),
         };
         let pickup = (settings.pickup_position * fret).clamp(0.02, 0.9);
-        let hardness = settings.hardness * (0.55 + 0.45 * note.velocity);
+        let hardness = self.performance.hardness(settings.hardness) * (0.55 + 0.45 * note.velocity);
         let corner = 500.0 * 24.0_f32.powf(hardness);
         let budget = match quality {
             Quality::Draft => 40,
@@ -724,7 +761,22 @@ impl Engine for Plucked {
 
     fn perform(&mut self, performance: &Performance) {
         let bent = performance.bend != self.performance.bend;
+        let palmed = performance.palm() != self.performance.palm();
         self.performance = *performance;
+        if palmed {
+            // The palm comes down on, or lifts off, every string at once.
+            let rate = self.rate;
+            for index in 0..self.voices.len() {
+                if !self.voices[index].sounding {
+                    continue;
+                }
+                self.set_rates(index);
+                let voice = &mut self.voices[index];
+                let tuned = voice.tuned;
+                voice.retune(tuned, rate);
+            }
+            self.tune_open_strings();
+        }
         if bent {
             let (cents, rate) = (self.bend_cents(), self.rate);
             for voice in self.voices.iter_mut().filter(|voice| voice.sounding) {

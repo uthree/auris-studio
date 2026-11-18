@@ -20,6 +20,7 @@
 use std::time::{Duration, Instant};
 
 use auris_core::TrackId;
+use auris_engine::midi::CC_SUSTAIN;
 use auris_engine::{LiveTarget, MidiInputs, Performed, VelocityResponse};
 
 use super::Session;
@@ -56,6 +57,9 @@ pub(super) struct MidiInput {
     ignored: Vec<String>,
     /// Notes struck since a frontend last asked, for a control learning which note a key sends.
     struck: Vec<u8>,
+    /// What a hosted plugin last said about hearing the pedal, for the track and instrument it
+    /// was asked on, so that a plugin is not asked again on every tick.
+    pedal_heard: Option<(TrackId, String, bool)>,
 }
 
 /// How many struck notes wait for a frontend before the oldest are forgotten.
@@ -252,6 +256,49 @@ impl Session {
         }
     }
 
+    /// Whether `track`'s instrument, `instrument`, answers the sustain pedal itself.
+    ///
+    /// * A physical model does where it has dampers to lift.
+    /// * A SoundFont does: the synthesiser holds released voices while controller 64 is down,
+    ///   as the format's own players do, and a half pedal is a font's to read.
+    /// * A hosted plugin does where the pedal can reach it — a CLAP plugin whose note port
+    ///   takes MIDI, a VST3 plugin that maps controller 64 to a parameter. One that cannot hear
+    ///   it would play long notes as short ones, and has its notes held instead.
+    ///
+    /// Everything else — the built-in synths, the audio sampler — knows nothing of the pedal.
+    pub(super) fn holds_pedal(&mut self, track: TrackId, instrument: &str) -> bool {
+        if let Some(model) = auris_synth::Model::from_id(instrument) {
+            return model.has_dampers();
+        }
+        if instrument == auris_sampler::SAMPLER_ID {
+            return true;
+        }
+        let clap = instrument.starts_with(auris_clap::ID_PREFIX);
+        if !clap && !instrument.starts_with(auris_vst3::ID_PREFIX) {
+            return false;
+        }
+        if let Some((asked, of, heard)) = &self.midi.pedal_heard
+            && *asked == track
+            && of == instrument
+        {
+            return *heard;
+        }
+        let answer = if clap {
+            self.hosted.instrument_takes_controllers(track)
+        } else {
+            self.vst3.instrument_maps_controller(track, CC_SUSTAIN)
+        };
+        // Not remembered until there is an instance to answer, which the first ticks after
+        // choosing a plugin may not have yet; until then its notes are held, as they were.
+        match answer {
+            Some(heard) => {
+                self.midi.pedal_heard = Some((track, instrument.to_owned(), heard));
+                heard
+            }
+            None => false,
+        }
+    }
+
     /// Remembers an error for a frontend to report.
     fn note_midi_error(&mut self, error: String) {
         log::warn!("{error}");
@@ -259,13 +306,25 @@ impl Session {
     }
 
     /// Tells the inputs where to sound what is played.
+    ///
+    /// A track whose instrument has a sustain pedal of its own is sent the pedal, and every
+    /// other has its notes held for it; which it is, is read afresh each time, so changing the
+    /// instrument changes it.
     fn point_midi(&mut self) {
         let target = self.midi_target().and_then(|track| {
-            self.project
+            let (index, found) = self
+                .project
                 .tracks
                 .iter()
-                .position(|found| found.id == track)
-                .map(|index| LiveTarget { index, track })
+                .enumerate()
+                .find(|(_, found)| found.id == track)?;
+            let instrument = found.kind.as_instrument()?.instrument_id.clone();
+            Some((index, track, instrument))
+        });
+        let target = target.map(|(index, track, instrument)| LiveTarget {
+            index,
+            track,
+            holds_pedal: self.holds_pedal(track, &instrument),
         });
         self.midi.inputs.set_target(&self.engine, target);
     }
@@ -381,6 +440,52 @@ mod tests {
             "the wheel was written down: {:?}",
             written.bend
         );
+    }
+
+    #[test]
+    fn a_piano_or_font_take_writes_the_pedal_and_a_synth_take_the_long_notes() {
+        // Pedal down, a key struck and let go: what the take keeps of the pedal.
+        let pedalled = |instrument: &str| {
+            let mut session = session();
+            let track = session.add_instrument_track("Keys", instrument).unwrap();
+            session.set_midi_target(Some(track));
+            session.start_recording(Some(track)).unwrap();
+            session.point_midi();
+            let keyboard = &session.midi.inputs;
+            keyboard.receive(&[0xb0, 64, 127]);
+            keyboard.receive(&[0x90, 60, 100]);
+            keyboard.receive(&[0x80, 60, 0]);
+            // Down still: the synth's note is being held for it, the piano's is its own. The
+            // take ends with the pedal down, since a silent engine's clock stands still and a
+            // pedal let up at the same instant would leave only the release.
+            let sounding = session.midi_sounding();
+            session.drain_midi();
+            let report = session.stop_recording().unwrap();
+            let clip = report.takes[0].clip.expect("a clip was written");
+            let (_, written) = session.project().midi_clip(clip).unwrap();
+            (
+                sounding,
+                written
+                    .curve(auris_core::project::ClipCurve::SUSTAIN)
+                    .to_vec(),
+            )
+        };
+        let (piano_sounding, piano_pedal) = pedalled(auris_synth::Model::Piano.id());
+        assert!(piano_sounding.is_empty(), "the piano's key was let go");
+        assert!(
+            piano_pedal.iter().any(|point| point.value > 0.99),
+            "the pedal was written down: {piano_pedal:?}"
+        );
+        // A SoundFont holds its own voices under controller 64, as the piano lifts its dampers.
+        let (font_sounding, font_pedal) = pedalled(auris_sampler::SAMPLER_ID);
+        assert!(font_sounding.is_empty(), "the font's key was let go");
+        assert!(
+            font_pedal.iter().any(|point| point.value > 0.99),
+            "the font's pedal was written down: {font_pedal:?}"
+        );
+        let (synth_sounding, synth_pedal) = pedalled("auris.synth.lead");
+        assert_eq!(synth_sounding, vec![60], "the pedal holds the synth's note");
+        assert!(synth_pedal.is_empty(), "a synth take writes no pedal");
     }
 
     #[test]
