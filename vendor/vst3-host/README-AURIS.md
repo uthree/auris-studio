@@ -32,6 +32,10 @@ A `moduleinfo.json` that is empty or only whitespace is treated as absent, so th
 asked instead. Some shipping bundles carry a zero-byte file, which the published crate rejected as
 invalid JSON and so refused to load the plugin at all.
 
+On Windows, the loader keeps Dexed's DLL mapped until Auris exits. Dexed 1.1.0 can initialize
+Direct3D while Windows unloads the DLL under the loader lock, which hung project close and
+headless renders. The host still terminates the plugin instances and calls `ExitDll`.
+
 A note-on can carry a tuning. VST3's note-on event has a per-note tuning field in cents, which
 the MIDI-shaped `MidiEvent` has nowhere to put, so the realtime path always wrote zero there.
 `Plugin::send_tuned_note_on_at` is that path with the field filled in, for Auris's tunings: the

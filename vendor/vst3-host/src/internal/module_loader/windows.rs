@@ -13,6 +13,9 @@ use vst3::Steinberg::IPluginFactory;
 
 #[cfg(target_os = "windows")]
 use libloading::{Library, Symbol};
+use winapi::um::libloaderapi::{
+    GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN,
+};
 
 /// Function signature for InitDll
 type InitDllFunc = unsafe extern "C" fn() -> bool;
@@ -151,6 +154,35 @@ impl VstModule for WindowsModule {
         } else {
             Ok(factory)
         }
+    }
+
+    fn prepare_for_class(&self, class_id: &str) -> Result<()> {
+        const DEXED_CLASS_ID: &str = "ABCDEF019182FAEB4447534244657864";
+        if class_id != DEXED_CLASS_ID {
+            return Ok(());
+        }
+
+        // Dexed 1.1.0 can create a Direct3D device during DLL detach. FreeLibrary
+        // holds the loader lock, so that call can deadlock. Keep the module mapped
+        // until process exit while still terminating each component and calling ExitDll.
+        let mut handle = std::ptr::null_mut();
+        let address = (*self.get_factory_fn) as *const ();
+        // SAFETY: FROM_ADDRESS interprets the argument as an address inside this DLL,
+        // whose Library is alive for the call. The output points to a writable HMODULE.
+        let pinned = unsafe {
+            GetModuleHandleExW(
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                address.cast(),
+                &mut handle,
+            )
+        };
+        if pinned == 0 {
+            return Err(Error::PluginLoadFailed(format!(
+                "Failed to retain Dexed until process exit: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        Ok(())
     }
 
     fn path(&self) -> &Path {

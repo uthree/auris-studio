@@ -2010,6 +2010,17 @@ fn deliver(channels: &[Vec<f32>], target: &mut AudioBuffer, frames: usize, overw
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_searches_the_per_user_vst3_install_location() {
+        let local = std::env::var_os("LOCALAPPDATA").expect("Windows local app data directory");
+        let user_plugins = PathBuf::from(local)
+            .join("Programs")
+            .join("Common")
+            .join("VST3");
+        assert!(vst3_search_paths(&[]).contains(&user_plugins));
+    }
+
     #[test]
     fn a_mono_effect_replaces_both_channels_without_leaking_dry_audio() {
         let wet = vec![vec![0.25; 8]];

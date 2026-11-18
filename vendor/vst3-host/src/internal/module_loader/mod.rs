@@ -9,6 +9,11 @@ pub trait VstModule: Send {
     /// Get the plugin factory from the module
     fn get_factory(&self) -> Result<*mut IPluginFactory>;
 
+    /// Apply platform-specific compatibility handling before instantiating an audio class.
+    fn prepare_for_class(&self, _class_id: &str) -> Result<()> {
+        Ok(())
+    }
+
     /// Get the path to the module (diagnostics / config record)
     #[allow(dead_code)]
     fn path(&self) -> &Path;
