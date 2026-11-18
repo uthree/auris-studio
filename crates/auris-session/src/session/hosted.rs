@@ -261,6 +261,14 @@ impl HostedPlugins {
             .map(|language| language.retunes_notes())
     }
 
+    /// Whether a track's hosted instrument is sent MIDI controllers, or `None` when there is
+    /// no live instance to ask. A plugin whose note port speaks only CLAP's own dialect has no
+    /// event a controller could travel in, and is not.
+    pub(super) fn instrument_takes_controllers(&mut self, track: TrackId) -> Option<bool> {
+        let plugin = self.instruments.get_mut(&track)?.plugin_mut()?;
+        Some(plugin.note_language().is_some_and(|language| language.midi))
+    }
+
     /// The key names a hosted instrument publishes for its first note input port.
     pub(super) fn instrument_note_names(&mut self, track: TrackId) -> Vec<(u8, String)> {
         self.instruments
@@ -1346,6 +1354,37 @@ mod tests {
     use auris_core::plugin::{Effect, ProcessContext};
     use auris_core::time::Ticks;
     use auris_core::{AssetPath, AudioBuffer};
+
+    #[test]
+    fn a_plugin_that_takes_midi_is_sent_the_pedal_once_it_can_be_asked() {
+        let scratch = super::super::fixtures::Scratch::new("pedal-clap");
+        let file = scratch.join("tone.clap");
+        std::fs::write(&file, b"fixture").unwrap();
+        let mut session = super::super::fixtures::session();
+        let track = session.add_default_instrument_track("Tone").unwrap();
+        let id = format!("{}{TONE_ID}", auris_clap::ID_PREFIX);
+        // No instance yet: its notes are held for it, and the answer is not kept.
+        assert!(!session.holds_pedal(track, &id));
+        session
+            .hosted
+            .libraries
+            .insert(file.clone(), instrument_library());
+        session
+            .set_hosted_instrument(track, &file, TONE_ID)
+            .unwrap();
+        let id = session.project.tracks[session.project.track_index(track).unwrap()]
+            .kind
+            .as_instrument()
+            .unwrap()
+            .instrument_id
+            .clone();
+        // The test tone's note port speaks MIDI as well as CLAP's own notes.
+        assert!(session.holds_pedal(track, &id));
+        assert_eq!(
+            session.hosted.instrument_takes_controllers(track),
+            Some(true)
+        );
+    }
 
     #[test]
     fn analysis_snapshot_captures_actual_hosted_patch_and_metadata_without_editing() {

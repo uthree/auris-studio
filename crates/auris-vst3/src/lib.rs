@@ -730,6 +730,18 @@ impl Vst3Plugin {
             .ok()
             .map(|v| v as f32)
     }
+    /// Whether MIDI controller `number` reaches the plugin at all.
+    ///
+    /// VST3 has no event for a controller: a plugin that wants one maps it to a parameter of
+    /// its own through `IMidiMapping`, and one that maps nothing never hears it. This asks the
+    /// control instance, on the first bus and channel, which is where every controller is sent.
+    pub fn maps_controller(&self, number: u8) -> bool {
+        self.lock().is_ok_and(|plugin| {
+            plugin
+                .midi_cc_to_parameter(0, 0, u16::from(number))
+                .is_some()
+        })
+    }
     /// Writes a normalized parameter value to the plugin controller and processor.
     pub fn set_param(&self, id: ParamId, value: f32) -> Result<(), Vst3Error> {
         let Some((&vst_id, descriptor)) = self

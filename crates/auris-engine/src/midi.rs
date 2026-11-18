@@ -31,10 +31,11 @@
 //! up, and a take writes down the note as long as it was *heard* — the same thing the typing
 //! keyboard's sustain key does.
 //!
-//! An instrument with dampers of its own — a [`LiveTarget`] that [`holds_pedal`] — is sent the
-//! pedal instead, as the controller it is and at every depth it passes through, and its keys
-//! are let go when they come up. Holding the notes here would give it long notes and no pedal:
-//! the strings no key was down on would never be freed, and a half pedal would be a full one.
+//! An instrument that answers the pedal itself — a [`LiveTarget`] that [`holds_pedal`], such as
+//! a piano with dampers or a SoundFont — is sent the pedal instead, as the controller it is and
+//! at every depth it passes through, and its keys are let go when they come up. Holding the
+//! notes here would give it long notes and no pedal: the strings no key was down on would never
+//! be freed, and a half pedal would be a full one.
 //! Its take writes the keys as long as they were held and the pedal as a lane, which is what
 //! plays the instrument back the way it was played.
 //!
@@ -191,8 +192,9 @@ pub struct LiveTarget {
     pub index: usize,
     /// The track itself, which is how the session addresses it.
     pub track: TrackId,
-    /// Whether the track's instrument has dampers of its own, which the sustain pedal lifts:
-    /// it is sent the pedal rather than having its notes held for it.
+    /// Whether the track's instrument answers the sustain pedal itself — dampers it lifts, or a
+    /// player that holds its own voices: it is sent the pedal rather than having its notes held
+    /// for it.
     pub holds_pedal: bool,
 }
 
@@ -395,7 +397,7 @@ impl LivePlayer {
                 number: CC_SUSTAIN,
                 value,
             } => {
-                // Every instrument with dampers this pedal has reached hears it move: the one
+                // Every instrument holding its own pedal that this one has reached hears it move: the one
                 // being played, and any it went down on before the keyboard moved elsewhere.
                 let mut out = Vec::new();
                 if let Some(target) = target.filter(|target| target.holds_pedal) {
