@@ -55,6 +55,8 @@ fn agent_diagnostic(project: &auris_core::project::Project, d: &Diagnostic) -> s
         "beat": beat,
         "end_bar": end_bar,
         "notes": d.notes.iter().map(|n| serde_json::json!({"clip": n.clip.0, "index": n.index})).collect::<Vec<_>>(),
+        "effect": d.effect.map(|slot| format!("effect:{}", slot.0)),
+        "param": d.param,
         "message": d.describe(),
         "fix": d.describe_fix(),
     })

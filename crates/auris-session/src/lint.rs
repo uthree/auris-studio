@@ -29,6 +29,7 @@
 //! guessed at.
 
 mod audio;
+mod effects;
 mod fix;
 mod score;
 
@@ -37,7 +38,7 @@ pub use audio::{AUDIO_LINT_RATE, AudioLintJob, AudioLintResult, AudioSummary};
 pub use score::{TIGHT_STRUM_MS, lint_score, long_lyric_landscape, long_lyric_portrait};
 
 use auris_core::Project;
-use auris_core::project::{ClipId, TrackId};
+use auris_core::project::{ClipId, EffectSlotId, TrackId};
 pub use auris_core::project::{LintScope, LintSuppression};
 use auris_core::time::Ticks;
 use serde::{Deserialize, Serialize};
@@ -125,11 +126,13 @@ pub enum Rule {
     Unpitched,
     /// The mix loses most of its level summed to mono: left and right cancel.
     PhaseCancellation,
+    /// An inserted effect's setting lies outside the range its style's page names.
+    EffectSetting,
 }
 
 impl Rule {
     /// Every rule, score rules first.
-    pub const ALL: [Rule; 27] = [
+    pub const ALL: [Rule; 28] = [
         Rule::CrowdedOnset,
         Rule::DenseNotes,
         Rule::HarshInterval,
@@ -157,6 +160,7 @@ impl Rule {
         Rule::PitchMismatch,
         Rule::Unpitched,
         Rule::PhaseCancellation,
+        Rule::EffectSetting,
     ];
 
     /// The stable identifier used on the wire.
@@ -189,6 +193,7 @@ impl Rule {
             Rule::PitchMismatch => "pitch_mismatch",
             Rule::Unpitched => "unpitched",
             Rule::PhaseCancellation => "phase_cancellation",
+            Rule::EffectSetting => "effect_setting",
         }
     }
 
@@ -317,6 +322,12 @@ pub struct Diagnostic {
     pub limit: Option<f32>,
     /// The obvious repair, when there is one.
     pub fix: Option<Fix>,
+    /// The effect slot involved, when the problem is in an effect's setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<EffectSlotId>,
+    /// The parameter key involved, with [`Self::effect`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub param: Option<String>,
 }
 
 impl Diagnostic {
@@ -333,6 +344,8 @@ impl Diagnostic {
             value: None,
             limit: None,
             fix: None,
+            effect: None,
+            param: None,
         }
     }
 
@@ -349,6 +362,8 @@ impl Diagnostic {
         self.notes.hash(&mut hasher);
         self.clips.hash(&mut hasher);
         self.pitches.hash(&mut hasher);
+        self.effect.map(|slot| slot.0).hash(&mut hasher);
+        self.param.hash(&mut hasher);
         format!(
             "{}-{:012x}",
             self.rule.name(),
@@ -485,6 +500,19 @@ impl Diagnostic {
                     "the track plays notes here but its rendered signal stays below {limit:.0} dBFS"
                 )
             }
+            Rule::EffectSetting => {
+                let effect = self.effect.map_or_else(String::new, |slot| format!("effect:{}", slot.0));
+                let param = self.param.as_deref().unwrap_or_default();
+                let side = if value < limit { "below" } else { "above" };
+                let start = if self.severity == Severity::Warning {
+                    " and was never set: it is still the effect's default"
+                } else {
+                    ""
+                };
+                format!(
+                    "{effect} {param} is {value}{start}, {side} the {limit} this style's page names; set it in range with mixer_graph set_parameter, or keep it and record why"
+                )
+            }
         }
     }
 
@@ -614,7 +642,11 @@ impl crate::Session {
     /// Lints the open document's score at the current revision, less what it suppresses.
     pub fn lint_score(&self) -> LintReport {
         let project = self.project();
-        let (suppressed, diagnostics): (Vec<_>, Vec<_>) = lint_score(project)
+        let mut found = lint_score(project);
+        // Settings are read against their defaults, which only the registry knows.
+        found.extend(effects::effect_settings(project, self.registry()));
+        sort(&mut found);
+        let (suppressed, diagnostics): (Vec<_>, Vec<_>) = found
             .into_iter()
             .partition(|diagnostic| is_suppressed(project, diagnostic));
         LintReport {

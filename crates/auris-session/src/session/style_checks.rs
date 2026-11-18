@@ -30,6 +30,22 @@ pub struct StyleChecks {
     /// land in, or `None` where the page names no level. A loop under a game leaves room for
     /// its sounds and a dance track is loud on purpose; one target for both fits neither.
     pub loudness: Option<(f32, f32)>,
+    /// The effect settings the style's page gives a range for, which the linter holds an
+    /// inserted effect to. Empty for an unset genre.
+    pub effect_ranges: &'static [EffectRange],
+}
+
+/// One effect parameter's range as a style's page names it: where a part of this style starts.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EffectRange {
+    /// The registry id of the effect, `auris.fx.…`.
+    pub effect: &'static str,
+    /// The parameter's key.
+    pub param: &'static str,
+    /// The lowest value the page names, in the parameter's own units.
+    pub low: f32,
+    /// The highest value the page names.
+    pub high: f32,
 }
 
 impl StyleChecks {
@@ -64,6 +80,110 @@ pub fn style_checks(style: Style) -> StyleChecks {
         chorus_own_progression: !is(&[Genre::HipHopLofi, Genre::DanceElectronic, Genre::Ambient]),
         chromatic_harmony: is(&[Genre::Jazz, Genre::RnbNeoSoul, Genre::CityPop, Genre::Latin]),
         loudness: loudness(style),
+        effect_ranges: genre.map_or(&[], effect_ranges),
+    }
+}
+
+/// The ranges each page under `docs/genres` writes as "`key` low to high" (the toolbox's tests
+/// hold the two to each other). Only settings whose part the page makes plain are here: an
+/// amplifier's drive is a guitar's, while an EQ or a compressor goes on many parts, each
+/// wanting its own value, and is left to the page. Where a page names several ranges for one
+/// key, for a clean, a rhythm and a lead guitar, the entry spans them all.
+fn effect_ranges(genre: Genre) -> &'static [EffectRange] {
+    const fn range(effect: &'static str, param: &'static str, low: f32, high: f32) -> EffectRange {
+        EffectRange {
+            effect,
+            param,
+            low,
+            high,
+        }
+    }
+    const AMP: &str = "auris.fx.guitar_amp";
+    const REVERB: &str = "auris.fx.reverb";
+    match genre {
+        Genre::Rock => {
+            const RANGES: &[EffectRange] = &[
+                range(AMP, "drive_db", 0.0, 34.0),
+                range(REVERB, "room_size", 0.3, 0.5),
+            ];
+            RANGES
+        }
+        Genre::AnimeVocaloid => {
+            const RANGES: &[EffectRange] = &[range(AMP, "drive_db", 24.0, 34.0)];
+            RANGES
+        }
+        Genre::JPop => {
+            const RANGES: &[EffectRange] = &[
+                range(AMP, "drive_db", 0.0, 22.0),
+                range("auris.fx.plate", "decay", 1.5, 2.2),
+            ];
+            RANGES
+        }
+        Genre::CityPop => {
+            const RANGES: &[EffectRange] = &[
+                range(AMP, "drive_db", 0.0, 6.0),
+                range("auris.fx.chorus", "mix", 0.3, 0.5),
+                range(REVERB, "room_size", 0.4, 0.6),
+            ];
+            RANGES
+        }
+        Genre::RnbNeoSoul => {
+            const RANGES: &[EffectRange] = &[
+                range("auris.fx.tube", "drive_db", 6.0, 12.0),
+                range(REVERB, "room_size", 0.6, 0.8),
+            ];
+            RANGES
+        }
+        Genre::HipHopLofi => {
+            const RANGES: &[EffectRange] = &[
+                range("auris.fx.tape", "wow", 0.3, 0.5),
+                range("auris.fx.tape", "flutter", 0.3, 0.5),
+            ];
+            RANGES
+        }
+        Genre::DanceElectronic => {
+            const RANGES: &[EffectRange] = &[
+                range("auris.fx.distortion", "drive_db", 6.0, 18.0),
+                range("auris.fx.distortion", "mix", 0.3, 0.6),
+            ];
+            RANGES
+        }
+        Genre::Jazz => {
+            const RANGES: &[EffectRange] = &[
+                range(AMP, "drive_db", 0.0, 4.0),
+                range(AMP, "treble_db", -6.0, -3.0),
+                range(REVERB, "room_size", 0.3, 0.5),
+            ];
+            RANGES
+        }
+        Genre::Ambient => {
+            const RANGES: &[EffectRange] = &[
+                range("auris.fx.chorus", "rate_hz", 0.1, 0.3),
+                range(REVERB, "room_size", 0.8, 0.95),
+                range("auris.fx.plate", "decay", 5.0, 8.0),
+                range("auris.fx.delay", "feedback", 0.5, 0.7),
+            ];
+            RANGES
+        }
+        Genre::Orchestral => {
+            const RANGES: &[EffectRange] = &[
+                range(REVERB, "room_size", 0.8, 0.9),
+                range(REVERB, "pre_delay_ms", 20.0, 40.0),
+            ];
+            RANGES
+        }
+        Genre::FolkAcoustic => {
+            const RANGES: &[EffectRange] = &[range(REVERB, "room_size", 0.2, 0.4)];
+            RANGES
+        }
+        Genre::Latin => {
+            const RANGES: &[EffectRange] = &[range(REVERB, "room_size", 0.3, 0.4)];
+            RANGES
+        }
+        Genre::Chiptune => {
+            const RANGES: &[EffectRange] = &[range("auris.fx.delay", "mix", 0.15, 0.25)];
+            RANGES
+        }
     }
 }
 
@@ -108,6 +228,7 @@ mod tests {
         assert_eq!(
             StyleChecks {
                 loudness: None,
+                effect_ranges: &[],
                 ..jpop
             },
             checks

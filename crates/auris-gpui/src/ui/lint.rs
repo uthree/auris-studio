@@ -258,6 +258,10 @@ impl AurisApp {
             }
             Rule::OffTargetLoudness => Key::LintOffTargetLoud,
             Rule::SilentTrack => Key::LintSilentTrack,
+            Rule::EffectSetting if diagnostic.severity == Severity::Warning => {
+                Key::LintEffectSettingDefault
+            }
+            Rule::EffectSetting => Key::LintEffectSetting,
         };
         let pitches = diagnostic
             .pitches
@@ -284,6 +288,23 @@ impl AurisApp {
             .replace("{clips}", &clips)
             .replace("{value}", &value)
             .replace("{limit}", &number(diagnostic.limit.unwrap_or_default()))
+            .replace("{effect}", &self.lint_effect_label(diagnostic))
+            .replace("{param}", diagnostic.param.as_deref().unwrap_or_default())
+    }
+
+    /// The name of the effect a finding is about, as the mixer draws it.
+    fn lint_effect_label(&self, diagnostic: &Diagnostic) -> String {
+        let Some(slot) = diagnostic.effect else {
+            return String::new();
+        };
+        let project = self.session.project();
+        let strip = match diagnostic.track {
+            Some(track) => project.track(track).map(|track| &track.mixer),
+            None => Some(&project.master),
+        };
+        strip
+            .and_then(|strip| strip.effects.iter().find(|effect| effect.id == slot))
+            .map_or_else(String::new, |effect| self.plugin_label(&effect.effect_id))
     }
 
     /// The fix, said as the button's tooltip and the menu row.
@@ -505,6 +526,7 @@ impl AurisApp {
             Rule::PitchMismatch => Key::LintNamePitchMismatch,
             Rule::Unpitched => Key::LintNameUnpitched,
             Rule::PhaseCancellation => Key::LintNamePhaseCancellation,
+            Rule::EffectSetting => Key::LintNameEffectSetting,
             Rule::DuplicateNote => Key::LintNameDuplicateNote,
             Rule::OverlappingClips => Key::LintNameOverlappingClips,
             Rule::InaudibleVelocity => Key::LintNameInaudibleVelocity,

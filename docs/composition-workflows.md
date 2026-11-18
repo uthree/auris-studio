@@ -50,7 +50,11 @@ reported as information rather than a warning. Where the style's page names a
 loudness, `lint_project`'s audio pass reports a mix outside it as
 `off_target_loudness` (a single level is held within a unit either way), and
 `normalize_mix` without a target aims at the middle of that range, and
-`verify_render` without one fails a file outside it. Going back to an earlier phase keeps the later
+`verify_render` without one fails a file outside it. Where the page names a
+range for an effect's setting (an amplifier's drive, a hall's room size),
+`lint_project` reports an inserted effect outside it as `effect_setting`: a
+warning when the setting was never moved from the effect's default, information
+when it was moved there. Going back to an earlier phase keeps the later
 phases' work and lists them under `phase.revisit`. `phase.checks` reports the
 unmet structural conditions of the current and earlier phases, read from
 `inspect_project`'s `phase_facts`: sections covering the song, chords in every

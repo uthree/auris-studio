@@ -236,6 +236,45 @@ mod tests {
     }
 
     #[test]
+    fn the_lint_holds_an_effect_to_the_range_its_page_names() {
+        // Each range the linter holds a genre's effects to is one its page writes: a line
+        // naming the effect and the key also writes the range's two ends.
+        use auris_session::session::style_checks::style_checks;
+        use auris_session::style::Style;
+        let numbers = |line: &str| -> Vec<String> {
+            line.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+                .map(|token| token.trim_matches('.').to_string())
+                .filter(|token| token.chars().any(|c| c.is_ascii_digit()))
+                .collect()
+        };
+        let mut checked = 0;
+        for genre in Genre::ALL {
+            let (_, path, text) = GENRES.iter().find(|(id, _, _)| *id == genre.id()).unwrap();
+            let style = Style {
+                genre: Some(genre),
+                usage: None,
+            };
+            for range in style_checks(style).effect_ranges {
+                let (effect, key) = (format!("`{}`", range.effect), format!("`{}`", range.param));
+                let (low, high) = (range.low.to_string(), range.high.to_string());
+                let written = text.lines().any(|line| {
+                    let named = numbers(line);
+                    line.contains(&effect)
+                        && line.contains(&key)
+                        && named.contains(&low)
+                        && named.contains(&high)
+                });
+                assert!(
+                    written,
+                    "{path} writes no {key} {low} to {high} for {effect}"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked >= 20, "only {checked} ranges");
+    }
+
+    #[test]
     fn a_chosen_style_brings_every_phase_of_both_pages() {
         let text = whole(&json!({"genre":"city_pop","usage":"loop_bgm"})).unwrap();
         assert!(text.starts_with("# Genre: City pop"), "{text}");
