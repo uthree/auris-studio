@@ -31,6 +31,7 @@ fn main() -> Result<(), auris_engine::EngineError> {
         Some(LiveTarget {
             index: 0,
             track: TrackId(1),
+            holds_pedal: false,
         }),
     );
     let until = Instant::now() + Duration::from_secs(seconds);

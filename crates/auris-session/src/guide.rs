@@ -1065,9 +1065,11 @@ pub mod architecture {
     //! a take is placed where the player was rather than on the timer's grid. That thread is not
     //! the audio thread: it may lock, and the one lock it takes is held for one message.
     //!
-    //! The sustain pedal is held there too rather than sent on, because of the built-in
-    //! instruments only the physical piano and vibraphone know what controller 64 means; a take
-    //! therefore writes a pedalled note as the long note that was heard. The bend wheel spans two semitones, the MIDI default.
+    //! The sustain pedal is held there too rather than sent on, for every instrument without
+    //! dampers of its own: a take writes a pedalled note as the long note that was heard. One
+    //! that has them ([`auris_synth::Model::has_dampers`]: the physical piano, hammered strings,
+    //! mallets and bells) is sent the pedal as controller 64 instead, and its take writes the keys
+    //! as they were held and the pedal as a lane. The bend wheel spans two semitones, the MIDI default.
     //!
     //! A headless session never listens: what it does must not depend on what is plugged into
     //! the machine. [`set_midi_input`](crate::Session::set_midi_input) is the switch, and the

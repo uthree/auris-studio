@@ -185,6 +185,16 @@ impl Model {
         }
     }
 
+    /// Whether this instrument has dampers that the sustain pedal (controller 64) lifts: the
+    /// piano, the hammered strings, the tuned bars and the bells. A keyboard plays the pedal to
+    /// these rather than holding their notes for them.
+    pub const fn has_dampers(self) -> bool {
+        matches!(
+            self,
+            Self::Piano | Self::HammeredDulcimer | Self::Mallet | Self::Bell
+        )
+    }
+
     /// The model a plugin id names.
     pub fn from_id(id: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|model| model.id() == id)

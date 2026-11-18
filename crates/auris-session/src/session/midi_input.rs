@@ -259,13 +259,27 @@ impl Session {
     }
 
     /// Tells the inputs where to sound what is played.
+    ///
+    /// A track whose instrument has dampers of its own is sent the sustain pedal, and every
+    /// other has its notes held for it; which it is, is read afresh each time, so changing the
+    /// instrument changes it.
     fn point_midi(&mut self) {
         let target = self.midi_target().and_then(|track| {
-            self.project
+            let (index, found) = self
+                .project
                 .tracks
                 .iter()
-                .position(|found| found.id == track)
-                .map(|index| LiveTarget { index, track })
+                .enumerate()
+                .find(|(_, found)| found.id == track)?;
+            let holds_pedal = found.kind.as_instrument().is_some_and(|instrument| {
+                auris_synth::Model::from_id(&instrument.instrument_id)
+                    .is_some_and(auris_synth::Model::has_dampers)
+            });
+            Some(LiveTarget {
+                index,
+                track,
+                holds_pedal,
+            })
         });
         self.midi.inputs.set_target(&self.engine, target);
     }
@@ -381,6 +395,45 @@ mod tests {
             "the wheel was written down: {:?}",
             written.bend
         );
+    }
+
+    #[test]
+    fn a_piano_take_writes_the_pedal_and_a_synth_take_the_long_notes() {
+        // Pedal down, a key struck and let go: what the take keeps of the pedal.
+        let pedalled = |instrument: &str| {
+            let mut session = session();
+            let track = session.add_instrument_track("Keys", instrument).unwrap();
+            session.set_midi_target(Some(track));
+            session.start_recording(Some(track)).unwrap();
+            session.point_midi();
+            let keyboard = &session.midi.inputs;
+            keyboard.receive(&[0xb0, 64, 127]);
+            keyboard.receive(&[0x90, 60, 100]);
+            keyboard.receive(&[0x80, 60, 0]);
+            // Down still: the synth's note is being held for it, the piano's is its own. The
+            // take ends with the pedal down, since a silent engine's clock stands still and a
+            // pedal let up at the same instant would leave only the release.
+            let sounding = session.midi_sounding();
+            session.drain_midi();
+            let report = session.stop_recording().unwrap();
+            let clip = report.takes[0].clip.expect("a clip was written");
+            let (_, written) = session.project().midi_clip(clip).unwrap();
+            (
+                sounding,
+                written
+                    .curve(auris_core::project::ClipCurve::SUSTAIN)
+                    .to_vec(),
+            )
+        };
+        let (piano_sounding, piano_pedal) = pedalled(auris_synth::Model::Piano.id());
+        assert!(piano_sounding.is_empty(), "the piano's key was let go");
+        assert!(
+            piano_pedal.iter().any(|point| point.value > 0.99),
+            "the pedal was written down: {piano_pedal:?}"
+        );
+        let (synth_sounding, synth_pedal) = pedalled("auris.synth.lead");
+        assert_eq!(synth_sounding, vec![60], "the pedal holds the synth's note");
+        assert!(synth_pedal.is_empty(), "a synth take writes no pedal");
     }
 
     #[test]
