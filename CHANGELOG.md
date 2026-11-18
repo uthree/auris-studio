@@ -7,6 +7,57 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## 0.23.0 — 2026-11-19
+
+**Hum a melody into the piano roll, and play the physical instruments' techniques with standard
+MIDI controllers.** The performance controls are reorganised so each control lives in one place
+and each instrument is offered the techniques that suit it.
+
+### Playing and recording
+
+* **Voice input.** With it on, Record on a note track writes down what is sung or hummed, through
+  the same take as the MIDI keyboard: count-in, record mode, loop passes and quantize all apply.
+  It is switched from the Record button's menu or Settings → MIDI → Voice input.
+* **Convert Humming to Notes** on an audio clip's menu writes a hummed recording onto a new
+  instrument track under it.
+* The workshop's reference piano roll can record from a MIDI keyboard or a voice.
+
+### Physical instruments
+
+* **Techniques are standard MIDI controllers**, so imported MIDI and live playing reach them:
+  half pedalling (CC64), sostenuto (CC66), soft pedal (CC67), legato footswitch (CC68),
+  portamento (CC65, CC5), palm mute on the guitars and bass (CC75), bow placement and hammer
+  hardness (CC74), breath (CC2) and the vibraphone's motor (CC1).
+* A live MIDI keyboard sends the pedal at every depth to instruments that answer it.
+
+### Performance
+
+* **One home for each control.** Swing and gate belong to the performance stack rather than the
+  phrase recipe; timing and velocity wander become Humanize and one balance dial.
+* The performance section opens with Swing, Gate, Humanize and a new **Shape** dial; other
+  techniques appear once a clip uses them, and **+ Add a technique** offers only those that suit
+  the instrument — no pedal on a guitar, no strum on keys.
+* Starting values and the score-reading stages are sized against measured human playing, so a
+  moderate amount sounds like a pianist rather than past one.
+* Takes sit on one row: previous, the take number, next, then Write It Again.
+
+### Composing with the agent
+
+* **Every genre names the effects its parts and its mix take**, and the mix phase works through
+  them before normalising; an electric guitar gets its amplifier when it is chosen.
+* Agents can read and replace a hosted CLAP instrument's whole state (`plugin_state`), reaching
+  sounds that live outside its parameter list.
+* `edit_recipe`, `generate_phrase` and `accompaniment` no longer take `swing` or `gate`; they are
+  `set_performance`'s.
+
+### Hosted plugins
+
+* VST3 plugins in the Windows per-user folder are found without a custom search path, and Dexed
+  no longer crashes when it is removed.
+
+A saved clip's recipe `swing` and `gate` are ignored on loading; the notes already written in it
+are unchanged until it is written again.
+
 ## 0.22.0 — 2026-11-18
 
 **Play and record from a MIDI keyboard, and tune a song to something other than equal
