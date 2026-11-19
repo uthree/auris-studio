@@ -123,6 +123,15 @@ fn row_at(y: Pixels, scroll: f32, count: usize) -> Option<usize> {
         .filter(|row| *row < count)
 }
 
+/// What the lane menu calls loading a file: plainly when the track already plays files, and
+/// naming the switch to the drum sampler when the file is about to replace the kit.
+fn load_sample_key(takes_files: bool) -> Key {
+    match takes_files {
+        true => Key::DrumLaneLoadSample,
+        false => Key::DrumLaneLoadSampleSwitch,
+    }
+}
+
 /// What a lane says about the files it plays: the first one's name, and how many more alternate
 /// with it.
 fn sample_badge(names: &[String]) -> String {
@@ -176,6 +185,19 @@ impl AurisApp {
     pub(crate) fn drum_lane_title(&self, track: TrackId, note: u8) -> String {
         let map = self.session.drum_assignments(track).unwrap_or_default();
         self.drum_row_label(&row_for(&map, note))
+    }
+
+    /// `true` when a drum track already plays files, so giving a lane one changes only that lane.
+    ///
+    /// The drum sampler, or the audio sampler somebody put the track on by hand. Anything else is
+    /// replaced by the drum sampler on the first file.
+    pub(crate) fn lanes_take_files(&self, track: TrackId) -> bool {
+        self.session.is_on_drum_sampler(track)
+            || self
+                .project()
+                .track(track)
+                .and_then(|entry| entry.kind.as_instrument())
+                .is_some_and(|inner| inner.instrument_id == AUDIO_SAMPLER_ID)
     }
 
     /// The drum track and key whose name is under `pointer`, when the drum editor is showing.
@@ -404,7 +426,9 @@ impl AurisApp {
                 )
                 .separator()
                 .item(
-                    self.t(Key::DrumLaneLoadSample),
+                    // Loading a file onto a kit that is not a sampler replaces the kit, so the
+                    // item says so rather than leaving it to be found out.
+                    self.t(load_sample_key(self.lanes_take_files(track))),
                     MenuCommand::LoadDrumSample {
                         track,
                         note: lane.note,
@@ -413,9 +437,9 @@ impl AurisApp {
                 );
             let sampled = self
                 .session
-                .drum_lane_samples(track)
+                .drum_pads(track)
                 .iter()
-                .any(|sample| sample.note == lane.note);
+                .any(|pad| pad.note == lane.note);
             if sampled {
                 menu = menu
                     .item(
@@ -775,7 +799,7 @@ impl AurisApp {
         let theme = self.theme.clone();
         let labels: Vec<String> = rows.iter().map(|row| self.drum_row_label(row)).collect();
         let lane_samples = track
-            .map(|track| self.session.drum_lane_samples(track))
+            .map(|track| self.session.drum_pads(track))
             .unwrap_or_default();
         let selected_lane = self.drum_editor.selected_lane;
         let label_elements = rows
@@ -1992,16 +2016,18 @@ mod window_tests {
                 )
                 .unwrap();
             assert!(line.contains("Big Kick"), "{line}");
-            let samples = this.session.drum_lane_samples(track);
+            let samples = this.session.drum_pads(track);
             assert_eq!(samples.len(), 1);
             assert_eq!(samples[0].note, kick);
+            assert!(this.session.is_on_drum_sampler(track));
+            assert!(this.lanes_take_files(track));
         });
         // The row draws its badge, and taking the file off again leaves the lane.
         paint(&app, cx);
         app.update(cx, |this, _| {
             let kick = this.session.drum_assignments(track).unwrap().voices[&DrumRole::Kick];
             this.clear_drum_sample(track, kick);
-            assert!(this.session.drum_lane_samples(track).is_empty());
+            assert!(this.session.drum_pads(track).is_empty());
             assert!(this.drum_rows().iter().any(|row| row.pitch == kick));
         });
     }

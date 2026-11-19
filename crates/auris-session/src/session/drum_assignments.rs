@@ -64,12 +64,19 @@ impl Session {
     }
 
     /// Stable user-library key for the sound source selected on a drum track.
+    ///
+    /// `None` for the drum sampler as well as for other track kinds: its lanes are its pads, each
+    /// playing a file of this project, so a map remembered for "the drum sampler" would name
+    /// sounds another project does not have.
     pub fn drum_map_source(&self, track: TrackId) -> Option<DrumMapSource> {
         let entry = self.project.track(track)?;
         if !entry.kind.is_drum() {
             return None;
         }
         let instrument = entry.kind.as_instrument()?;
+        if instrument.instrument_id == auris_sampler::DRUM_SAMPLER_ID {
+            return None;
+        }
         let plugin_file = instrument
             .file
             .as_ref()

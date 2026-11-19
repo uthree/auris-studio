@@ -1763,7 +1763,13 @@ pub mod plugins {
     //! names its own keys; [`auris_sampler::zones`] gives the rule and why it is that one. The session mirrors its decoded sources
     //! into an [`auris_sampler::SampleBank`] in [`crate::Session::rebuild_graph`], the one moment
     //! a sampler reads it, so no edit has to remember to keep the two in step.
-    //! [`auris_sampler::needs_asset`] names both samplers for whatever picks an instrument on
+    //!
+    //! The **drum sampler** ([`auris_sampler::DRUM_SAMPLER_ID`]) is the same player under its own
+    //! name, with key tracking and the loop taken away: a drum track's lanes are its pads, and a
+    //! file given to a lane ([`crate::Session::place_drum_sample`]) is a zone on that key alone.
+    //! The pads are not stored apart from the lanes and the zones; why, and how a kit's lanes
+    //! survive the switch, is the `drum_samples` module's account.
+    //! [`auris_sampler::needs_asset`] names all three samplers for whatever picks an instrument on
     //! somebody's behalf: each is registered, and each is silent until a file is chosen.
     //!
     //! SoundFont imports also register their absolute file identity in the application's

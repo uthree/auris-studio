@@ -26,7 +26,7 @@ pub(super) fn envelope_controls(registry: &PluginRegistry, project: &Project, tr
         || id == "auris.synth.chiptune"
         || auris_synth::AnalogPatch::from_id(id).is_some()
         || auris_synth::BoomPatch::from_id(id).is_some()
-        || id == auris_sampler::AUDIO_SAMPLER_ID)
+        || auris_sampler::plays_project_audio(id))
     {
         return Value::Null;
     }

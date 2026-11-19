@@ -199,6 +199,12 @@ pub enum MenuCommand {
     },
     /// Stop one key of a drum track playing a file; its lane stays.
     ClearDrumSample { track: TrackId, note: u8 },
+    /// Put one drum sampler pad in a choke group, or take it out of one.
+    SetDrumPadChoke {
+        track: TrackId,
+        note: u8,
+        choke: Option<u8>,
+    },
     /// Choose a voice file for one explicit singer track.
     ChooseSingerVoice(TrackId),
     /// Apply one installed voice to the explicit singer track.
@@ -1051,6 +1057,14 @@ impl AurisApp {
                 self.load_drum_sample(track, note, layer, cx)
             }
             MenuCommand::ClearDrumSample { track, note } => self.clear_drum_sample(track, note),
+            MenuCommand::SetDrumPadChoke { track, note, choke } => self.edit_drum_pad(
+                track,
+                note,
+                auris_session::DrumPadEdit {
+                    choke: Some(choke),
+                    ..Default::default()
+                },
+            ),
             MenuCommand::ChooseSingerVoice(track) => {
                 self.select_track(track);
                 self.choose_singer_voice(cx);

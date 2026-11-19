@@ -108,7 +108,9 @@ mod resonance;
 mod rhythm;
 mod samples;
 pub mod style_checks;
-pub use drum_samples::{DrumLaneSample, HI_HAT_CHOKE};
+pub use drum_samples::{
+    DrumPad, DrumPadEdit, HI_HAT_CHOKE, PAD_MAX_GAIN_DB, PAD_MIN_GAIN_DB, PAD_TUNE_RANGE,
+};
 pub use samples::{
     AgentSample, DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneEdit, SampleZoneView, detect_pitch,
     parse_root_note,

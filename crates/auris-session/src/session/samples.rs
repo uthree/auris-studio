@@ -12,8 +12,8 @@ use std::sync::Arc;
 use auris_core::project::DrumMap;
 use auris_core::{AssetPath, AudioBuffer, PluginState, SourceId, TrackId};
 use auris_sampler::{
-    AUDIO_SAMPLER_ID, AUDIO_SAMPLER_KEY_TRACKING_KEY, AUDIO_SAMPLER_LOOP_KEY, MAX_SAMPLE_ZONES,
-    SampleZone, store_zones, stored_zones,
+    AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, DRUM_SAMPLER_ID, MAX_SAMPLE_ZONES, SampleZone,
+    plays_project_audio, store_zones, stored_zones,
 };
 
 use super::{Session, decode_audio};
@@ -184,7 +184,7 @@ impl Session {
         self.project
             .track(track)
             .and_then(|entry| entry.kind.as_instrument())
-            .filter(|instrument| instrument.instrument_id == AUDIO_SAMPLER_ID)
+            .filter(|instrument| plays_project_audio(&instrument.instrument_id))
             .map(|instrument| stored_zones(&instrument.instrument_state))
             .unwrap_or_default()
     }
@@ -352,12 +352,12 @@ impl Session {
             .collect()
     }
 
-    /// `true` when the track plays the audio sampler.
-    fn track_is_on_sampler(&self, track: TrackId) -> bool {
+    /// `true` when the track plays the audio sampler or the drum sampler.
+    pub(super) fn track_is_on_sampler(&self, track: TrackId) -> bool {
         self.project
             .track(track)
             .and_then(|entry| entry.kind.as_instrument())
-            .is_some_and(|instrument| instrument.instrument_id == AUDIO_SAMPLER_ID)
+            .is_some_and(|instrument| plays_project_audio(&instrument.instrument_id))
     }
 
     /// Refuses a track the sampler cannot be put on.
@@ -380,13 +380,14 @@ impl Session {
         Ok(())
     }
 
-    /// Puts the track on the audio sampler, inside an edit already recorded.
+    /// Puts the track on a sampler, inside an edit already recorded: the drum sampler for a drum
+    /// track, the audio sampler for any other. A track already on either stays where it is.
     ///
     /// Answers whether the track arrived from another instrument, and so starts from the
     /// sampler's defaults with an empty map.
     ///
     /// A drum track keeps its lanes and their roles, which are the document's rather than the
-    /// old instrument's, and arrives with key tracking off: a kit is played by key, unpitched.
+    /// old instrument's: the drum sampler plays by lane, and those are its pads.
     pub(super) fn put_on_sampler(&mut self, track: TrackId) -> bool {
         let mut swapped = false;
         let drum = self
@@ -397,17 +398,15 @@ impl Session {
             .project
             .track_mut(track)
             .and_then(|entry| entry.kind.as_instrument_mut())
-            && inner.instrument_id != AUDIO_SAMPLER_ID
+            && !plays_project_audio(&inner.instrument_id)
         {
             let lanes = DrumMap::load(&inner.instrument_state).filter(|_| drum);
-            inner.instrument_id = AUDIO_SAMPLER_ID.to_string();
-            inner.instrument_state = PluginState::empty();
-            if drum {
-                inner
-                    .instrument_state
-                    .params
-                    .insert(AUDIO_SAMPLER_KEY_TRACKING_KEY.to_string(), 0.0);
+            inner.instrument_id = match drum {
+                true => DRUM_SAMPLER_ID,
+                false => AUDIO_SAMPLER_ID,
             }
+            .to_string();
+            inner.instrument_state = PluginState::empty();
             if let Some(lanes) = lanes {
                 lanes.store(&mut inner.instrument_state);
             }
@@ -638,9 +637,14 @@ impl Session {
                 })
             })
             .collect();
+        let instrument = self
+            .project
+            .track(track)
+            .and_then(|entry| entry.kind.as_instrument())
+            .map_or(AUDIO_SAMPLER_ID, |inner| inner.instrument_id.as_str());
         serde_json::json!({
             "track": track.0,
-            "instrument": AUDIO_SAMPLER_ID,
+            "instrument": instrument,
             "loop": state.get(AUDIO_SAMPLER_LOOP_KEY).copied().unwrap_or(0.0) >= 0.5,
             "zones": zones,
         })

@@ -24,6 +24,7 @@ mod design_language_tests;
 pub mod drop;
 pub mod drum_assignments;
 pub mod drum_editor;
+pub mod drum_pads;
 pub mod drums;
 pub mod envelope;
 pub mod event_list;

@@ -40,6 +40,9 @@ use crate::zones::{MAX_ZONES, SampleZone, pick_zone, store_zones, stored_zones};
 /// The audio sampler's plugin id, as a project file stores it.
 pub const AUDIO_SAMPLER_ID: &str = "auris.sampler.audio";
 
+/// The drum sampler's plugin id: the same player, one recording per drum lane.
+pub const DRUM_SAMPLER_ID: &str = "auris.sampler.drums";
+
 /// Voices one instance may sound at once.
 ///
 /// A sample with a long tail and a quick part can stack a few dozen; past that the oldest-and-
@@ -165,13 +168,26 @@ pub fn register_audio_sampler(registry: &mut PluginRegistry, samples: SharedSamp
     registry.register_instrument(move || Box::new(AudioSampler::new(Arc::clone(&samples))));
 }
 
+/// Registers the drum sampler, reading the same bank as the audio sampler.
+pub fn register_drum_sampler(registry: &mut PluginRegistry, samples: SharedSamples) {
+    registry.register_instrument(move || Box::new(AudioSampler::drums(Arc::clone(&samples))));
+}
+
+/// `true` for both instruments that play the project's own audio sources through a zone map.
+///
+/// They store the same state and are edited by the same commands; only what they offer a user
+/// differs.
+pub fn plays_project_audio(instrument_id: &str) -> bool {
+    instrument_id == AUDIO_SAMPLER_ID || instrument_id == DRUM_SAMPLER_ID
+}
+
 /// `true` for an instrument that is silent until a file has been chosen for it.
 ///
-/// Both samplers are: a SoundFont player with no preset and an audio sampler with no sample are
-/// registered instruments that make no sound. Anything choosing an instrument *for* somebody — a
-/// fallback, a timbre search, a composer filling a track — must skip them.
+/// Every sampler is: a SoundFont player with no preset, and an audio or drum sampler with no
+/// sample, are registered instruments that make no sound. Anything choosing an instrument *for*
+/// somebody — a fallback, a timbre search, a composer filling a track — must skip them.
 pub fn needs_asset(instrument_id: &str) -> bool {
-    instrument_id == crate::SAMPLER_ID || instrument_id == AUDIO_SAMPLER_ID
+    instrument_id == crate::SAMPLER_ID || plays_project_audio(instrument_id)
 }
 
 /// One sounding copy of a sample.
@@ -236,8 +252,13 @@ struct Playable {
 /// The loop, when it is on, runs between two fractions of each sample's length for as long as
 /// the note is held *and* through its release, so the release time is what ends a looped note.
 /// Off, the sound plays to its end and the note is over there whatever the envelope says.
+///
+/// [`AudioSampler::drums`] is the same player as the **drum sampler**: key tracking is always off
+/// and there is no loop, so neither is offered, and each key plays the recordings on it alone.
 pub struct AudioSampler {
     samples: SharedSamples,
+    /// Plays as the drum sampler.
+    drums: bool,
     params: Vec<ParamDescriptor>,
     values: [f32; PARAM_COUNT],
     level: SmoothedValue,
@@ -260,6 +281,15 @@ pub struct AudioSampler {
 impl AudioSampler {
     /// A sampler reading audio from `samples`.
     pub fn new(samples: SharedSamples) -> Self {
+        Self::build(samples, false)
+    }
+
+    /// The drum sampler, reading audio from `samples`.
+    pub fn drums(samples: SharedSamples) -> Self {
+        Self::build(samples, true)
+    }
+
+    fn build(samples: SharedSamples, drums: bool) -> Self {
         let params = vec![
             ParamDescriptor::decibels(LEVEL as u32, "level", "Level", -60.0, 12.0, 0.0),
             ParamDescriptor::new(TUNE as u32, "tune", "Fine Tune", -1.0, 1.0, 0.0)
@@ -284,8 +314,23 @@ impl AudioSampler {
         for (slot, descriptor) in values.iter_mut().zip(&params) {
             *slot = descriptor.default;
         }
+        // A kit is played by key and never loops, so the drum sampler offers neither switch.
+        let params: Vec<ParamDescriptor> = params
+            .into_iter()
+            .filter(|descriptor| {
+                !drums
+                    || !matches!(
+                        descriptor.id.index(),
+                        KEY_TRACKING | LOOP | LOOP_START | LOOP_END
+                    )
+            })
+            .collect();
+        if drums {
+            values[KEY_TRACKING] = 0.0;
+        }
         let mut sampler = Self {
             samples,
+            drums,
             params,
             values,
             level: SmoothedValue::new(1.0, LEVEL_SMOOTHING_SECONDS, 48_000.0),
@@ -363,7 +408,7 @@ impl AudioSampler {
     }
 
     fn key_tracking(&self) -> bool {
-        self.values[KEY_TRACKING] >= 0.5
+        !self.drums && self.values[KEY_TRACKING] >= 0.5
     }
 
     fn note_on(&mut self, key: u8, pitch: f32, velocity: f32) {
@@ -588,12 +633,17 @@ impl Parameterized for AudioSampler {
     }
 
     fn param(&self, id: ParamId) -> f32 {
-        self.values.get(id.index()).copied().unwrap_or(0.0)
+        match self.params.iter().any(|descriptor| descriptor.id == id) {
+            true => self.values.get(id.index()).copied().unwrap_or(0.0),
+            false => 0.0,
+        }
     }
 
     fn set_param(&mut self, id: ParamId, value: f32) {
         let index = id.index();
-        let Some(descriptor) = self.params.get(index) else {
+        // Found by id: the drum sampler offers only some of the parameters, so a position in the
+        // list is not an id.
+        let Some(descriptor) = self.params.iter().find(|descriptor| descriptor.id == id) else {
             return;
         };
         self.values[index] = descriptor.clamp(value);
@@ -630,12 +680,20 @@ impl Parameterized for AudioSampler {
 
 impl Instrument for AudioSampler {
     fn descriptor(&self) -> PluginDescriptor {
-        PluginDescriptor::instrument(
-            AUDIO_SAMPLER_ID,
-            "Sampler",
-            "Plays audio files across the keyboard",
-            PluginCategory::Sampler,
-        )
+        match self.drums {
+            true => PluginDescriptor::instrument(
+                DRUM_SAMPLER_ID,
+                "Drum Sampler",
+                "Plays an audio file on each drum lane",
+                PluginCategory::Drum,
+            ),
+            false => PluginDescriptor::instrument(
+                AUDIO_SAMPLER_ID,
+                "Sampler",
+                "Plays audio files across the keyboard",
+                PluginCategory::Sampler,
+            ),
+        }
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {
@@ -985,6 +1043,47 @@ mod tests {
             left.extend_from_slice(out.channel(0));
         }
         left
+    }
+
+    #[test]
+    fn the_drum_sampler_plays_every_key_unpitched_and_offers_no_loop_or_tracking() {
+        let bank = SampleBank::shared();
+        bank.insert(SourceId(1), sine(440.0, 1.0));
+        let mut drums = AudioSampler::drums(bank);
+        assert_eq!(drums.descriptor().id, DRUM_SAMPLER_ID);
+        assert_eq!(drums.descriptor().category, PluginCategory::Drum);
+        let keys: Vec<&str> = drums.parameters().iter().map(|p| &*p.key).collect();
+        assert!(!keys.contains(&KEY_TRACKING_KEY) && !keys.contains(&LOOP_KEY));
+        assert!(keys.contains(&"level") && keys.contains(&"release"));
+        // A state saved by the audio sampler with tracking and the loop on changes neither.
+        let mut state = AudioSampler::new(SampleBank::shared()).save_state();
+        state.params.insert(KEY_TRACKING_KEY.into(), 1.0);
+        state.params.insert(LOOP_KEY.into(), 1.0);
+        // A zone on a range rather than one key: still unpitched on every key it covers.
+        store_zones(&mut state, &[SampleZone::new(SourceId(1), 60)]);
+        drums.load_state(&state);
+        drums.prepare(&PrepareContext::new(RATE, 512, 2));
+        assert!(!drums.save_state().params.contains_key(LOOP_KEY));
+        let out = render(&mut drums, &[note(84, 1.0)], 40);
+        let measured = frequency(&out[4_800..19_200]);
+        assert!((measured - 440.0).abs() < 1.0, "{measured} Hz");
+        // And the level still answers, by id rather than by position in the shorter list.
+        drums.set_param_by_key("level", -6.0);
+        let level = drums
+            .parameters()
+            .iter()
+            .find(|p| &*p.key == "level")
+            .unwrap()
+            .id;
+        assert_eq!(drums.param(level), -6.0);
+        let release = drums
+            .parameters()
+            .iter()
+            .find(|p| &*p.key == "release")
+            .unwrap()
+            .id;
+        drums.set_param(release, 0.5);
+        assert_eq!(drums.param(release), 0.5);
     }
 
     #[test]

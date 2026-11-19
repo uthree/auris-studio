@@ -6,7 +6,7 @@ use auris_core::PluginRegistry;
 use auris_dsp::DspPack;
 use auris_sampler::{
     SampleBank, SharedSamples, SharedSoundFonts, SoundFontBank, register_audio_sampler,
-    register_sampler,
+    register_drum_sampler, register_sampler,
 };
 use auris_synth::SynthPack;
 
@@ -39,7 +39,8 @@ pub fn registry_with_samples(
     registry.install::<SynthPack>();
     registry.install::<DspPack>();
     register_sampler(&mut registry, fonts);
-    register_audio_sampler(&mut registry, samples);
+    register_audio_sampler(&mut registry, Arc::clone(&samples));
+    register_drum_sampler(&mut registry, samples);
     // New tracks start on the physical piano, independent of registry sort order.
     registry.set_default_instrument(DEFAULT_INSTRUMENT);
     Arc::new(registry)
@@ -66,6 +67,7 @@ mod tests {
         assert!(registry.has_instrument("auris.synth.noisedrum"));
         assert!(registry.has_instrument(auris_sampler::SAMPLER_ID));
         assert!(registry.has_instrument(auris_sampler::AUDIO_SAMPLER_ID));
+        assert!(registry.has_instrument(auris_sampler::DRUM_SAMPLER_ID));
         for id in [
             "auris.fx.gain",
             "auris.fx.eq",
