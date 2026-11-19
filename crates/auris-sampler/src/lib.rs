@@ -68,12 +68,13 @@ pub mod zones;
 mod test_support;
 
 pub use audio::{
-    AUDIO_SAMPLER_ID, AudioSampler, LOOP_KEY as AUDIO_SAMPLER_LOOP_KEY, SampleBank, SharedSamples,
-    needs_asset, register_audio_sampler,
+    AUDIO_SAMPLER_ID, AudioSampler, KEY_TRACKING_KEY as AUDIO_SAMPLER_KEY_TRACKING_KEY,
+    LOOP_KEY as AUDIO_SAMPLER_LOOP_KEY, SampleBank, SharedSamples, needs_asset,
+    register_audio_sampler,
 };
 pub use bank::{SharedSoundFonts, SoundFontBank};
 pub use sampler::{SAMPLER_ID, Sampler, register_sampler, store_preset, stored_preset};
 pub use zones::{
-    KeyRange, MAX_ZONES as MAX_SAMPLE_ZONES, SampleZone, VelocityRange, keys_played_by, pick_zone,
-    store_zones, stored_zones,
+    KeyRange, MAX_CHOKE_GROUP, MAX_ZONES as MAX_SAMPLE_ZONES, SampleZone, VelocityRange,
+    keys_played_by, pick_zone, store_zones, stored_zones,
 };

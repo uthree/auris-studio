@@ -317,7 +317,7 @@ impl Session {
         self.set_drum_map(track, map)
     }
 
-    fn checked_drum_map(&self, track: TrackId) -> Result<DrumMap, SessionError> {
+    pub(super) fn checked_drum_map(&self, track: TrackId) -> Result<DrumMap, SessionError> {
         let entry = self
             .project
             .track(track)

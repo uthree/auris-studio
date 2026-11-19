@@ -1296,6 +1296,8 @@ mod tests {
                     high_velocity: None,
                     tune: None,
                     gain_db: None,
+                    one_shot: None,
+                    choke_group: None,
                 }],
                 append: None,
                 looped: None,

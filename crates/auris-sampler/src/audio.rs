@@ -71,6 +71,9 @@ const PARAM_COUNT: usize = 10;
 /// The key of the loop switch.
 pub const LOOP_KEY: &str = "loop";
 
+/// The key of the key-tracking switch: off, every key plays its recording unpitched.
+pub const KEY_TRACKING_KEY: &str = "key_tracking";
+
 /// A sample bank shared between the session that fills it and the samplers that read it.
 pub type SharedSamples = Arc<SampleBank>;
 
@@ -218,6 +221,10 @@ struct Playable {
     gain: f32,
     /// Loop bounds in frames, `None` when looping is off or the region is too short.
     loop_region: Option<(usize, usize)>,
+    /// Plays to its end whatever the note's length.
+    one_shot: bool,
+    /// The choke group its hits cut.
+    choke: Option<u8>,
 }
 
 /// Plays audio sources across the keyboard, each pitched from its root note.
@@ -257,7 +264,7 @@ impl AudioSampler {
             ParamDescriptor::decibels(LEVEL as u32, "level", "Level", -60.0, 12.0, 0.0),
             ParamDescriptor::new(TUNE as u32, "tune", "Fine Tune", -1.0, 1.0, 0.0)
                 .with_unit(ParamUnit::Semitones),
-            ParamDescriptor::toggle(KEY_TRACKING as u32, "key_tracking", "Key Tracking", true),
+            ParamDescriptor::toggle(KEY_TRACKING as u32, KEY_TRACKING_KEY, "Key Tracking", true),
             ParamDescriptor::new(ATTACK as u32, "attack", "Attack", 0.0, 2.0, 0.0)
                 .with_unit(ParamUnit::Seconds)
                 .with_curve(ParamValueCurve::Power(3.0)),
@@ -326,7 +333,8 @@ impl AudioSampler {
         );
         for playable in &mut self.playable {
             playable.loop_region = None;
-            if !looped {
+            // A one-shot plays to its end, and a loop has no end.
+            if !looped || playable.one_shot {
                 continue;
             }
             let length = playable.buffer.frame_count();
@@ -376,6 +384,21 @@ impl AudioSampler {
             return;
         };
         self.turn = self.turn.wrapping_add(1);
+        // A hit in a choke group cuts whatever of the group still rings, itself included, with
+        // the de-click ramp rather than the release: an open hat closed by the pedal stops.
+        if let Some(group) = self.playable[zone].choke {
+            for voice in &mut self.voices {
+                if voice.key.is_some()
+                    && self
+                        .playable
+                        .get(voice.zone)
+                        .is_some_and(|playable| playable.choke == Some(group))
+                {
+                    voice.held = false;
+                    voice.envelope.kill();
+                }
+            }
+        }
         let index = self
             .voices
             .iter()
@@ -414,6 +437,7 @@ impl AudioSampler {
     ///
     /// One release answers one strike. A key struck twice before either release is two notes,
     /// and letting both go at the first release would cut the second short of what was written.
+    /// A one-shot's release is counted but not obeyed: the strike is let go, the sound goes on.
     fn note_off(&mut self, key: u8) {
         let held = self
             .voices
@@ -422,7 +446,13 @@ impl AudioSampler {
             .min_by_key(|voice| voice.started);
         if let Some(voice) = held {
             voice.held = false;
-            voice.envelope.release();
+            let one_shot = self
+                .playable
+                .get(voice.zone)
+                .is_some_and(|playable| playable.one_shot);
+            if !one_shot {
+                voice.envelope.release();
+            }
         }
     }
 
@@ -639,6 +669,8 @@ impl Instrument for AudioSampler {
                         buffer,
                         gain: db_to_gain(zone.gain_db),
                         loop_region: None,
+                        one_shot: zone.one_shot,
+                        choke: zone.choke,
                     });
                 }
                 None => log::warn!("sampler: no audio loaded for source {}", zone.source.0),
@@ -932,6 +964,87 @@ mod tests {
         // The zone's own level: -6 dB on a 0.5 sine at full velocity.
         let expected = 0.5 * db_to_gain(-6.0);
         assert!((peak(&out[1_000..]) - expected).abs() < 0.01);
+    }
+
+    /// Renders `blocks` blocks of 512, each with the events listed against its index.
+    fn render_scored(
+        sampler: &mut AudioSampler,
+        score: &[(usize, NoteEvent)],
+        blocks: usize,
+    ) -> Vec<f32> {
+        let mut left = Vec::new();
+        let mut out = AudioBuffer::new(2, 512, RATE);
+        let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
+        for block in 0..blocks {
+            let events: Vec<NoteEvent> = score
+                .iter()
+                .filter(|(at, _)| *at == block)
+                .map(|(_, event)| *event)
+                .collect();
+            sampler.process(&events, &mut out, &ctx);
+            left.extend_from_slice(out.channel(0));
+        }
+        left
+    }
+
+    #[test]
+    fn a_one_shot_plays_to_its_end_through_a_short_note() {
+        let off = NoteEvent::NoteOff { frame: 0, key: 38 };
+        // A sixteenth at 120 bpm is an eighth of a second; the hit is a second long.
+        let score = [(0, note(38, 1.0)), (12, off)];
+        let mut held = mapped(vec![(sine(440.0, 1.0), {
+            let mut zone = SampleZone::hit(SourceId(1), 38);
+            zone.one_shot = false;
+            zone
+        })]);
+        let cut = render_scored(&mut held, &score, 100);
+        // An ordinary zone is gone a release (0.1 s) after its note.
+        assert_eq!(peak(&cut[24_000..]), 0.0);
+        let mut shot = mapped(vec![(sine(440.0, 1.0), SampleZone::hit(SourceId(1), 38))]);
+        let rung = render_scored(&mut shot, &score, 100);
+        assert!((peak(&rung[40_000..47_000]) - 0.5).abs() < 0.01);
+        // And it is still over at the end of its recording.
+        assert_eq!(peak(&rung[48_100..]), 0.0);
+        assert_eq!(shot.active_voices(), 0);
+    }
+
+    #[test]
+    fn a_one_shot_ignores_the_loop_and_an_ordinary_zone_keeps_it() {
+        let mut sampler = mapped(vec![
+            (sine(440.0, 0.25), SampleZone::hit(SourceId(1), 38)),
+            (sine(440.0, 0.25), SampleZone::new(SourceId(2), 60)),
+        ]);
+        sampler.set_param_by_key(LOOP_KEY, 1.0);
+        let out = render(&mut sampler, &[note(38, 1.0), note(60, 1.0)], 60);
+        // The hit has ended by half a second; the looped note is still sounding alone.
+        assert!((peak(&out[24_000..30_000]) - 0.5).abs() < 0.01);
+        assert_eq!(sampler.active_voices(), 1);
+    }
+
+    #[test]
+    fn a_hit_in_a_choke_group_cuts_the_others_and_leaves_the_rest() {
+        let open = SampleZone {
+            choke: Some(1),
+            ..SampleZone::hit(SourceId(1), 46)
+        };
+        let closed = SampleZone {
+            choke: Some(1),
+            ..SampleZone::hit(SourceId(2), 42)
+        };
+        let crash = SampleZone::hit(SourceId(3), 49);
+        let mut sampler = mapped(vec![
+            (sine(440.0, 1.0), open),
+            (sine(440.0, 0.05), closed),
+            (sine(440.0, 1.0), crash),
+        ]);
+        render_scored(&mut sampler, &[(0, note(46, 1.0)), (0, note(49, 1.0))], 4);
+        assert_eq!(sampler.active_voices(), 2);
+        // The closed hat stops the open one within the de-click ramp, the crash rings on, and
+        // the closed hat itself is over at the end of its 50 ms.
+        render_scored(&mut sampler, &[(0, note(42, 1.0))], 10);
+        assert_eq!(sampler.active_voices(), 1);
+        let held: Vec<u8> = sampler.voices.iter().filter_map(|v| v.key).collect();
+        assert_eq!(held, vec![49]);
     }
 
     #[test]

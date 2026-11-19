@@ -28,6 +28,14 @@
 //! Recordings that tie — the same root, in the same layer — are **round-robin alternates**, the
 //! way a sampled drum or a plucked string avoids the machine-gun of one recording played twice:
 //! successive notes take them in turn.
+//!
+//! # Drum hits
+//!
+//! Two more properties of a zone belong to percussion rather than to the map. A **one-shot** zone
+//! plays its recording to the end whatever the note's length, because a drum part's notes are
+//! written as short as the grid and the cymbal's tail is not in them. A **choke group** is the
+//! hi-hat's pedal: a hit on any zone of a group cuts every sound of that group still ringing,
+//! itself included, so a closed hat stops the open one.
 
 use auris_core::SourceId;
 use auris_core::plugin::PluginState;
@@ -49,6 +57,9 @@ const LEGACY_ROOT_KEY: &str = "root";
 /// hand comes near; the bound is what keeps a model asking for a sample per frame from building
 /// an instrument a graph rebuild has to decode for minutes.
 pub const MAX_ZONES: usize = 512;
+
+/// The highest choke group; groups are numbered from 1, the way samplers number them.
+pub const MAX_CHOKE_GROUP: u8 = 16;
 
 /// The keys from `low` to `high`, both included.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,10 +162,20 @@ pub struct SampleZone {
     /// Level of this recording alone, in decibels, for balancing layers against each other.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub gain_db: f32,
+    /// Plays to the end of the recording, ignoring the note's release and the sampler's loop.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub one_shot: bool,
+    /// The choke group, 1 to [`MAX_CHOKE_GROUP`]: a hit on any zone of it cuts the others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub choke: Option<u8>,
 }
 
 fn is_zero(value: &f32) -> bool {
     *value == 0.0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl SampleZone {
@@ -167,7 +188,24 @@ impl SampleZone {
             velocity: VelocityRange::FULL,
             tune: 0.0,
             gain_db: 0.0,
+            one_shot: false,
+            choke: None,
         }
+    }
+
+    /// A drum hit: `source` on `key` alone, unpitched there, played to its end.
+    pub fn hit(source: SourceId, key: u8) -> Self {
+        let key = key.min(127);
+        Self {
+            keys: Some(KeyRange::new(key, key)),
+            one_shot: true,
+            ..Self::new(source, key)
+        }
+    }
+
+    /// `true` when the zone covers exactly `key` and nothing else, as a drum hit does.
+    pub fn is_only_on(&self, key: u8) -> bool {
+        self.keys == Some(KeyRange::new(key, key))
     }
 
     /// Puts every field back inside its range, for a zone read from somewhere untrusted.
@@ -185,6 +223,9 @@ impl SampleZone {
         } else {
             0.0
         };
+        self.choke = self
+            .choke
+            .filter(|group| (1..=MAX_CHOKE_GROUP).contains(group));
         self
     }
 }
@@ -434,5 +475,38 @@ mod tests {
         assert_eq!(zone.keys, Some(KeyRange::new(20, 90)));
         assert_eq!(zone.velocity, VelocityRange::FULL);
         assert_eq!(zone.tune, 24.0);
+    }
+
+    #[test]
+    fn a_hit_answers_its_own_key_and_survives_the_state() {
+        let zones = vec![
+            SampleZone {
+                choke: Some(1),
+                ..SampleZone::hit(SourceId(1), 42)
+            },
+            SampleZone::hit(SourceId(2), 36),
+        ];
+        assert_eq!(pick_zone(&zones, 42, 1.0, 0), Some(0));
+        assert_eq!(pick_zone(&zones, 36, 1.0, 0), Some(1));
+        assert_eq!(pick_zone(&zones, 38, 1.0, 0), None);
+        assert!(zones[0].is_only_on(42) && !zones[0].is_only_on(36));
+        let mut state = PluginState::empty();
+        store_zones(&mut state, &zones);
+        assert_eq!(stored_zones(&state), zones);
+    }
+
+    #[test]
+    fn a_choke_group_out_of_range_is_dropped() {
+        let mut state = PluginState::empty();
+        state.extra = serde_json::json!({ "zones": [
+            { "source": 1, "root": 60, "choke": 0 },
+            { "source": 2, "root": 60, "choke": 17 },
+            { "source": 3, "root": 60, "choke": 16, "one_shot": true }
+        ]});
+        let zones = stored_zones(&state);
+        assert_eq!(zones[0].choke, None);
+        assert_eq!(zones[1].choke, None);
+        assert_eq!(zones[2].choke, Some(16));
+        assert!(zones[2].one_shot && !zones[0].one_shot);
     }
 }

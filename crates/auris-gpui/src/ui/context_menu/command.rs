@@ -191,6 +191,14 @@ pub enum MenuCommand {
     },
     /// Remove a manual drum lane without deleting its existing notes.
     RemoveDrumLane { track: TrackId, lane: u64 },
+    /// Choose an audio file for one key of a drum track; `layer` adds it as a round-robin take.
+    LoadDrumSample {
+        track: TrackId,
+        note: u8,
+        layer: bool,
+    },
+    /// Stop one key of a drum track playing a file; its lane stays.
+    ClearDrumSample { track: TrackId, note: u8 },
     /// Choose a voice file for one explicit singer track.
     ChooseSingerVoice(TrackId),
     /// Apply one installed voice to the explicit singer track.
@@ -1039,6 +1047,10 @@ impl AurisApp {
                 self.toggle_drum_lane_role(track, lane, role)
             }
             MenuCommand::RemoveDrumLane { track, lane } => self.remove_drum_lane(track, lane),
+            MenuCommand::LoadDrumSample { track, note, layer } => {
+                self.load_drum_sample(track, note, layer, cx)
+            }
+            MenuCommand::ClearDrumSample { track, note } => self.clear_drum_sample(track, note),
             MenuCommand::ChooseSingerVoice(track) => {
                 self.select_track(track);
                 self.choose_singer_voice(cx);

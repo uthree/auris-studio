@@ -3030,6 +3030,119 @@ impl AurisApp {
         })
     }
 
+    /// Prompts for one audio file and plays it on one key of a drum track.
+    ///
+    /// `layer` adds it to what the key already plays, as a round-robin take, instead of
+    /// replacing it.
+    pub(crate) fn load_drum_sample(
+        &mut self,
+        track: TrackId,
+        note: u8,
+        layer: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let extensions: Vec<String> = auris_session::supported_audio_extensions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let language = self.language();
+        cx.spawn(async move |this, cx| {
+            let extension_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
+            let Some(handle) = rfd::AsyncFileDialog::new()
+                .set_title(Key::DialogLoadSample.get(language))
+                .add_filter(Key::FilterAudio.get(language), &extension_refs)
+                .pick_file()
+                .await
+            else {
+                return;
+            };
+            let path = handle.path().to_path_buf();
+            let _ = this.update(cx, |this, cx| {
+                this.read_drum_sample(track, note, path, layer, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Decodes an audio file on a worker and plays it on one key of a drum track.
+    ///
+    /// The file dialog and a drop onto a lane both end here.
+    pub(crate) fn read_drum_sample(
+        &mut self,
+        track: TrackId,
+        note: u8,
+        path: PathBuf,
+        layer: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let rate = self.project().sample_rate;
+        self.set_status(messages::importing(
+            self.language(),
+            path.display().to_string(),
+        ));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let read = read_file(
+                cx.background_executor().clone(),
+                Reading::Audio { rate },
+                path.clone(),
+            )
+            .await;
+            let _ = this.update(cx, |this, cx| {
+                match read
+                    .and_then(|loaded| this.take_drum_sample(track, note, &path, loaded, layer))
+                {
+                    Ok(line) => this.set_status(line),
+                    Err(error) => {
+                        this.set_failed_status(this.failure(Key::SamplerLoadSample, &error))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Gives decoded audio to one key of a drum track, and says so.
+    pub(crate) fn take_drum_sample(
+        &mut self,
+        track: TrackId,
+        note: u8,
+        path: &Path,
+        loaded: Loaded,
+        layer: bool,
+    ) -> Result<String, SessionError> {
+        let Loaded::Audio(buffer) = loaded else {
+            return Err(SessionError::EmptySample(path.to_path_buf()));
+        };
+        self.session
+            .place_drum_sample(track, note, path, buffer, layer)?;
+        let name = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+            .unwrap_or_default();
+        Ok(messages::drum_sample_loaded(
+            self.language(),
+            &name,
+            self.drum_lane_title(track, note),
+        ))
+    }
+
+    /// Stops one key of a drum track playing a file, and says so.
+    pub(crate) fn clear_drum_sample(&mut self, track: TrackId, note: u8) {
+        match self.session.clear_drum_sample(track, note) {
+            Ok(true) => {
+                let line = messages::drum_sample_cleared(
+                    self.language(),
+                    self.drum_lane_title(track, note),
+                );
+                self.set_status(line);
+            }
+            Ok(false) => {}
+            Err(error) => self.set_failed_status(error.to_string()),
+        }
+    }
+
     /// Gives a file that has been read to the document, and says what happened.
     ///
     /// The file dialogs and a drop all land here, which is what stops them from drifting apart —

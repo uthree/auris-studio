@@ -14,6 +14,7 @@ use gpui::{
 };
 
 use crate::app::{AurisApp, BandSurface, Drag};
+use crate::dock::Panel;
 use crate::theme::{Metrics, Theme};
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use crate::ui::paint;
@@ -122,7 +123,71 @@ fn row_at(y: Pixels, scroll: f32, count: usize) -> Option<usize> {
         .filter(|row| *row < count)
 }
 
+/// What a lane says about the files it plays: the first one's name, and how many more alternate
+/// with it.
+fn sample_badge(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => format!("♪ {only}"),
+        [first, rest @ ..] => format!("♪ {first} +{}", rest.len()),
+    }
+}
+
+/// How far down the lanes a pointer at `pointer` is, when it is over the lane names beside a grid
+/// drawn at `grid` — the place a file is let go to give it to a lane.
+///
+/// The names sit immediately left of the grid and share its rows, so the grid's recorded bounds
+/// are enough to place them; the answer is an offset for [`row_at`], which is what turns a press
+/// on those same names into a row.
+fn lane_names_offset(pointer: Point<Pixels>, grid: Bounds<Pixels>) -> Option<Pixels> {
+    let left = grid.origin.x - px(LABEL_WIDTH);
+    let inside = pointer.x >= left
+        && pointer.x < grid.origin.x
+        && pointer.y >= grid.origin.y
+        && pointer.y < grid.origin.y + grid.size.height;
+    inside.then(|| pointer.y - grid.origin.y)
+}
+
 impl AurisApp {
+    /// What a drum row is called: its name, else its roles, else its General MIDI name, with
+    /// the key it plays.
+    fn drum_row_label(&self, row: &DrumRow) -> String {
+        if !row.name.is_empty() {
+            format!("{} · {}", row.name, row.pitch)
+        } else if row.roles.is_empty() {
+            self.general_midi_drum_name(row.pitch).map_or_else(
+                || format!("MIDI {}", row.pitch),
+                |name| format!("{name} · {}", row.pitch),
+            )
+        } else {
+            format!(
+                "{} · {}",
+                row.roles
+                    .iter()
+                    .map(|role| self.t(role_key(*role)))
+                    .collect::<Vec<_>>()
+                    .join(" / "),
+                row.pitch
+            )
+        }
+    }
+
+    /// The label of one key of a drum track, as its row shows it.
+    pub(crate) fn drum_lane_title(&self, track: TrackId, note: u8) -> String {
+        let map = self.session.drum_assignments(track).unwrap_or_default();
+        self.drum_row_label(&row_for(&map, note))
+    }
+
+    /// The drum track and key whose name is under `pointer`, when the drum editor is showing.
+    pub(crate) fn drum_lane_under(&self, pointer: Point<Pixels>) -> Option<(TrackId, u8)> {
+        if !self.panels.is_open(Panel::PianoRoll) || !self.editing_a_drum_clip() {
+            return None;
+        }
+        let track = self.selected_drum_track()?;
+        let offset = lane_names_offset(pointer, self.canvas.roll.get()?)?;
+        Some((track, self.drum_pitch_at(offset)?))
+    }
+
     /// Whether the selected note clip belongs to a drum track.
     pub(crate) fn editing_a_drum_clip(&self) -> bool {
         self.selected_clip
@@ -337,6 +402,40 @@ impl AurisApp {
                         lane: Some(lane.id),
                     },
                 )
+                .separator()
+                .item(
+                    self.t(Key::DrumLaneLoadSample),
+                    MenuCommand::LoadDrumSample {
+                        track,
+                        note: lane.note,
+                        layer: false,
+                    },
+                );
+            let sampled = self
+                .session
+                .drum_lane_samples(track)
+                .iter()
+                .any(|sample| sample.note == lane.note);
+            if sampled {
+                menu = menu
+                    .item(
+                        self.t(Key::DrumLaneLayerSample),
+                        MenuCommand::LoadDrumSample {
+                            track,
+                            note: lane.note,
+                            layer: true,
+                        },
+                    )
+                    .item(
+                        self.t(Key::DrumLaneClearSample),
+                        MenuCommand::ClearDrumSample {
+                            track,
+                            note: lane.note,
+                        },
+                    );
+            }
+            menu = menu
+                .separator()
                 .item(
                     self.t(Key::MenuMoveUp),
                     MenuCommand::MoveDrumLane {
@@ -672,32 +771,13 @@ impl AurisApp {
             .scroll
             .clamp(0.0, (rows.len() as f32 * ROW_HEIGHT - height).max(0.0));
         let scroll = self.drum_editor.scroll;
-        let theme = self.theme.clone();
-        let labels: Vec<String> = rows
-            .iter()
-            .map(|row| {
-                if !row.name.is_empty() {
-                    format!("{} · {}", row.name, row.pitch)
-                } else if row.roles.is_empty() {
-                    self.general_midi_drum_name(row.pitch).map_or_else(
-                        || format!("MIDI {}", row.pitch),
-                        |name| format!("{name} · {}", row.pitch),
-                    )
-                } else {
-                    format!(
-                        "{} · {}",
-                        row.roles
-                            .iter()
-                            .map(|role| self.t(role_key(*role)))
-                            .collect::<Vec<_>>()
-                            .join(" / "),
-                        row.pitch
-                    )
-                }
-            })
-            .collect();
-        let selected_lane = self.drum_editor.selected_lane;
         let track = self.selected_drum_track();
+        let theme = self.theme.clone();
+        let labels: Vec<String> = rows.iter().map(|row| self.drum_row_label(row)).collect();
+        let lane_samples = track
+            .map(|track| self.session.drum_lane_samples(track))
+            .unwrap_or_default();
+        let selected_lane = self.drum_editor.selected_lane;
         let label_elements = rows
             .iter()
             .zip(labels.iter())
@@ -710,6 +790,23 @@ impl AurisApp {
                 let pitch = row.pitch;
                 let lane = row.lane;
                 let label = label.clone();
+                let sample =
+                    lane_samples
+                        .iter()
+                        .find(|sample| sample.note == pitch)
+                        .map(|sample| {
+                            let color = match sample.loaded {
+                                true => theme.text_muted,
+                                false => theme.danger,
+                            };
+                            div()
+                                .flex_shrink()
+                                .min_w_0()
+                                .max_w(px(LABEL_WIDTH * 0.45))
+                                .truncate()
+                                .text_color(color)
+                                .child(sample_badge(&sample.names))
+                        });
                 let selected = lane.is_some() && lane == selected_lane;
                 let handle = match (track, lane) {
                     (Some(track), Some(lane)) => Some(
@@ -749,6 +846,7 @@ impl AurisApp {
                     .when(selected, |row| row.bg(theme.accent_soft))
                     .children(handle)
                     .child(div().flex_1().min_w_0().truncate().child(label.clone()))
+                    .children(sample)
                     .tooltip(crate::ui::tooltip::text_tip(label));
                 if let Some(track) = track {
                     element = element
@@ -1558,6 +1656,37 @@ mod tests {
     }
 
     #[test]
+    fn a_file_let_go_on_a_lane_name_lands_on_the_row_a_press_there_would() {
+        let grid = Bounds {
+            origin: point(px(300.0), px(100.0)),
+            size: gpui::size(px(500.0), px(200.0)),
+        };
+        // Inside the names column, on the third row with nothing scrolled.
+        let at = point(px(300.0 - LABEL_WIDTH + 1.0), px(100.0 + 2.5 * ROW_HEIGHT));
+        let offset = lane_names_offset(at, grid).unwrap();
+        assert_eq!(row_at(offset, 0.0, 10), Some(2));
+        // Scrolled a row down, the same point is the next row, as a press would be.
+        assert_eq!(row_at(offset, ROW_HEIGHT, 10), Some(3));
+        // The grid itself, the column's far left and below the rows are not the names.
+        assert_eq!(lane_names_offset(point(px(300.0), px(150.0)), grid), None);
+        assert_eq!(
+            lane_names_offset(point(px(300.0 - LABEL_WIDTH - 1.0), px(150.0)), grid),
+            None
+        );
+        assert_eq!(lane_names_offset(point(px(200.0), px(300.0)), grid), None);
+    }
+
+    #[test]
+    fn a_lane_badge_names_its_first_take_and_counts_the_rest() {
+        assert_eq!(sample_badge(&[]), "");
+        assert_eq!(sample_badge(&["Kick".into()]), "♪ Kick");
+        assert_eq!(
+            sample_badge(&["HatA".into(), "HatB".into(), "HatC".into()]),
+            "♪ HatA +2"
+        );
+    }
+
+    #[test]
     fn missing_assignments_do_not_invent_kit_roles() {
         let rows = rows_for(&DrumMap::default(), [36, 60], DrumRowsMode::Map);
         assert!(rows.iter().all(|row| row.roles.is_empty()));
@@ -1829,6 +1958,51 @@ mod window_tests {
             assert_eq!(notes.len(), 1);
             assert_eq!(notes[0].start, Ticks::QUARTER * 3);
             assert_eq!(this.drum_rows(), rows, "the kit's rows do not move");
+        });
+    }
+
+    #[gpui::test]
+    fn a_file_given_to_the_lane_under_the_pointer_plays_there_and_is_named(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx, track, _) = fixture(cx);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("Big Kick.wav");
+        app.update(cx, |this, _| {
+            let kick = this.session.drum_assignments(track).unwrap().voices[&DrumRole::Kick];
+            let rows = this.drum_rows();
+            let index = rows.iter().position(|row| row.pitch == kick).unwrap();
+            let grid = this.canvas.roll.get().unwrap();
+            let pointer = point(
+                grid.origin.x - px(LABEL_WIDTH / 2.0),
+                grid.origin.y + px((index as f32 + 0.5) * ROW_HEIGHT),
+            );
+            assert_eq!(this.drum_lane_under(pointer), Some((track, kick)));
+
+            let rate = this.project().sample_rate;
+            let data = vec![0.5f32; (rate * 0.2) as usize];
+            let buffer = AudioBuffer::from_planar(vec![data], rate).unwrap();
+            let line = this
+                .take_drum_sample(
+                    track,
+                    kick,
+                    &path,
+                    crate::ui::commands::Loaded::Audio(buffer),
+                    false,
+                )
+                .unwrap();
+            assert!(line.contains("Big Kick"), "{line}");
+            let samples = this.session.drum_lane_samples(track);
+            assert_eq!(samples.len(), 1);
+            assert_eq!(samples[0].note, kick);
+        });
+        // The row draws its badge, and taking the file off again leaves the lane.
+        paint(&app, cx);
+        app.update(cx, |this, _| {
+            let kick = this.session.drum_assignments(track).unwrap().voices[&DrumRole::Kick];
+            this.clear_drum_sample(track, kick);
+            assert!(this.session.drum_lane_samples(track).is_empty());
+            assert!(this.drum_rows().iter().any(|row| row.pitch == kick));
         });
     }
 

@@ -69,6 +69,7 @@ pub use envelope::{ENVELOPE_PITCHES, SoundEnvelope};
 pub use event_list::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};
 pub mod arrangement_shape;
 mod drum_assignments;
+mod drum_samples;
 mod files;
 mod generated;
 mod groove;
@@ -107,6 +108,7 @@ mod resonance;
 mod rhythm;
 mod samples;
 pub mod style_checks;
+pub use drum_samples::{DrumLaneSample, HI_HAT_CHOKE};
 pub use samples::{
     AgentSample, DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneEdit, SampleZoneView, detect_pitch,
     parse_root_note,

@@ -143,6 +143,17 @@ pub fn drop_action(paths: &[PathBuf]) -> DropAction {
     }
 }
 
+/// The one audio file a drop onto a drum lane gives it, or `None` for anything else.
+///
+/// A lane plays one sound, so a drop of several files is not guessed at: it falls through to an
+/// ordinary import, which is at least a result the user can see and undo.
+pub fn drum_sample_drop(paths: &[PathBuf]) -> Option<PathBuf> {
+    match sort_dropped(paths).accepted.as_slice() {
+        [(path, DropKind::Audio)] if paths.len() == 1 => Some(path.clone()),
+        _ => None,
+    }
+}
+
 /// How far along the clip lanes a drop at `pointer` landed, from their left edge.
 ///
 /// `None` when it landed anywhere else — a panel, the transport, the track headers — where there
@@ -196,6 +207,18 @@ mod tests {
 
     fn paths(names: &[&str]) -> Vec<PathBuf> {
         names.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn a_drum_lane_takes_one_audio_file_and_nothing_else() {
+        assert_eq!(
+            drum_sample_drop(&paths(&["kick.wav"])),
+            Some(PathBuf::from("kick.wav"))
+        );
+        assert_eq!(drum_sample_drop(&paths(&["kick.wav", "snare.wav"])), None);
+        assert_eq!(drum_sample_drop(&paths(&["kick.wav", "notes.pdf"])), None);
+        assert_eq!(drum_sample_drop(&paths(&["kit.sf2"])), None);
+        assert_eq!(drum_sample_drop(&[]), None);
     }
 
     #[test]

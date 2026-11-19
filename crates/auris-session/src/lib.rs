@@ -182,6 +182,7 @@ pub use session::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};
 pub use session::{
     DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneView, detect_pitch, parse_root_note,
 };
+pub use session::{DrumLaneSample, HI_HAT_CHOKE};
 pub use session::{ENVELOPE_PITCHES, SoundEnvelope};
 pub use session::{RecordQuantize, record_quantized};
 pub use session::{prepare_looping_output_preview, prepare_output_preview};

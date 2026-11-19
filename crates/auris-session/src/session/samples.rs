@@ -9,10 +9,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use auris_core::project::DrumMap;
 use auris_core::{AssetPath, AudioBuffer, PluginState, SourceId, TrackId};
 use auris_sampler::{
-    AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, MAX_SAMPLE_ZONES, SampleZone, store_zones,
-    stored_zones,
+    AUDIO_SAMPLER_ID, AUDIO_SAMPLER_KEY_TRACKING_KEY, AUDIO_SAMPLER_LOOP_KEY, MAX_SAMPLE_ZONES,
+    SampleZone, store_zones, stored_zones,
 };
 
 use super::{Session, decode_audio};
@@ -99,13 +100,7 @@ impl Session {
         }
         let mut checked = Vec::with_capacity(samples.len());
         for (path, buffer) in samples {
-            let buffer = match buffer.sample_rate() == self.project.sample_rate {
-                true => buffer,
-                false => decode_audio(&path, self.project.sample_rate)?,
-            };
-            if buffer.frame_count() == 0 || buffer.channel_count() == 0 {
-                return Err(SessionError::EmptySample(path));
-            }
+            let buffer = self.checked_sample(&path, buffer)?;
             checked.push((path, buffer));
         }
         let kept = match replace || !self.track_is_on_sampler(track) {
@@ -125,23 +120,7 @@ impl Session {
         };
         let mut sources = Vec::with_capacity(checked.len());
         for (path, buffer) in checked {
-            let name = path
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Sample".to_string());
-            let source = self.project.add_audio_source(
-                name.clone(),
-                AssetPath::external(&path),
-                buffer.frame_count() as u64,
-                buffer.sample_rate(),
-                buffer.channel_count(),
-            );
-            self.record_source_size(source, &path);
-            if self.path.is_some()
-                && let Err(error) = self.collect_source(source, &path)
-            {
-                log::warn!("could not collect {}: {error}", path.display());
-            }
+            let (source, name) = self.add_sample_source(&path, &buffer);
             let (root, tune) = placed(root_note_in_name(&name), detect_pitch(&buffer));
             zones.push(SampleZone {
                 tune,
@@ -153,6 +132,51 @@ impl Session {
         self.write_zones(track, &zones);
         self.invalidate_graph();
         Ok(sources)
+    }
+
+    /// A decoded file ready for the sampler: at the project's rate, and holding some audio.
+    pub(super) fn checked_sample(
+        &self,
+        path: &Path,
+        buffer: AudioBuffer,
+    ) -> Result<AudioBuffer, SessionError> {
+        let buffer = match buffer.sample_rate() == self.project.sample_rate {
+            true => buffer,
+            false => decode_audio(path, self.project.sample_rate)?,
+        };
+        if buffer.frame_count() == 0 || buffer.channel_count() == 0 {
+            return Err(SessionError::EmptySample(path.to_path_buf()));
+        }
+        Ok(buffer)
+    }
+
+    /// Makes a sample file one of the project's audio sources, collected into a saved project's
+    /// folder, inside an edit already recorded. Answers the source and the name it was given.
+    ///
+    /// The audio itself is installed by the caller once the map naming it is written.
+    pub(super) fn add_sample_source(
+        &mut self,
+        path: &Path,
+        buffer: &AudioBuffer,
+    ) -> (SourceId, String) {
+        let name = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Sample".to_string());
+        let source = self.project.add_audio_source(
+            name.clone(),
+            AssetPath::external(path),
+            buffer.frame_count() as u64,
+            buffer.sample_rate(),
+            buffer.channel_count(),
+        );
+        self.record_source_size(source, path);
+        if self.path.is_some()
+            && let Err(error) = self.collect_source(source, path)
+        {
+            log::warn!("could not collect {}: {error}", path.display());
+        }
+        (source, name)
     }
 
     /// The map a track's audio sampler plays; empty when it is not on the sampler.
@@ -360,16 +384,33 @@ impl Session {
     ///
     /// Answers whether the track arrived from another instrument, and so starts from the
     /// sampler's defaults with an empty map.
+    ///
+    /// A drum track keeps its lanes and their roles, which are the document's rather than the
+    /// old instrument's, and arrives with key tracking off: a kit is played by key, unpitched.
     pub(super) fn put_on_sampler(&mut self, track: TrackId) -> bool {
         let mut swapped = false;
+        let drum = self
+            .project
+            .track(track)
+            .is_some_and(|entry| entry.kind.is_drum());
         if let Some(inner) = self
             .project
             .track_mut(track)
             .and_then(|entry| entry.kind.as_instrument_mut())
             && inner.instrument_id != AUDIO_SAMPLER_ID
         {
+            let lanes = DrumMap::load(&inner.instrument_state).filter(|_| drum);
             inner.instrument_id = AUDIO_SAMPLER_ID.to_string();
             inner.instrument_state = PluginState::empty();
+            if drum {
+                inner
+                    .instrument_state
+                    .params
+                    .insert(AUDIO_SAMPLER_KEY_TRACKING_KEY.to_string(), 0.0);
+            }
+            if let Some(lanes) = lanes {
+                lanes.store(&mut inner.instrument_state);
+            }
             inner.file = None;
             swapped = true;
         }
@@ -380,7 +421,7 @@ impl Session {
     }
 
     /// Writes a sampler's map, inside an edit already recorded.
-    fn write_zones(&mut self, track: TrackId, zones: &[SampleZone]) {
+    pub(super) fn write_zones(&mut self, track: TrackId, zones: &[SampleZone]) {
         if let Some(inner) = self
             .project
             .track_mut(track)
@@ -592,6 +633,8 @@ impl Session {
                     "tune": rounded(view.zone.tune),
                     "measured_hz": pitches.get(index).copied().flatten().map(|p| rounded(p.hz)),
                     "gain_db": rounded(view.zone.gain_db),
+                    "one_shot": view.zone.one_shot,
+                    "choke_group": view.zone.choke,
                 })
             })
             .collect();
@@ -713,6 +756,11 @@ pub struct AgentSample {
     pub tune: Option<f32>,
     /// Level of this recording, dB -60..12, to balance layers.
     pub gain_db: Option<f32>,
+    /// true plays the recording to its end whatever the note length and ignores the loop: drum hits and effects.
+    pub one_shot: Option<bool>,
+    /// Choke group 1..16: a hit on any zone of the group cuts every sound of it still ringing (closed hat stops open hat); 0 removes it.
+    #[schemars(range(min = 0, max = 16))]
+    pub choke_group: Option<u8>,
 }
 
 /// One change to an existing zone, for `edit_sample_map`.
@@ -742,6 +790,11 @@ pub struct SampleZoneEdit {
     pub tune: Option<f32>,
     /// Level of this recording, dB -60..12.
     pub gain_db: Option<f32>,
+    /// true plays the recording to its end whatever the note length and ignores the loop.
+    pub one_shot: Option<bool>,
+    /// Choke group 1..16 the zone cuts and is cut by; 0 removes it.
+    #[schemars(range(min = 0, max = 16))]
+    pub choke_group: Option<u8>,
 }
 
 /// The settings `load_sample` and `edit_sample_map` share, applied to a zone after checking.
@@ -752,6 +805,8 @@ struct ZoneSettings {
     high_velocity: Option<f32>,
     tune: Option<f32>,
     gain_db: Option<f32>,
+    one_shot: Option<bool>,
+    choke_group: Option<u8>,
 }
 
 impl AgentSample {
@@ -763,6 +818,8 @@ impl AgentSample {
             high_velocity: self.high_velocity,
             tune: self.tune,
             gain_db: self.gain_db,
+            one_shot: self.one_shot,
+            choke_group: self.choke_group,
         }
     }
 }
@@ -776,6 +833,8 @@ impl SampleZoneEdit {
             high_velocity: self.high_velocity,
             tune: self.tune,
             gain_db: self.gain_db,
+            one_shot: self.one_shot,
+            choke_group: self.choke_group,
         }
     }
 }
@@ -811,6 +870,12 @@ impl ZoneSettings {
         {
             return Err("gain_db must be -60..12".into());
         }
+        if self
+            .choke_group
+            .is_some_and(|group| group > auris_sampler::MAX_CHOKE_GROUP)
+        {
+            return Err("choke_group must be 1..16, or 0 for none".into());
+        }
         if self.low_key.is_some() || self.high_key.is_some() {
             let current = zone.keys.unwrap_or(auris_sampler::KeyRange {
                 low: 0,
@@ -836,6 +901,12 @@ impl ZoneSettings {
         }
         if let Some(gain) = self.gain_db {
             zone.gain_db = gain;
+        }
+        if let Some(one_shot) = self.one_shot {
+            zone.one_shot = one_shot;
+        }
+        if let Some(group) = self.choke_group {
+            zone.choke = (group != 0).then_some(group);
         }
         Ok(zone)
     }
@@ -1038,6 +1109,8 @@ mod tests {
             high_velocity: None,
             tune: None,
             gain_db: None,
+            one_shot: None,
+            choke_group: None,
         }
     }
 
@@ -1139,6 +1212,8 @@ mod tests {
                     high_velocity: None,
                     tune: None,
                     gain_db: None,
+                    one_shot: None,
+                    choke_group: None,
                 }],
                 remove: vec![2],
             })

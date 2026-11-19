@@ -598,6 +598,9 @@ DrumLaneMidi = "MIDIノート…"
 DrumLaneMidiMove = "MIDIノート変更＋打点を移動…"
 DrumLaneRoles = "自動演奏での役割"
 DrumLaneRemove = "レーンを削除"
+DrumLaneLoadSample = "サンプルを読み込む…"
+DrumLaneLayerSample = "サンプルを重ねる…"
+DrumLaneClearSample = "サンプルを外す"
 DrumRepeatPaint = "ドラッグ入力は現在のグリッド間隔で連続配置します。"
 DrummerHeading = "ドラマー"
 DrummerComplexity = "複雑さ"
@@ -2517,6 +2520,10 @@ sample_loaded = "{name} をサンプラーに読み込みました"
 sample_pitches_detected = "サンプル {count} 件のピッチを合わせました"
 # Confirmation that several audio files joined a track's sampler map.
 samples_loaded = "サンプル {count} 件をサンプラーに読み込みました"
+# Confirmation that an audio file now plays on one lane of a drum track.
+drum_sample_loaded = "{name} を {lane} に読み込みました"
+# Confirmation that a drum lane no longer plays a file.
+drum_sample_cleared = "{lane} のサンプルを外しました"
 # Confirmation that a SoundFont was read, and how many sounds it brought with it.
 #
 # The count rather than the path, because a font goes on a shelf instead of onto a track:
