@@ -89,16 +89,6 @@ impl AurisApp {
         let menu = ContextMenu::new(anchor, name)
             .item_if(
                 !is_midi,
-                self.t(Key::MenuAnalyzeAudio),
-                MenuCommand::AnalyzeAudio(clip),
-            )
-            .item_if(
-                !is_midi,
-                self.t(Key::MenuAnalyzeInstruments),
-                MenuCommand::AnalyzeInstruments(clip),
-            )
-            .item_if(
-                !is_midi,
                 self.t(Key::MenuHumToNotes),
                 MenuCommand::HumToNotes(clip),
             )

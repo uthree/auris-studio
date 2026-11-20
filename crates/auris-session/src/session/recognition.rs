@@ -1,10 +1,8 @@
 //! Immutable recognition jobs and explicit, undoable acceptance of their drafts.
 
 use crate::{Edit, Session, SessionError};
-use auris_analysis::instruments::{self, INSTRUMENT_RATE, InstrumentAnalysis};
 use auris_analysis::{
     AnalysisControl,
-    audio::{self, AudioAnalysis},
     chords::{self, ChordOptions, ChordState, SymbolicChordSegment},
     transcription::TranscribedNote,
 };
@@ -17,7 +15,7 @@ use auris_core::{
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 fn failure(error: impl ToString) -> SessionError {
     SessionError::MusicAnalysis(error.to_string())
@@ -75,19 +73,6 @@ pub struct AudioAnalysisJob {
     fingerprint: String,
 }
 
-/// Analysis of one pass of a trimmed audio clip, before effects and time stretching.
-#[derive(Clone, Debug, Serialize)]
-pub struct ClipAudioAnalysis {
-    /// Clip that supplied the audio and placement information.
-    pub clip: ClipId,
-    /// Original source seconds at the start of the analyzed trim.
-    pub source_offset_seconds: f64,
-    /// Times here are relative to the analyzed trim, in unstretched seconds.
-    pub analysis: AudioAnalysis,
-    #[serde(skip)]
-    job: AudioAnalysisJob,
-}
-
 /// The notes a hummed or sung audio clip was heard to hold, before they are placed.
 #[derive(Clone, Debug, Serialize)]
 pub struct ClipHumTranscription {
@@ -103,52 +88,7 @@ pub struct ClipHumTranscription {
 /// [`auris_analysis::hum`] would decimate to anyway, so the resampler's filter is the only one.
 const HUM_RATE: f64 = 16_000.0;
 
-/// Instrument-presence hypotheses for a trimmed, immutable audio source.
-#[derive(Clone, Debug, Serialize)]
-pub struct ClipInstrumentAnalysis {
-    /// Original source seconds at the start of the analyzed trim.
-    pub source_offset_seconds: f64,
-    /// Overlapping windows relative to the trimmed source, before stretching.
-    pub analysis: InstrumentAnalysis,
-    #[serde(skip)]
-    job: AudioAnalysisJob,
-}
-
 impl AudioAnalysisJob {
-    /// Resamples the trimmed first pass, then analyzes it on the CPU.
-    ///
-    /// Cancellation is checked before/after the existing synchronous resampler and between
-    /// analysis frames. Clip repeats are mapped when the draft is placed into the project.
-    pub fn run(&self, control: &AnalysisControl) -> Result<ClipAudioAnalysis, SessionError> {
-        check_cancel(control)?;
-        let prepared = self.prepared(audio::ANALYSIS_RATE)?;
-        let analysis = audio::analyze_audio(&prepared, control).map_err(failure)?;
-        Ok(ClipAudioAnalysis {
-            clip: self.clip.id,
-            source_offset_seconds: self.source_offset_seconds(),
-            analysis,
-            job: self.clone(),
-        })
-    }
-
-    /// Runs optional local YAMNet tagging on the CPU without editing the project.
-    pub fn run_instruments(
-        &self,
-        model: &Path,
-        threshold: f32,
-        control: &AnalysisControl,
-    ) -> Result<ClipInstrumentAnalysis, SessionError> {
-        check_cancel(control)?;
-        let prepared = self.prepared(INSTRUMENT_RATE)?;
-        let analysis = instruments::analyze_instruments(&prepared, model, threshold, control)
-            .map_err(failure)?;
-        Ok(ClipInstrumentAnalysis {
-            source_offset_seconds: self.source_offset_seconds(),
-            analysis,
-            job: self.clone(),
-        })
-    }
-
     /// Follows the trimmed first pass as one voice and writes down the notes it sang.
     ///
     /// The channels are averaged: a voice recorded in stereo is the same voice twice.
@@ -167,11 +107,6 @@ impl AudioAnalysisJob {
             notes,
             job: self.clone(),
         })
-    }
-
-    fn source_offset_seconds(&self) -> f64 {
-        self.clip.offset_frames.min(self.audio.frame_count() as u64) as f64
-            / self.audio.sample_rate()
     }
 
     fn prepared(&self, rate: f64) -> Result<AudioBuffer, SessionError> {
@@ -199,32 +134,6 @@ fn check_cancel(control: &AnalysisControl) -> Result<(), SessionError> {
     } else {
         Ok(())
     }
-}
-
-/// Decodes and analyzes a file without opening, importing or changing a project.
-///
-/// Runs on a worker. The existing decoder is synchronous; cancellation is observed before
-/// decoding and by the analysis afterwards. Result timestamps start at the file's beginning.
-pub fn analyze_audio_file(
-    path: &Path,
-    control: &AnalysisControl,
-) -> Result<AudioAnalysis, SessionError> {
-    check_cancel(control)?;
-    let audio = super::decode_audio(path, audio::ANALYSIS_RATE)?;
-    audio::analyze_audio(&audio, control).map_err(failure)
-}
-
-/// Decodes a file and tags instrument/voice presence with a local model on the CPU.
-/// No model is downloaded and no project is opened or edited.
-pub fn analyze_instrument_file(
-    path: &Path,
-    model: &Path,
-    threshold: f32,
-    control: &AnalysisControl,
-) -> Result<InstrumentAnalysis, SessionError> {
-    check_cancel(control)?;
-    let audio = super::decode_audio(path, INSTRUMENT_RATE)?;
-    instruments::analyze_instruments(&audio, model, threshold, control).map_err(failure)
 }
 
 impl Session {
@@ -423,7 +332,7 @@ impl Session {
         self.apply_chord_analysis(&selection)
     }
 
-    /// Prepares a trimmed audio clip for offline CPU analysis, sharing its source samples.
+    /// Prepares a trimmed audio clip for hum transcription on a worker, sharing its source samples.
     pub fn audio_analysis_job(&self, clip: ClipId) -> Result<AudioAnalysisJob, SessionError> {
         // The recogniser hears semitones and would write them as keys this tuning reads
         // otherwise.
@@ -448,16 +357,6 @@ impl Session {
             audio: Arc::clone(audio),
             fingerprint: self.recognition_fingerprint()?,
         })
-    }
-
-    /// Checks both the document and the immutable audio buffer before publishing or applying.
-    pub fn audio_analysis_is_current(&self, report: &ClipAudioAnalysis) -> bool {
-        self.recognition_fingerprint()
-            .is_ok_and(|f| f == report.job.fingerprint)
-            && self
-                .bank
-                .get(report.job.clip.source)
-                .is_some_and(|b| Arc::ptr_eq(b, &report.job.audio))
     }
 
     /// Rejects a hummed transcription after document edits or source replacement.
@@ -516,16 +415,6 @@ impl Session {
             name,
             Some(crate::registry::DEFAULT_INSTRUMENT),
         )
-    }
-
-    /// Rejects instrument results after document edits or source replacement.
-    pub fn instrument_analysis_is_current(&self, report: &ClipInstrumentAnalysis) -> bool {
-        self.recognition_fingerprint()
-            .is_ok_and(|f| f == report.job.fingerprint)
-            && self
-                .bank
-                .get(report.job.clip.source)
-                .is_some_and(|b| Arc::ptr_eq(b, &report.job.audio))
     }
 
     fn create_analysis_track(
@@ -604,76 +493,6 @@ impl Session {
             name,
             Some(crate::registry::DEFAULT_INSTRUMENT),
         )
-    }
-
-    /// Converts audio chord windows through the clip's trim, stretch and repeat placement.
-    pub fn audio_chord_report(
-        &self,
-        report: &ClipAudioAnalysis,
-    ) -> Result<ChordAnalysisReport, SessionError> {
-        if !self.audio_analysis_is_current(report) {
-            return Err(failure("the audio or document changed; analyze it again"));
-        }
-        let source = &report.job.clip;
-        let content = self.audio_clip_length_ticks(source);
-        if content.raw() <= 0 || source.loop_end.raw() / content.raw() > 16_384 {
-            return Err(failure("invalid or excessive audio repeats"));
-        }
-        let stretch = source.stretch_in(&self.project.tempo_map);
-        let mut segments = Vec::new();
-        for (offset, span) in loop_passes(content, source.loop_end) {
-            let pass = source.start + offset;
-            let origin = self.project.tempo_map.ticks_to_seconds(pass).0;
-            for c in &report.analysis.chords {
-                let start = self
-                    .project
-                    .tempo_map
-                    .seconds_to_ticks(Seconds(origin + c.start * stretch));
-                let end = self
-                    .project
-                    .tempo_map
-                    .seconds_to_ticks(Seconds(origin + c.end * stretch))
-                    .min(pass + span);
-                if end > start {
-                    segments.push(SymbolicChordSegment {
-                        start,
-                        end,
-                        reading: c.reading.clone(),
-                    });
-                }
-                if segments.len() > 16_384 {
-                    return Err(failure("too many repeated chord intervals"));
-                }
-            }
-        }
-        let to = segments.last().map_or(source.start, |s| s.end);
-        Ok(ChordAnalysisReport {
-            algorithm: report.analysis.algorithm,
-            from: source.start,
-            to,
-            window: Ticks::ZERO,
-            segments,
-            fingerprint: report.job.fingerprint.clone(),
-        })
-    }
-
-    /// Explicitly adopts a tempo candidate as the audio clip's source tempo.
-    /// The project's tempo map is preserved.
-    pub fn apply_audio_source_tempo(
-        &mut self,
-        report: &ClipAudioAnalysis,
-        candidate: usize,
-    ) -> Result<(), SessionError> {
-        if !self.audio_analysis_is_current(report) {
-            return Err(failure("the audio or document changed; analyze it again"));
-        }
-        let tempo = report
-            .analysis
-            .tempo
-            .candidates
-            .get(candidate)
-            .ok_or_else(|| failure("unknown tempo candidate"))?;
-        self.set_clip_source_bpm(report.clip, Some(tempo.bpm))
     }
 
     fn map_transcription(

@@ -1,4 +1,4 @@
-//! Offline music recognition, with deterministic DSP and optional local model inference.
+//! Offline music recognition by deterministic DSP: written chords and sung melodies.
 //!
 //! Scores describe agreement with a template or periodicity; they are not probabilities.
 //! The caller owns decoding, document editing and worker scheduling.
@@ -7,10 +7,8 @@
 
 pub mod transcription;
 
-pub mod audio;
 pub mod chords;
 pub mod hum;
-pub mod instruments;
 pub mod pitch;
 
 use std::sync::{

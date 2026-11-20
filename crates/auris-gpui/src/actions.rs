@@ -240,10 +240,6 @@ actions!(
         AnalyzeSelectedChords,
         /// Analyze all note tracks.
         AnalyzeAllChords,
-        /// Estimate tempo and chords from audio.
-        AnalyzeSelectedAudio,
-        /// Estimate instruments in audio.
-        AnalyzeSelectedInstruments,
         /// Open drum measurements.
         OpenDrumAnalysis,
         /// Open analysis progress and results.
@@ -620,8 +616,6 @@ bindable! {
         "view.focus_previous",  GroupView,      CmdFocusPreviousPane,  "shift-tab"   => FocusPreviousPane;
         "analysis.chords", GroupAnalysis, MenuAnalyzeChords, "" => AnalyzeSelectedChords;
         "analysis.all_chords", GroupAnalysis, MenuAnalyzeAllChords, "" => AnalyzeAllChords;
-        "analysis.audio", GroupAnalysis, MenuAnalyzeAudio, "" => AnalyzeSelectedAudio;
-        "analysis.instruments", GroupAnalysis, MenuAnalyzeInstruments, "" => AnalyzeSelectedInstruments;
         "analysis.drums", GroupAnalysis, AnalysisDrums, "" => OpenDrumAnalysis;
         "visualizer.toggle", GroupAnalysis, VisualizerTitle, "" => ToggleVisualizer;
         "visualizer.source", GroupAnalysis, VisualizerSelected, "" => VisualizerSource;

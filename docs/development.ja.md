@@ -19,7 +19,7 @@ BACKEND — UI 依存なし
   crates/auris-engine   レンダーグラフ、トランスポート、cpal 入出力、オフラインレンダー
   crates/auris-io       音声ファイル入出力、プロジェクト保存／読み込み
   crates/auris-gpu      オフライン分析用のオプション wgpu 計算
-  crates/auris-analysis DSP とオプションのローカルモデルによるオフライン音楽認識
+  crates/auris-analysis DSP によるオフライン音楽認識（書かれたコードと歌った旋律）
   crates/auris-compose  スコアベースの自動作曲: テキスト仕様を受け、音符を出力
   crates/auris-vocal    歌唱: 歌詞から IPA 音素、音符から声モデルフレーム
   crates/auris-singer   歌唱: DiffSinger、LeapSinger、VOICEVOX、オフライン

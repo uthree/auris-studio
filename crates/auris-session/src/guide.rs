@@ -399,7 +399,7 @@
 //!
 //! # Offline music recognition
 //!
-//! `auris-analysis` recognizes written chords and audio tempo/chords
+//! `auris-analysis` recognizes written chords and sung melodies
 //! on the CPU. Library timbre exploration uses [`crate::Session::timbre_map_job`]: a read-only
 //! snapshot shares immutable SoundFonts with independent background instruments, measures matched
 //! reference notes through [`auris_dsp::timbre`], and retains previews and a feature-space index.
@@ -413,10 +413,8 @@
 //! a name and an icon from that fixed vocabulary. Manual corrections live in application
 //! settings, keyed by instrument ID or resolved font path/bank/patch, rather than scan-local
 //! cluster IDs. The desktop applies these corrections before automatic hints.
-//! It also runs an explicitly prepared YAMNet ONNX model for instrument-presence
-//! tagging, using ONNX Runtime's CPU provider. The optional weights are external runtime data,
-//! and inference never downloads them. The session collects written notes or shares source audio with
-//! a worker job. Analysis returns a draft; applying harmony or a source tempo is an
+//! The session collects written notes or shares source audio with
+//! a worker job. Analysis returns a draft; applying harmony or a transcription is an
 //! explicit, undoable session command. Source audio times stay in seconds until placement maps
 //! them through the current tempo map. Cancellation and source/document validation belong to
 //! the job boundary, never to the audio callback. Unknown harmony and silence are distinct,
@@ -467,8 +465,8 @@ pub mod architecture {
     //!   auris-video     note-roll videos: frames in software, encoded by an installed ffmpeg
     //!                   → auris-core only
     //!   auris-gpu       optional wgpu compute for offline analysis
-    //!   auris-onnx      the one ONNX Runtime environment a process may build, shared by
-    //!                   auris-singer and auris-analysis           → ort only
+    //!   auris-onnx      the one ONNX Runtime environment a process may build, used by
+    //!                   auris-singer                              → ort only
     //!   auris-compose   phrase-level automatic composition: one clip over the harmony
     //!   auris-vocal     lyrics to phonemes, notes to voice-model frames → auris-core only
     //!   auris-singer    offline neural voice synthesis             → auris-core, auris-vocal

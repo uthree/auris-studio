@@ -7,36 +7,6 @@ fn analysis_control() -> AnalysisControl {
     AnalysisControl::cancelled_by(cancellation::current().flag_handle())
 }
 
-/// Optional local instrument-presence tagging without project edits.
-pub mod analyze_instruments {
-    use super::*;
-    /// Wire name.
-    pub const NAME: &str = "analyze_instruments";
-    /// Model-facing command description.
-    pub const DESCRIPTION: &str = "Estimates instrument and singing presence with an explicitly supplied local YAMNet ONNX export on CPU. Returns overlapping source-second windows, multiple candidate labels, raw event scores and model hash. Empty candidates mean unknown. Scores are not calibrated probabilities. No downloads, GPU, source separation, note assignment or project edits. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.";
-    /// Audio input and an explicitly prepared model.
-    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-    pub struct Args {
-        /// Absolute audio-file path.
-        pub audio: String,
-        /// Absolute path to the ONNX file prepared by tools/music-models/export_yamnet.py.
-        pub model: String,
-        /// Minimum displayed instrument score in 0..1; defaults to 0.2.
-        pub threshold: Option<f32>,
-    }
-    /// Runs local inference and serializes the read-only report.
-    pub fn run(args: &Args) -> Result<String, String> {
-        let report = auris_session::analyze_instrument_file(
-            Path::new(&args.audio),
-            Path::new(&args.model),
-            args.threshold.unwrap_or(0.2),
-            &analysis_control(),
-        )
-        .map_err(|e| e.to_string())?;
-        reports::publish(&report)
-    }
-}
-
 /// Written notes to chromatic chord candidates and optional explicit harmony edits.
 pub mod analyze_chords {
     use super::*;
@@ -94,32 +64,11 @@ pub mod analyze_chords {
     }
 }
 
-/// File-based tempo and major/minor chord analysis without a project edit.
-pub mod analyze_audio {
-    use super::*;
-    /// Wire name.
-    pub const NAME: &str = "analyze_audio";
-    /// Model-facing command description.
-    pub const DESCRIPTION: &str = "Analyzes an audio file on the CPU without models or GPU: constant BPM alternatives, beat timestamps and half-second major/minor chord windows. Scores are template/periodicity agreement, not calibrated probabilities. No project is changed. Does not identify instruments. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.";
-    /// Audio input.
-    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-    pub struct Args {
-        /// Absolute audio-file path.
-        pub audio: String,
-    }
-    /// Decodes and reports in source seconds.
-    pub fn run(args: &Args) -> Result<String, String> {
-        let report = auris_session::analyze_audio_file(Path::new(&args.audio), &analysis_control())
-            .map_err(|e| e.to_string())?;
-        reports::publish(&report)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn file_tools_report_without_writing_then_accept_external_notes() {
+    fn chord_report_writes_nothing_then_external_notes_are_accepted() {
         let root = std::env::temp_dir().join(format!(
             "auris-recognition-{}-{}",
             std::process::id(),
@@ -129,39 +78,6 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&root).unwrap();
-        let wav = root.join("mono.wav");
-        // An independently encoded, 16-bit 22050 Hz WAV exercises the real decoder/resampler.
-        let rate = 22_050u32;
-        let samples: Vec<i16> = (0..rate)
-            .map(|i| {
-                let t = f64::from(i) / f64::from(rate);
-                if (0.2..0.8).contains(&t) {
-                    ((std::f64::consts::TAU * 440.0 * t).sin() * 12000.0) as i16
-                } else {
-                    0
-                }
-            })
-            .collect();
-        let bytes = samples.len() as u32 * 2;
-        let mut wav_bytes = Vec::new();
-        wav_bytes.extend_from_slice(b"RIFF");
-        wav_bytes.extend_from_slice(&(36 + bytes).to_le_bytes());
-        wav_bytes.extend_from_slice(b"WAVEfmt ");
-        wav_bytes.extend_from_slice(&16u32.to_le_bytes());
-        for value in [1u16, 1u16] {
-            wav_bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        wav_bytes.extend_from_slice(&rate.to_le_bytes());
-        wav_bytes.extend_from_slice(&(rate * 2).to_le_bytes());
-        for value in [2u16, 16u16] {
-            wav_bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        wav_bytes.extend_from_slice(b"data");
-        wav_bytes.extend_from_slice(&bytes.to_le_bytes());
-        for value in samples {
-            wav_bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        std::fs::write(&wav, &wav_bytes).unwrap();
         let project = root.join("Song.auris");
         let mut s = Session::new(SessionOptions::headless()).unwrap();
         let track = s.add_default_instrument_track("Existing").unwrap();
@@ -200,7 +116,6 @@ mod tests {
         let saved = opened(project.to_str().unwrap()).unwrap();
         assert_eq!(saved.project().tracks.len(), 2);
         assert_eq!(saved.project().midi_clip(clip).unwrap().1.notes.len(), 3);
-        assert_eq!(std::fs::read(&wav).unwrap(), wav_bytes);
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

@@ -32,7 +32,7 @@ pub struct ChordCandidate {
     pub score: f32,
 }
 
-/// Interpretation shared by symbolic and audio intervals.
+/// Interpretation of one interval of written notes.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ChordReading {
     /// Whether the interval is recognized, ambiguous or silent.
@@ -144,11 +144,7 @@ pub fn analyze_notes(
             }
         }
     }
-    let readings = weights
-        .iter()
-        .zip(bass)
-        .map(|(w, b)| rank(w, b, false))
-        .collect();
+    let readings = weights.iter().zip(bass).map(|(w, b)| rank(w, b)).collect();
     let readings = smooth(readings, control, 0.6, 1.0)?;
     let mut result: Vec<SymbolicChordSegment> = Vec::new();
     for (i, reading) in readings.into_iter().enumerate() {
@@ -165,7 +161,7 @@ pub fn analyze_notes(
     Ok(result)
 }
 
-pub(crate) fn rank(weights: &[f32; 12], bass: Option<u8>, audio: bool) -> ChordReading {
+fn rank(weights: &[f32; 12], bass: Option<u8>) -> ChordReading {
     let total: f32 = weights.iter().sum();
     let maximum = weights.iter().copied().fold(0.0f32, f32::max);
     if total <= 1e-6 {
@@ -178,10 +174,7 @@ pub(crate) fn rank(weights: &[f32; 12], bass: Option<u8>, audio: bool) -> ChordR
     let distinct = weights.iter().filter(|w| **w > maximum * 0.2).count();
     let mut candidates = Vec::new();
     for root in 0..12 {
-        for quality in QUALITIES
-            .into_iter()
-            .filter(|q| !audio || matches!(q, Quality::Major | Quality::Minor))
-        {
+        for quality in QUALITIES {
             let mut chord = Chord::new(PitchClass::new(root), quality);
             let classes: Vec<_> = quality
                 .intervals()
@@ -230,7 +223,7 @@ pub(crate) fn rank(weights: &[f32; 12], bass: Option<u8>, audio: bool) -> ChordR
     }
 }
 
-pub(crate) fn smooth(
+fn smooth(
     mut readings: Vec<ChordReading>,
     control: &AnalysisControl,
     start: f32,
@@ -377,11 +370,7 @@ mod tests {
     }
     #[test]
     fn ambiguous_sixth_and_seventh_are_offered_and_requests_are_bounded() {
-        let r = rank(
-            &[1., 0., 0., 0., 1., 0., 0., 1., 0., 1., 0., 0.],
-            Some(48),
-            false,
-        );
+        let r = rank(&[1., 0., 0., 0., 1., 0., 0., 1., 0., 1., 0., 0.], Some(48));
         assert!(r.candidates.iter().any(|c| c.symbol == "C6"));
         assert!(r.candidates.iter().any(|c| c.symbol == "Am7/C"));
         assert!(

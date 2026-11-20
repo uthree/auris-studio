@@ -190,7 +190,7 @@ fn installed_opencode_reads_image_and_audio_references() {
     // A 64x64 RGB fixture with every pixel red; no renderer or external image dependency.
     fs::write(&image, base64::engine::general_purpose::STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAb0lEQVR4nO3PAQkAAAyEwO9feoshgnABdLep8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3IPanc8OLDQitxAAAAAElFTkSuQmCC").unwrap()).unwrap();
     let mut worker = Worker::spawn(preferences(), None, true, None).unwrap();
-    worker.send(&json!({"say":"Attachment transport test. Read the image and the audio reference metadata. Return ONLY a JSON object with colour (the dominant image colour in English), seconds (the exact numeric duration from the audio measurements) and audio_sent (whether raw audio was sent to you). These measurements are not listening. Do not call tools, read other files, or change the song.","attachments":[image,audio]}).to_string()).unwrap();
+    worker.send(&json!({"say":"Attachment transport test. Read the image and the audio reference metadata. Return ONLY a JSON object with colour (the dominant image colour in English), source_bytes (the exact number from the audio reference metadata) and audio_sent (whether raw audio was sent to you). Do not call tools, read other files, or change the song.","attachments":[image,audio]}).to_string()).unwrap();
     let mut events = Vec::new();
     let text = answer(&worker, false, &mut events);
     fs::write(
@@ -209,7 +209,10 @@ fn installed_opencode_reads_image_and_audio_references() {
         result["colour"].as_str().unwrap().to_ascii_lowercase(),
         "red"
     );
-    assert_eq!(result["seconds"].as_f64().unwrap(), 2.0);
+    assert_eq!(
+        result["source_bytes"].as_u64().unwrap(),
+        fs::metadata(&audio).unwrap().len()
+    );
     assert_eq!(result["audio_sent"], false);
     assert!(!events.iter().any(|event| event["event"] == "permission"));
     stop(&mut worker, &mut events);

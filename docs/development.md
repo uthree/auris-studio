@@ -18,7 +18,7 @@ BACKEND — no UI dependency of any kind
   crates/auris-engine   render graph, transport, cpal in and out, offline renderer
   crates/auris-io       audio file import/export, project save/load
   crates/auris-gpu      optional wgpu compute for offline analysis
-  crates/auris-analysis offline music recognition with DSP and optional local models
+  crates/auris-analysis offline music recognition by DSP: written chords and sung melodies
   crates/auris-compose  score-based automatic composition: a text spec in, notes out
   crates/auris-vocal    singing: lyrics to IPA phonemes, notes to voice-model frames
   crates/auris-singer   singing: DiffSinger, LeapSinger and VOICEVOX, offline

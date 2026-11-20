@@ -208,16 +208,6 @@ pub fn tool_catalog() -> Vec<ToolDefinition> {
             analyze_chords::DESCRIPTION,
             analyze_chords::run,
         ),
-        definition::<analyze_audio::Args>(
-            analyze_audio::NAME,
-            analyze_audio::DESCRIPTION,
-            analyze_audio::run,
-        ),
-        definition::<analyze_instruments::Args>(
-            analyze_instruments::NAME,
-            analyze_instruments::DESCRIPTION,
-            analyze_instruments::run,
-        ),
         definition::<inspect_composition::Args>(
             inspect_composition::NAME,
             inspect_composition::DESCRIPTION,

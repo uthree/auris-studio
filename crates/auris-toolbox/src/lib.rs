@@ -65,7 +65,7 @@ pub use catalog::{ToolDefinition, argument_error_hint, parameter_schema, tool_ca
 pub use drums::analyze_drum_kit;
 pub use editing::{analyze_music, inspect_composition};
 pub use project_files::create_project;
-pub use recognition::{analyze_audio, analyze_chords, analyze_instruments};
+pub use recognition::analyze_chords;
 pub use track_editing::convert_track_to_audio;
 
 /// Shared composition guidance for writing foreground phrases through any agent transport.

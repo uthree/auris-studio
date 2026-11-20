@@ -667,18 +667,6 @@ impl AurisApp {
                     ))
                     .on_action(Self::window_listener(
                         cx,
-                        |this, _: &actions::AnalyzeSelectedAudio, _, cx| {
-                            this.open_analysis_command(AnalysisCommand::Audio, cx)
-                        },
-                    ))
-                    .on_action(Self::window_listener(
-                        cx,
-                        |this, _: &actions::AnalyzeSelectedInstruments, _, cx| {
-                            this.open_analysis_command(AnalysisCommand::Instruments, cx)
-                        },
-                    ))
-                    .on_action(Self::window_listener(
-                        cx,
                         |this, _: &actions::OpenDrumAnalysis, _, cx| {
                             this.open_analysis_command(AnalysisCommand::Drums, cx)
                         },

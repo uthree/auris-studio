@@ -10,9 +10,7 @@ use crate::{
 };
 use auris_i18n::Key;
 use auris_session::prelude::*;
-use auris_session::{
-    AnalysisControl, ChordAnalysisReport, ChordState, ClipAudioAnalysis, SessionError,
-};
+use auris_session::{AnalysisControl, ChordAnalysisReport, ChordState, SessionError};
 use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*};
 
 /// Selection-based entries in the application analysis menu.
@@ -22,25 +20,10 @@ pub(crate) enum AnalysisCommand {
     SelectedChords,
     /// Harmony across note tracks.
     AllChords,
-    /// Tempo and harmony from audio.
-    Audio,
-    /// Instrument recognition.
-    Instruments,
     /// Drum measurements and mapping.
     Drums,
     /// Progress and acceptance controls.
     Results,
-}
-
-/// A report awaiting the user's choice.
-#[derive(Clone, Debug)]
-pub(crate) enum MusicReport {
-    /// Written-note harmony.
-    Chords(ChordAnalysisReport),
-    /// Trimmed audio-source measurements and optional notes.
-    Audio(Box<ClipAudioAnalysis>),
-    /// Local model's instrument-presence hypotheses, without an acceptance edit.
-    Instruments(Box<auris_session::ClipInstrumentAnalysis>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -90,10 +73,6 @@ fn scored_candidate(label: &str, score_label: &str, score: f32) -> String {
     format!("{label} · {score_label} {score:.2}")
 }
 
-fn tempo_candidate(action: &str, score_label: &str, bpm: f64, score: f32) -> String {
-    format!("{action}: {bpm:.1} BPM · {score_label} {score:.2}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,10 +90,6 @@ mod tests {
 
     #[test]
     fn analysis_candidate_labels_name_the_unit_and_score() {
-        assert_eq!(
-            tempo_candidate("Use as source tempo", "score", 123.45, 0.876),
-            "Use as source tempo: 123.5 BPM · score 0.88"
-        );
         assert_eq!(
             scored_candidate("Cmaj7", "score", 0.876),
             "Cmaj7 · score 0.88"
@@ -217,10 +192,7 @@ mod tests {
         cx.dispatch_action(crate::actions::AnalyzeAllChords);
         cx.run_until_parked();
         app.read_with(cx, |this, _| {
-            assert!(matches!(
-                this.music_analysis.report,
-                Some(MusicReport::Chords(_))
-            ));
+            assert!(this.music_analysis.report.is_some());
             assert_eq!(this.project(), &before);
         });
         paint(&app, cx);
@@ -395,7 +367,7 @@ pub(crate) struct MusicAnalysisState {
     generation: u64,
     control: Option<AnalysisControl>,
     /// Current draft, cleared when the document is replaced or the draft is accepted.
-    pub(crate) report: Option<MusicReport>,
+    pub(crate) report: Option<ChordAnalysisReport>,
     outcome: MusicAnalysisOutcome,
 }
 
@@ -444,16 +416,11 @@ impl AurisApp {
     ) {
         use AnalysisCommand::*;
         let track = self.selected_track.and_then(|id| self.project().track(id));
-        let audio = self
-            .selected_clip
-            .filter(|id| self.audio_clip(*id).is_some());
         let action = match command {
             SelectedChords => track
                 .filter(|t| !t.kind.is_drum() && t.kind.note_clips().is_some())
                 .map(|t| MenuCommand::AnalyzeChords(Some(t.id))),
             AllChords => Some(MenuCommand::AnalyzeChords(None)),
-            Audio => audio.map(MenuCommand::AnalyzeAudio),
-            Instruments => audio.map(MenuCommand::AnalyzeInstruments),
             Drums if track.is_some_and(|t| t.kind.is_drum()) => None,
             Results => None,
             _ => {
@@ -566,19 +533,7 @@ impl AurisApp {
             .session
             .chord_analysis_job(&tracks, from, to, Default::default())
         {
-            Ok(job) => self
-                .start_music_worker(move |control| job.run(control).map(MusicReport::Chords), cx),
-            Err(e) => self.fail_music_analysis(e.to_string()),
-        }
-    }
-
-    /// Schedules analysis of an audio clip's trimmed source.
-    pub(crate) fn begin_audio_analysis(&mut self, clip: ClipId, cx: &mut Context<Self>) {
-        match self.session.audio_analysis_job(clip) {
-            Ok(job) => self.start_music_worker(
-                move |control| job.run(control).map(|r| MusicReport::Audio(Box::new(r))),
-                cx,
-            ),
+            Ok(job) => self.start_music_worker(move |control| job.run(control), cx),
             Err(e) => self.fail_music_analysis(e.to_string()),
         }
     }
@@ -631,47 +586,11 @@ impl AurisApp {
         .detach();
     }
 
-    /// Prompts for a prepared model; the source snapshot is captured before the dialog.
-    pub(crate) fn choose_instrument_model(&mut self, clip: ClipId, cx: &mut Context<Self>) {
-        let job = match self.session.audio_analysis_job(clip) {
-            Ok(job) => job,
-            Err(e) => {
-                self.fail_music_analysis(e.to_string());
-                return;
-            }
-        };
-        self.music_analysis.clear();
-        let generation = self.music_analysis.generation;
-        let title = self.t(Key::DialogYamnetModel).to_string();
-        cx.spawn(async move |this, cx| {
-            let Some(handle) = rfd::AsyncFileDialog::new()
-                .set_title(title)
-                .add_filter("ONNX", &["onnx"])
-                .pick_file()
-                .await
-            else {
-                return;
-            };
-            let path = handle.path().to_path_buf();
-            let _ = this.update(cx, |this, cx| {
-                if generation != this.music_analysis.generation {
-                    return;
-                }
-                this.start_music_worker(
-                    move |control| {
-                        job.run_instruments(&path, 0.2, control)
-                            .map(|r| MusicReport::Instruments(Box::new(r)))
-                    },
-                    cx,
-                );
-            });
-        })
-        .detach();
-    }
-
     fn start_music_worker(
         &mut self,
-        work: impl FnOnce(&AnalysisControl) -> Result<MusicReport, SessionError> + Send + 'static,
+        work: impl FnOnce(&AnalysisControl) -> Result<ChordAnalysisReport, SessionError>
+        + Send
+        + 'static,
         cx: &mut Context<Self>,
     ) {
         self.music_analysis.clear();
@@ -729,12 +648,8 @@ impl AurisApp {
         .detach();
     }
 
-    fn music_report_current(&self, report: &MusicReport) -> bool {
-        match report {
-            MusicReport::Chords(r) => self.session.chord_analysis_is_current(r),
-            MusicReport::Audio(r) => self.session.audio_analysis_is_current(r),
-            MusicReport::Instruments(r) => self.session.instrument_analysis_is_current(r),
-        }
+    fn music_report_current(&self, report: &ChordAnalysisReport) -> bool {
+        self.session.chord_analysis_is_current(report)
     }
 
     fn music_analysis_state(&self) -> MusicAnalysisViewState {
@@ -752,41 +667,22 @@ impl AurisApp {
     }
 
     /// Applies the user's chosen report action as an undoable session command.
-    pub(crate) fn accept_music_analysis(
-        &mut self,
-        choice: Option<(usize, usize)>,
-        tempo: Option<usize>,
-    ) {
+    pub(crate) fn accept_music_analysis(&mut self, choice: Option<(usize, usize)>) {
         let Some(report) = self.music_analysis.report.clone() else {
             return;
         };
-        let outcome = match &report {
-            MusicReport::Instruments(_) => return,
-            MusicReport::Chords(r) => match choice {
-                Some((segment, candidate)) => {
-                    self.session.apply_chord_candidate(r, segment, candidate)
-                }
-                None => self.session.apply_chord_analysis(r),
-            }
-            .map(|_| ()),
-            MusicReport::Audio(r) if tempo.is_some() => {
-                self.session.apply_audio_source_tempo(r, tempo.unwrap())
-            }
-            MusicReport::Audio(r) => self
+        let outcome = match choice {
+            Some((segment, candidate)) => self
                 .session
-                .audio_chord_report(r)
-                .and_then(|r| self.session.apply_chord_analysis(&r))
-                .map(|_| ()),
-        };
+                .apply_chord_candidate(&report, segment, candidate),
+            None => self.session.apply_chord_analysis(&report),
+        }
+        .map(|_| ());
         match outcome {
             Ok(()) => {
                 self.music_analysis.report = None;
                 self.music_analysis.outcome = MusicAnalysisOutcome::Empty;
-                self.set_status(self.t(if tempo.is_some() {
-                    Key::AnalysisSetSourceTempo
-                } else {
-                    Key::AnalysisApplyChords
-                }));
+                self.set_status(self.t(Key::AnalysisApplyChords));
             }
             Err(e) => self.fail_music_analysis(e.to_string()),
         }
@@ -818,75 +714,18 @@ impl AurisApp {
                 alternatives
             )
         };
-        match report {
-            MusicReport::Instruments(r) => {
-                lines = vec![
-                    self.t(Key::AnalysisInstruments).into(),
-                    self.t(Key::AnalysisInstrumentMean).into(),
-                ];
-                let candidates = |items: &[auris_session::InstrumentCandidate]| {
-                    if items.is_empty() {
-                        self.t(Key::AnalysisUnknown).to_string()
-                    } else {
-                        items
-                            .iter()
-                            .map(|c| format!("{} ({:.2})", c.label, c.score))
-                            .collect::<Vec<_>>()
-                            .join(" / ")
-                    }
-                };
-                lines.push(candidates(&r.analysis.candidates).into());
-                for w in r.analysis.windows.iter().take(256) {
-                    lines.push(
-                        format!(
-                            "{:.2}–{:.2} s: {}",
-                            w.start + r.source_offset_seconds,
-                            w.end + r.source_offset_seconds,
-                            candidates(&w.candidates)
-                        )
-                        .into(),
-                    );
-                }
-                if r.analysis.windows.len() > 256 {
-                    lines.push(self.t(Key::AnalysisPreviewLimit).into());
-                }
-            }
-            MusicReport::Chords(r) => {
-                lines.push(self.t(Key::AnalysisBeatUnits).into());
-                lines.extend(r.segments.iter().take(256).map(|s| {
-                    format!(
-                        "{:.2}–{:.2}: {}",
-                        s.start.raw() as f64 / 960.0,
-                        s.end.raw() as f64 / 960.0,
-                        reading(&s.reading)
-                    )
-                    .into()
-                }));
-                if r.segments.len() > 256 {
-                    lines.push(self.t(Key::AnalysisPreviewLimit).into());
-                }
-            }
-            MusicReport::Audio(r) => {
-                lines.push(self.t(Key::AnalysisSecondUnits).into());
-                if r.analysis.tempo.candidates.is_empty() {
-                    lines.push(self.t(Key::AnalysisNoTempo).into());
-                }
-                for c in &r.analysis.tempo.candidates {
-                    lines.push(format!("{:.1} BPM ({:.2})", c.bpm, c.score).into());
-                }
-                lines.extend(r.analysis.chords.iter().take(256).map(|s| {
-                    format!(
-                        "{:.2}–{:.2} s: {}",
-                        s.start + r.source_offset_seconds,
-                        s.end + r.source_offset_seconds,
-                        reading(&s.reading)
-                    )
-                    .into()
-                }));
-                if r.analysis.chords.len() > 256 {
-                    lines.push(self.t(Key::AnalysisPreviewLimit).into());
-                }
-            }
+        lines.push(self.t(Key::AnalysisBeatUnits).into());
+        lines.extend(report.segments.iter().take(256).map(|s| {
+            format!(
+                "{:.2}–{:.2}: {}",
+                s.start.raw() as f64 / 960.0,
+                s.end.raw() as f64 / 960.0,
+                reading(&s.reading)
+            )
+            .into()
+        }));
+        if report.segments.len() > 256 {
+            lines.push(self.t(Key::AnalysisPreviewLimit).into());
         }
         self.open_prompt(Prompt::notice(self.t(Key::AnalysisTitle), lines));
     }
@@ -979,31 +818,50 @@ impl AurisApp {
             MenuCommand::ViewMusicAnalysis,
         ));
         // Validation is performed on completion and application, not while painting every frame.
-        if matches!(report, MusicReport::Instruments(_)) {
-            return rows;
-        }
         rows.push(action_button(
             "music-apply",
             self.t(Key::AnalysisApplyChords).to_string(),
             MenuCommand::ApplyMusicChords,
         ));
-        if let MusicReport::Audio(r) = report {
-            for (i, c) in r.analysis.tempo.candidates.iter().enumerate() {
+        rows.push(
+            div()
+                .text_xs()
+                .child(self.t(Key::AnalysisBeatUnits))
+                .into_any_element(),
+        );
+        for (i, s) in report.segments.iter().take(256).enumerate() {
+            rows.push(
+                div()
+                    .text_xs()
+                    .child(format!(
+                        "{:.2}–{:.2}{}",
+                        s.start.raw() as f64 / 960.0,
+                        s.end.raw() as f64 / 960.0,
+                        if s.reading.state == ChordState::Unknown {
+                            format!(" · {}", self.t(Key::AnalysisUnknown))
+                        } else {
+                            String::new()
+                        }
+                    ))
+                    .into_any_element(),
+            );
+            for (j, c) in s.reading.candidates.iter().enumerate() {
                 rows.push(
                     button(
-                        ("music-tempo", i),
-                        tempo_candidate(
-                            self.t(Key::AnalysisSetSourceTempo),
-                            self.t(Key::AnalysisScoreLabel),
-                            c.bpm,
-                            c.score,
-                        ),
+                        ("music-candidate", i * 4 + j),
+                        scored_candidate(&c.symbol, self.t(Key::AnalysisScoreLabel), c.score),
                         ButtonStyle::Normal,
                         false,
                         theme.accent,
                         &theme,
                         cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                            this.run_menu_command(MenuCommand::ApplyMusicTempo(i), cx);
+                            this.run_menu_command(
+                                MenuCommand::ApplyMusicCandidate {
+                                    segment: i,
+                                    candidate: j,
+                                },
+                                cx,
+                            );
                             cx.notify();
                         }),
                     )
@@ -1011,61 +869,13 @@ impl AurisApp {
                 );
             }
         }
-        if let MusicReport::Chords(r) = report {
+        if report.segments.len() > 256 {
             rows.push(
                 div()
                     .text_xs()
-                    .child(self.t(Key::AnalysisBeatUnits))
+                    .child(self.t(Key::AnalysisPreviewLimit))
                     .into_any_element(),
             );
-            for (i, s) in r.segments.iter().take(256).enumerate() {
-                rows.push(
-                    div()
-                        .text_xs()
-                        .child(format!(
-                            "{:.2}–{:.2}{}",
-                            s.start.raw() as f64 / 960.0,
-                            s.end.raw() as f64 / 960.0,
-                            if s.reading.state == ChordState::Unknown {
-                                format!(" · {}", self.t(Key::AnalysisUnknown))
-                            } else {
-                                String::new()
-                            }
-                        ))
-                        .into_any_element(),
-                );
-                for (j, c) in s.reading.candidates.iter().enumerate() {
-                    rows.push(
-                        button(
-                            ("music-candidate", i * 4 + j),
-                            scored_candidate(&c.symbol, self.t(Key::AnalysisScoreLabel), c.score),
-                            ButtonStyle::Normal,
-                            false,
-                            theme.accent,
-                            &theme,
-                            cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                                this.run_menu_command(
-                                    MenuCommand::ApplyMusicCandidate {
-                                        segment: i,
-                                        candidate: j,
-                                    },
-                                    cx,
-                                );
-                                cx.notify();
-                            }),
-                        )
-                        .into_any_element(),
-                    );
-                }
-            }
-            if r.segments.len() > 256 {
-                rows.push(
-                    div()
-                        .text_xs()
-                        .child(self.t(Key::AnalysisPreviewLimit))
-                        .into_any_element(),
-                );
-            }
         }
         rows
     }

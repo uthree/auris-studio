@@ -1077,7 +1077,7 @@ mod tests {
             let cwd = tempfile::tempdir().unwrap();
             let audio = cwd.path().join("reference.wav");
             let history = cwd.path().join("memory.json");
-            crate::attachments::tests::reference_wav(&audio, false);
+            crate::attachments::tests::reference_wav(&audio);
             commands.send(json!({"say":"Add an instrument track", "display":"Add a track", "attachments":[audio]}).to_string()).unwrap();
             let drive = async {
                 conversation(&mut rpc, &prefs, &bridge, &mcp, cwd.path(), HistoryInput { path: Some(history.clone()), fresh: false, project: false, snapshot: None }).await.unwrap();
@@ -1098,7 +1098,7 @@ mod tests {
                 let checkpoint = memory::Memory::load(&history).unwrap();
                 assert_eq!(checkpoint.turns.last().unwrap().user, "Add a track");
                 assert!(checkpoint.turns.last().unwrap().answer.contains("no final answer was recorded"));
-                assert!(request["params"]["input"][1]["text"].as_str().unwrap().contains("local CPU audio measurements"));
+                assert!(request["params"]["input"][1]["text"].as_str().unwrap().contains("raw audio was not sent"));
 
                 reply(&mut writer, json!({"id":request["id"],"result":{"turn":{"id":"turn"}}})).await;
 

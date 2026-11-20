@@ -813,17 +813,6 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
             ),
             MenuRow::Separator,
             command(
-                t(Key::MenuAnalyzeAudio),
-                actions::AnalyzeSelectedAudio,
-                "analysis.audio",
-            ),
-            command(
-                t(Key::MenuAnalyzeInstruments),
-                actions::AnalyzeSelectedInstruments,
-                "analysis.instruments",
-            ),
-            MenuRow::Separator,
-            command(
                 t(Key::AnalysisDrums),
                 actions::OpenDrumAnalysis,
                 "analysis.drums",

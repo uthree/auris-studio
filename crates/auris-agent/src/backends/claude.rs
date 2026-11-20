@@ -1669,7 +1669,7 @@ mod tests {
                 let mut cli = Cli::transport(None, writer, reader);
                 let references = tempfile::tempdir().unwrap();
                 let audio = references.path().join("reference.wav");
-                crate::attachments::tests::reference_wav(&audio, false);
+                crate::attachments::tests::reference_wav(&audio);
                 commands.send(json!({"say":"Add a track","attachments":[audio]}).to_string()).unwrap();
                 let preferences = prefs();
                 let drive = async { conversation(&mut cli, &preferences, &bridge, &mcp, test_history(&bridge, None), ephemeral()).await.unwrap() };
@@ -1682,7 +1682,7 @@ mod tests {
                     let prompt: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
                     assert_eq!(prompt["type"], "user");
                     assert_eq!(prompt["client_composed"], true);
-                    assert!(prompt["message"]["content"][1]["text"].as_str().unwrap().contains("local CPU audio measurements"));
+                    assert!(prompt["message"]["content"][1]["text"].as_str().unwrap().contains("raw audio was not sent"));
                     let client = reqwest::Client::new();
                     let request = |value: Value| client.post(&mcp.url).bearer_auth(&mcp.token).header("Accept", "application/json, text/event-stream").json(&value);
                     let init = request(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"claude-fixture","version":"1"}}})).send().await.unwrap();
