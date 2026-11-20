@@ -39,6 +39,20 @@ pub const PAD_MAX_GAIN_DB: f32 = 12.0;
 /// How far a pad may be retuned either way, in semitones.
 pub const PAD_TUNE_RANGE: f32 = 24.0;
 
+/// The key a new pad goes on when the kit has nothing there: General MIDI's bass drum.
+const FIRST_PAD_KEY: u8 = 36;
+
+/// The key a new pad goes on: the first one from [`FIRST_PAD_KEY`] up that nothing in `used`
+/// names, then the first below it; `None` when all 128 are taken.
+///
+/// Upwards from the bass drum because that is where General MIDI keeps a kit, so pads added one
+/// after another land where a keyboard or a General MIDI file expects drums to be.
+fn free_pad_key(used: &[u8]) -> Option<u8> {
+    (FIRST_PAD_KEY..=127)
+        .chain(0..FIRST_PAD_KEY)
+        .find(|key| !used.contains(key))
+}
+
 /// The recordings on one key of a drum track, and the settings they share.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DrumPad {
@@ -203,6 +217,66 @@ impl Session {
         self.install_source(source, Arc::new(buffer));
         self.invalidate_graph();
         Ok(source)
+    }
+
+    /// Plays decoded audio on a new pad of a drum track — a key no lane or file uses yet — and
+    /// answers that key.
+    ///
+    /// The pad's lane is named after the file. Otherwise [`Self::place_drum_sample`].
+    pub fn add_drum_pad(
+        &mut self,
+        track: TrackId,
+        path: &Path,
+        buffer: AudioBuffer,
+    ) -> Result<u8, SessionError> {
+        self.checked_drum_map(track)?;
+        let note = self.free_drum_pad_key(track).ok_or_else(|| {
+            SessionError::InvalidDrumAssignment("every MIDI key already has a pad".into())
+        })?;
+        self.place_drum_sample(track, note, path, buffer, false)?;
+        Ok(note)
+    }
+
+    /// The key [`Self::add_drum_pad`] would use next, when there is one.
+    pub fn free_drum_pad_key(&self, track: TrackId) -> Option<u8> {
+        let mut used: Vec<u8> = self
+            .drum_lanes(track)
+            .unwrap_or_default()
+            .iter()
+            .map(|lane| lane.note)
+            .collect();
+        used.extend(self.drum_pads(track).iter().map(|pad| pad.note));
+        free_pad_key(&used)
+    }
+
+    /// Takes a pad off a drum track — its recordings and the lane on its key — in one undo step.
+    ///
+    /// Notes already written on the key stay in the clips, as they do when a lane is removed.
+    /// Answers `false`, changing nothing, when the key has neither.
+    pub fn remove_drum_pad(&mut self, track: TrackId, note: u8) -> Result<bool, SessionError> {
+        let mut map = self.checked_drum_map(track)?;
+        let before = self.track_sample_zones(track);
+        let mut zones = before.clone();
+        zones.retain(|zone| !zone.is_only_on(note));
+        let lanes = map.lanes.len();
+        map.lanes.retain(|lane| lane.note != note);
+        if zones.len() == before.len() && map.lanes.len() == lanes {
+            return Ok(false);
+        }
+        map.sync_voices_from_lanes();
+        self.record(Edit::SetDrumAssignment);
+        if zones.len() != before.len() {
+            self.write_zones(track, &zones);
+        }
+        if let Some(inner) = self
+            .project
+            .track_mut(track)
+            .and_then(|entry| entry.kind.as_instrument_mut())
+        {
+            map.store(&mut inner.instrument_state);
+        }
+        self.invalidate_graph();
+        Ok(true)
     }
 
     /// Takes every recording off one key of a drum track, in one undo step; the lane stays.
@@ -621,6 +695,62 @@ mod tests {
             Err(SessionError::WrongTrackKind { .. })
         ));
         assert!(session.drum_pads(track).is_empty());
+    }
+
+    #[test]
+    fn a_new_pad_takes_the_first_free_key_from_the_bass_drum_up() {
+        assert_eq!(free_pad_key(&[]), Some(36));
+        assert_eq!(free_pad_key(&[36, 37, 39]), Some(38));
+        let upper: Vec<u8> = (36..=127).collect();
+        assert_eq!(free_pad_key(&upper), Some(0));
+        let all: Vec<u8> = (0..=127).collect();
+        assert_eq!(free_pad_key(&all), None);
+    }
+
+    #[test]
+    fn pads_are_added_and_removed_from_the_sampler_alone() {
+        let directory = tempfile::tempdir().unwrap();
+        let (kick, snare) = (
+            directory.path().join("Kick.wav"),
+            directory.path().join("Snare.wav"),
+        );
+        write_sine(&kick, 60.0, 0.1);
+        write_sine(&snare, 200.0, 0.1);
+        let mut session = session();
+        let track = session.add_default_drum_track("Kit").unwrap();
+        session
+            .set_track_instrument(track, DRUM_SAMPLER_ID)
+            .unwrap();
+        for lane in session.drum_lanes(track).unwrap() {
+            session.remove_drum_lane(track, lane.id).unwrap();
+        }
+        let buffer = |path: &Path| decode_audio(path, 48_000.0).unwrap();
+        let first = session.add_drum_pad(track, &kick, buffer(&kick)).unwrap();
+        let second = session.add_drum_pad(track, &snare, buffer(&snare)).unwrap();
+        assert_eq!((first, second), (36, 37));
+        let names: Vec<String> = session
+            .drum_lanes(track)
+            .unwrap()
+            .into_iter()
+            .map(|lane| lane.name)
+            .collect();
+        assert_eq!(names, vec!["Kick".to_string(), "Snare".to_string()]);
+
+        // Removing a pad takes its lane with it, in one undo step.
+        assert!(session.remove_drum_pad(track, first).unwrap());
+        assert!(!session.remove_drum_pad(track, first).unwrap());
+        assert_eq!(session.drum_pads(track).len(), 1);
+        assert!(
+            session
+                .drum_lanes(track)
+                .unwrap()
+                .iter()
+                .all(|l| l.note != first)
+        );
+        assert_eq!(session.free_drum_pad_key(track), Some(36));
+        session.undo();
+        assert_eq!(session.drum_pads(track).len(), 2);
+        assert_eq!(session.drum_lanes(track).unwrap().len(), 2);
     }
 
     #[test]

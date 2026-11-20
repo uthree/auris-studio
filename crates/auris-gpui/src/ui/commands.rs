@@ -3066,7 +3066,7 @@ impl AurisApp {
 
     /// Decodes an audio file on a worker and plays it on one key of a drum track.
     ///
-    /// The file dialog and a drop onto a lane both end here.
+    /// The file dialog and a drop onto a pad both end here.
     pub(crate) fn read_drum_sample(
         &mut self,
         track: TrackId,
@@ -3128,14 +3128,103 @@ impl AurisApp {
         ))
     }
 
-    /// Stops one key of a drum track playing a file, and says so.
-    pub(crate) fn clear_drum_sample(&mut self, track: TrackId, note: u8) {
-        match self.session.clear_drum_sample(track, note) {
+    /// Prompts for audio files and makes a new pad of each on a drum sampler track.
+    pub(crate) fn load_drum_pads(&mut self, track: TrackId, cx: &mut Context<Self>) {
+        let extensions: Vec<String> = auris_session::supported_audio_extensions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let language = self.language();
+        cx.spawn(async move |this, cx| {
+            let extension_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
+            let Some(handles) = rfd::AsyncFileDialog::new()
+                .set_title(Key::DialogLoadSample.get(language))
+                .add_filter(Key::FilterAudio.get(language), &extension_refs)
+                .pick_files()
+                .await
+            else {
+                return;
+            };
+            let paths = handles
+                .iter()
+                .map(|handle| handle.path().to_path_buf())
+                .collect();
+            let _ = this.update(cx, |this, cx| this.read_drum_pads(track, paths, cx));
+        })
+        .detach();
+    }
+
+    /// Decodes audio files on a worker, one after another, and makes a new pad of each.
+    ///
+    /// One at a time and in the order given, so the pads take keys in that order. The file
+    /// dialog and a drop onto the pad list both end here.
+    pub(crate) fn read_drum_pads(
+        &mut self,
+        track: TrackId,
+        paths: Vec<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        let rate = self.project().sample_rate;
+        cx.spawn(async move |this, cx| {
+            for path in paths {
+                let started = this.update(cx, |this, cx| {
+                    this.set_status(messages::importing(
+                        this.language(),
+                        path.display().to_string(),
+                    ));
+                    cx.notify();
+                });
+                if started.is_err() {
+                    return;
+                }
+                let read = read_file(
+                    cx.background_executor().clone(),
+                    Reading::Audio { rate },
+                    path.clone(),
+                )
+                .await;
+                let _ = this.update(cx, |this, cx| {
+                    match read.and_then(|loaded| this.take_drum_pad(track, &path, loaded)) {
+                        Ok(line) => this.set_status(line),
+                        Err(error) => {
+                            this.set_failed_status(this.failure(Key::SamplerLoadSample, &error))
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Makes a new pad of decoded audio on a drum track, and says so.
+    pub(crate) fn take_drum_pad(
+        &mut self,
+        track: TrackId,
+        path: &Path,
+        loaded: Loaded,
+    ) -> Result<String, SessionError> {
+        let Loaded::Audio(buffer) = loaded else {
+            return Err(SessionError::EmptySample(path.to_path_buf()));
+        };
+        let note = self.session.add_drum_pad(track, path, buffer)?;
+        let name = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+            .unwrap_or_default();
+        Ok(messages::drum_sample_loaded(
+            self.language(),
+            &name,
+            self.drum_lane_title(track, note),
+        ))
+    }
+
+    /// Takes a pad off a drum track, its lane with it, and says so.
+    pub(crate) fn remove_drum_pad(&mut self, track: TrackId, note: u8) {
+        let title = self.drum_lane_title(track, note);
+        match self.session.remove_drum_pad(track, note) {
             Ok(true) => {
-                let line = messages::drum_sample_cleared(
-                    self.language(),
-                    self.drum_lane_title(track, note),
-                );
+                let line = messages::drum_pad_removed(self.language(), title);
                 self.set_status(line);
             }
             Ok(false) => {}

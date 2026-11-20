@@ -2,7 +2,10 @@
 //!
 //! One row per drum lane: its name, the file it plays, and the settings that are a pad's rather
 //! than the instrument's — level, tuning, whether it plays to its end, and which choke group it
-//! is in. A lane with no file shows only the way to give it one. The rows follow the lanes rather
+//! is in. A lane with no file shows only the way to give it one.
+//!
+//! This is where a kit is built: **Add Pads…** and a drop on the list make a new pad of each audio
+//! file, on the next key nothing uses, and a drop on one row replaces that pad's file. The rows follow the lanes rather
 //! than the files, because the lanes are what the drum editor and generation already call the
 //! kit; a pad on a key no lane names is listed after them so nothing that sounds is hidden.
 
@@ -14,6 +17,7 @@ use gpui::{AnyElement, Pixels, Point, div, prelude::*, px};
 use crate::app::AurisApp;
 use crate::theme::Theme;
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
+use crate::ui::drop::{drum_pad_drops, drum_sample_drop};
 use crate::ui::icons::Icon;
 use crate::ui::widgets::{ButtonStyle, button, chain_button};
 
@@ -97,10 +101,23 @@ impl AurisApp {
             .flex_shrink_0()
             .flex()
             .items_center()
+            .justify_between()
             .px_2()
-            .text_xs()
-            .text_color(theme.text_muted)
-            .child(self.t(Key::DrumSamplerPads));
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::DrumSamplerPads)),
+            )
+            .child(button(
+                "pw-pad-add",
+                self.t(Key::DrumPadAdd).to_string(),
+                ButtonStyle::Ghost,
+                false,
+                theme.accent_soft,
+                theme,
+                cx.listener(move |this, _, _, cx| this.load_drum_pads(track, cx)),
+            ));
         let body = match keys.is_empty() {
             true => div()
                 .px_2()
@@ -123,11 +140,24 @@ impl AurisApp {
                 }))
                 .into_any_element(),
         };
+        let highlight = theme.accent_soft;
         div()
+            .id("pw-drum-pad-list")
             .w_full()
             .flex_shrink_0()
             .flex()
             .flex_col()
+            // Files let go anywhere on the list become new pads; a row takes a single file first.
+            .on_drop(
+                cx.listener(move |this, paths: &gpui::ExternalPaths, _, cx| {
+                    let files = drum_pad_drops(paths.paths());
+                    if !files.is_empty() {
+                        this.read_drum_pads(track, files, cx);
+                    }
+                    cx.stop_propagation();
+                }),
+            )
+            .drag_over::<gpui::ExternalPaths>(move |style, _, _, _| style.bg(highlight))
             .border_b_1()
             .border_color(theme.border)
             .child(header)
@@ -183,6 +213,15 @@ impl AurisApp {
             .items_center()
             .gap_1()
             .px_2()
+            // One file on a row is that pad's new sound; anything else is left to the list.
+            .on_drop(
+                cx.listener(move |this, paths: &gpui::ExternalPaths, _, cx| {
+                    if let Some(path) = drum_sample_drop(paths.paths()) {
+                        this.read_drum_sample(track, note, path, false, cx);
+                        cx.stop_propagation();
+                    }
+                }),
+            )
             .child(title)
             .child(div().flex_1().min_w_0().truncate().text_xs().child(file));
         if let Some(pad) = pad.cloned() {
@@ -291,29 +330,40 @@ impl AurisApp {
         row = row.child(
             chain_button(
                 ("pw-pad-load", index),
-                Icon::Plus,
+                Icon::Wave,
                 theme,
                 cx.listener(move |this, _, _, cx| {
                     this.load_drum_sample(track, note, false, cx);
                 }),
             )
-            .tooltip(self.t(Key::DrumLaneLoadSample)),
+            .tooltip(self.t(Key::DrumPadReplace)),
         );
         if pad.is_some() {
             row = row.child(
                 chain_button(
-                    ("pw-pad-clear", index),
-                    Icon::Cross,
+                    ("pw-pad-layer", index),
+                    Icon::Plus,
                     theme,
                     cx.listener(move |this, _, _, cx| {
-                        this.clear_drum_sample(track, note);
-                        cx.notify();
+                        this.load_drum_sample(track, note, true, cx);
                     }),
                 )
-                .tooltip(self.t(Key::DrumLaneClearSample)),
+                .tooltip(self.t(Key::DrumPadLayer)),
             );
         }
-        row.into_any_element()
+        row.child(
+            chain_button(
+                ("pw-pad-remove", index),
+                Icon::Cross,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    this.remove_drum_pad(track, note);
+                    cx.notify();
+                }),
+            )
+            .tooltip(self.t(Key::DrumPadRemove)),
+        )
+        .into_any_element()
     }
 
     /// The choke groups one pad can join, with a tick on the one it is in.

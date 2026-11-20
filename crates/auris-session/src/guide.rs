@@ -1767,6 +1767,9 @@ pub mod plugins {
     //! The **drum sampler** ([`auris_sampler::DRUM_SAMPLER_ID`]) is the same player under its own
     //! name, with key tracking and the loop taken away: a drum track's lanes are its pads, and a
     //! file given to a lane ([`crate::Session::place_drum_sample`]) is a zone on that key alone.
+    //! A new pad ([`crate::Session::add_drum_pad`]) takes the next key nothing uses and a lane
+    //! named after its file, and removing one ([`crate::Session::remove_drum_pad`]) takes the
+    //! lane too, so the plugin window alone can build a kit from files.
     //! The pads are not stored apart from the lanes and the zones; why, and how a kit's lanes
     //! survive the switch, is the `drum_samples` module's account.
     //! [`auris_sampler::needs_asset`] names all three samplers for whatever picks an instrument on

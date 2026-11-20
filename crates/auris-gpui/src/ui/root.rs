@@ -16,7 +16,7 @@ use crate::menu::MenuRow;
 use crate::theme::Theme;
 use crate::ui::context_menu::MenuCommand;
 
-use crate::ui::drop::{drop_action, drum_sample_drop, lanes_offset};
+use crate::ui::drop::{drop_action, lanes_offset};
 use crate::ui::menu_bar;
 use crate::ui::music_analysis::AnalysisCommand;
 use crate::ui::widgets::{ButtonState, ButtonStyle, Latch, button_enabled, splitter};
@@ -1613,14 +1613,6 @@ impl AurisApp {
                 .is_some_and(|bounds| bounds.contains(&window.mouse_position()))
         {
             self.agent_attach_files(paths, cx);
-            cx.stop_propagation();
-            return;
-        }
-        // A file let go over a drum lane's name is that lane's sound, not a clip.
-        if let Some((track, note)) = self.drum_lane_under(window.mouse_position())
-            && let Some(path) = drum_sample_drop(paths)
-        {
-            self.read_drum_sample(track, note, path, false, cx);
             cx.stop_propagation();
             return;
         }

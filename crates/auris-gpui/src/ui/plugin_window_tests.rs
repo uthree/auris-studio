@@ -496,4 +496,38 @@ fn a_drum_sampler_window_lists_its_lanes_as_pads_the_window_can_set(cx: &mut Tes
             .is_some()
     );
     assert!(utility.debug_bounds("pw-sample-map").is_none());
+
+    // The window adds a pad on a key nothing uses, and takes one off again with its lane.
+    app.update(cx, |this, _| {
+        let free = this.session.free_drum_pad_key(track).unwrap();
+        let clap = AudioBuffer::from_planar(vec![vec![0.5; 4_800]], rate).unwrap();
+        let line = this
+            .take_drum_pad(
+                track,
+                std::path::Path::new("/samples/Clap.wav"),
+                crate::ui::commands::Loaded::Audio(clap),
+            )
+            .unwrap();
+        assert!(line.contains("Clap"), "{line}");
+        assert!(
+            this.session
+                .drum_pads(track)
+                .iter()
+                .any(|pad| pad.note == free)
+        );
+        this.remove_drum_pad(track, kick);
+        assert!(
+            this.session
+                .drum_pads(track)
+                .iter()
+                .all(|pad| pad.note != kick)
+        );
+        assert!(
+            this.session
+                .drum_lanes(track)
+                .unwrap()
+                .iter()
+                .all(|lane| lane.note != kick)
+        );
+    });
 }

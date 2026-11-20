@@ -598,12 +598,12 @@ DrumLaneMidi = "MIDI Note…"
 DrumLaneMidiMove = "MIDI Note + Move Hits…"
 DrumLaneRoles = "Generation roles"
 DrumLaneRemove = "Remove Lane"
-DrumLaneLoadSample = "Load Sample…"
-DrumLaneLayerSample = "Add Sample Layer…"
-DrumLaneClearSample = "Remove Sample"
-DrumLaneLoadSampleSwitch = "Load Sample into a Drum Sampler…"
+DrumPadAdd = "Add Pads…"
+DrumPadReplace = "Replace File…"
+DrumPadLayer = "Add a Take… (alternates hit by hit)"
+DrumPadRemove = "Remove Pad"
 DrumSamplerPads = "Pads"
-DrumSamplerNoLanes = "No lanes yet. Add lanes in the drum editor, or drop an audio file on a lane name there."
+DrumSamplerNoLanes = "No pads yet. Choose audio files with Add Pads…, or drop them here."
 DrumPadEmpty = "No file"
 DrumPadLevel = "Level"
 DrumPadTune = "Tune"
@@ -2533,8 +2533,8 @@ sample_pitches_detected = "Detected the pitch of {count} sample(s)"
 samples_loaded = "Loaded {count} samples into the sampler"
 # Confirmation that an audio file now plays on one lane of a drum track.
 drum_sample_loaded = "Loaded {name} on {lane}"
-# Confirmation that a drum lane no longer plays a file.
-drum_sample_cleared = "Removed the sample from {lane}"
+# Confirmation that a drum sampler pad, and its lane, were removed.
+drum_pad_removed = "Removed the pad {lane}"
 # Confirmation that a SoundFont was read, and how many sounds it brought with it.
 #
 # The count rather than the path, because a font goes on a shelf instead of onto a track:
