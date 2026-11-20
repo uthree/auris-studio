@@ -2,7 +2,7 @@
 
 use super::{Session, SingerTakeState};
 use auris_core::TrackId;
-use auris_sampler::{AUDIO_SAMPLER_ID, SAMPLER_ID};
+use auris_sampler::{SAMPLER_ID, plays_project_audio};
 
 /// What will play for a track, independently of its mute/solo state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
@@ -78,7 +78,7 @@ impl Session {
                         } else {
                             PlaybackState::MissingSoundfont
                         }
-                    } else if instrument.instrument_id == AUDIO_SAMPLER_ID {
+                    } else if plays_project_audio(&instrument.instrument_id) {
                         if self.track_sample_is_loaded(track.id) {
                             PlaybackState::Ready
                         } else {
@@ -113,7 +113,7 @@ mod tests {
             .unwrap();
         session.add_singer_track("Unsung");
         session
-            .add_instrument_track("Empty audio sampler", AUDIO_SAMPLER_ID)
+            .add_instrument_track("Empty audio sampler", auris_sampler::AUDIO_SAMPLER_ID)
             .unwrap();
         let report = session.playback_readiness();
         assert_eq!(report[0].state, PlaybackState::MissingSoundfont);

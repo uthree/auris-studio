@@ -598,6 +598,20 @@ DrumLaneMidi = "MIDI Note…"
 DrumLaneMidiMove = "MIDI Note + Move Hits…"
 DrumLaneRoles = "Generation roles"
 DrumLaneRemove = "Remove Lane"
+DrumPadAdd = "Add Pads…"
+DrumPadReplace = "Replace File…"
+DrumPadLayer = "Add a Take… (alternates hit by hit)"
+DrumPadRemove = "Remove Pad"
+DrumSamplerPads = "Pads"
+DrumSamplerNoLanes = "No pads yet. Choose audio files with Add Pads…, or drop them here."
+DrumPadEmpty = "No file"
+DrumPadLevel = "Level"
+DrumPadTune = "Tune"
+DrumPadOneShot = "One-shot"
+DrumPadOneShotTip = "Plays the whole file however short the note is"
+DrumPadChoke = "Choke"
+DrumPadChokeNone = "No Choke Group"
+DrumPadChokeTip = "A hit on any pad of the group stops the others still ringing, as a closed hi-hat stops an open one"
 DrumRepeatPaint = "Drag-paint repeats at the current grid interval."
 DrummerHeading = "Drummer"
 DrummerComplexity = "Complexity"
@@ -2540,6 +2554,10 @@ sample_loaded = "Loaded {name} into the sampler"
 sample_pitches_detected = "Detected the pitch of {count} sample(s)"
 # Confirmation that several audio files joined a track's sampler map.
 samples_loaded = "Loaded {count} samples into the sampler"
+# Confirmation that an audio file now plays on one lane of a drum track.
+drum_sample_loaded = "Loaded {name} on {lane}"
+# Confirmation that a drum sampler pad, and its lane, were removed.
+drum_pad_removed = "Removed the pad {lane}"
 # Confirmation that a SoundFont was read, and how many sounds it brought with it.
 #
 # The count rather than the path, because a font goes on a shelf instead of onto a track:

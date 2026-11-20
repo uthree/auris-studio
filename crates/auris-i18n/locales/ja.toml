@@ -598,6 +598,20 @@ DrumLaneMidi = "MIDIノート…"
 DrumLaneMidiMove = "MIDIノート変更＋打点を移動…"
 DrumLaneRoles = "自動演奏での役割"
 DrumLaneRemove = "レーンを削除"
+DrumPadAdd = "パッドを追加…"
+DrumPadReplace = "ファイルを差し替える…"
+DrumPadLayer = "ファイルを重ねる…（叩くたびに交互に鳴らします）"
+DrumPadRemove = "パッドを削除"
+DrumSamplerPads = "パッド"
+DrumSamplerNoLanes = "パッドがまだありません。「パッドを追加…」で音声ファイルを選ぶか、ここにファイルをドロップしてください。"
+DrumPadEmpty = "ファイルなし"
+DrumPadLevel = "レベル"
+DrumPadTune = "チューン"
+DrumPadOneShot = "ワンショット"
+DrumPadOneShotTip = "ノートが短くても、ファイルを最後まで鳴らします"
+DrumPadChoke = "チョーク"
+DrumPadChokeNone = "チョークグループなし"
+DrumPadChokeTip = "同じグループのパッドを叩くと、鳴っている他の音を止めます（クローズドハットでオープンハットを止めるなど）"
 DrumRepeatPaint = "ドラッグ入力は現在のグリッド間隔で連続配置します。"
 DrummerHeading = "ドラマー"
 DrummerComplexity = "複雑さ"
@@ -2540,6 +2554,10 @@ sample_loaded = "{name} をサンプラーに読み込みました"
 sample_pitches_detected = "サンプル {count} 件のピッチを合わせました"
 # Confirmation that several audio files joined a track's sampler map.
 samples_loaded = "サンプル {count} 件をサンプラーに読み込みました"
+# Confirmation that an audio file now plays on one lane of a drum track.
+drum_sample_loaded = "{name} を {lane} に読み込みました"
+# Confirmation that a drum sampler pad, and its lane, were removed.
+drum_pad_removed = "パッド {lane} を削除しました"
 # Confirmation that a SoundFont was read, and how many sounds it brought with it.
 #
 # The count rather than the path, because a font goes on a shelf instead of onto a track:

@@ -349,6 +349,11 @@ impl AurisApp {
             PluginSubject::Instrument(track) if plugin_id == AUDIO_SAMPLER_ID => Some(track),
             _ => None,
         };
+        // The drum sampler's pads: its lanes, each with a file and the settings that are a pad's.
+        let pads = match subject {
+            PluginSubject::Instrument(track) if plugin_id == DRUM_SAMPLER_ID => Some(track),
+            _ => None,
+        };
         let wide = host_window.viewport_size().width >= host_window.rem_size() * 48.;
         // A resonating effect is drawn the way a physical instrument is: its body beside its
         // parameters.
@@ -532,6 +537,7 @@ impl AurisApp {
                         .into_any_element()
                 }))
                 .children(sample.map(|track| self.sample_map_section(track, &theme, cx)))
+                .children(pads.map(|track| self.drum_pad_section(track, &theme, cx)))
                 .child(body)
                 .into_any_element(),
         )

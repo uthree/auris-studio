@@ -479,6 +479,10 @@ impl Session {
         }
         self.record(Edit::ChangeInstrument);
         let mut swapped = false;
+        let drum = self
+            .project
+            .track(id)
+            .is_some_and(|track| track.kind.is_drum());
         if let Some(inner) = self
             .project
             .track_mut(id)
@@ -486,9 +490,16 @@ impl Session {
         {
             swapped = inner.instrument_id != instrument_id;
             inner.instrument_id = instrument_id.to_string();
+            // The drum sampler's pads are the track's lanes, so they come with it: a kit's Kick
+            // and Snare rows are where its files go next.
+            let lanes = auris_core::project::DrumMap::load(&inner.instrument_state)
+                .filter(|_| drum && instrument_id == auris_sampler::DRUM_SAMPLER_ID);
             // The saved values belong to the old plugin; applying them to a different one would
             // write another plugin's numbers into unrelated controls.
             inner.instrument_state = PluginState::empty();
+            if let Some(lanes) = lanes {
+                lanes.store(&mut inner.instrument_state);
+            }
             // And the file with them. This one is not cosmetic: a track still naming a `.clap`
             // while its id is a registry id is a track the session keeps a hosted instance
             // alive for, of a plugin that file does not contain and never will.

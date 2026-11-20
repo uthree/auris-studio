@@ -182,6 +182,9 @@ pub use session::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};
 pub use session::{
     DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneView, detect_pitch, parse_root_note,
 };
+pub use session::{
+    DrumPad, DrumPadEdit, HI_HAT_CHOKE, PAD_MAX_GAIN_DB, PAD_MIN_GAIN_DB, PAD_TUNE_RANGE,
+};
 pub use session::{ENVELOPE_PITCHES, SoundEnvelope};
 pub use session::{RecordQuantize, record_quantized};
 pub use session::{prepare_looping_output_preview, prepare_output_preview};
@@ -382,8 +385,8 @@ pub mod prelude {
         WavExportSettings,
     };
     pub use auris_sampler::{
-        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, KeyRange, MAX_SAMPLE_ZONES, SAMPLER_ID,
-        SampleZone, VelocityRange,
+        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, DRUM_SAMPLER_ID, KeyRange, MAX_SAMPLE_ZONES,
+        SAMPLER_ID, SampleZone, VelocityRange,
     };
 
     pub use crate::{

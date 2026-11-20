@@ -40,6 +40,9 @@ use crate::zones::{MAX_ZONES, SampleZone, pick_zone, store_zones, stored_zones};
 /// The audio sampler's plugin id, as a project file stores it.
 pub const AUDIO_SAMPLER_ID: &str = "auris.sampler.audio";
 
+/// The drum sampler's plugin id: the same player, one recording per drum lane.
+pub const DRUM_SAMPLER_ID: &str = "auris.sampler.drums";
+
 /// Voices one instance may sound at once.
 ///
 /// A sample with a long tail and a quick part can stack a few dozen; past that the oldest-and-
@@ -70,6 +73,9 @@ const PARAM_COUNT: usize = 10;
 
 /// The key of the loop switch.
 pub const LOOP_KEY: &str = "loop";
+
+/// The key of the key-tracking switch: off, every key plays its recording unpitched.
+pub const KEY_TRACKING_KEY: &str = "key_tracking";
 
 /// A sample bank shared between the session that fills it and the samplers that read it.
 pub type SharedSamples = Arc<SampleBank>;
@@ -162,13 +168,26 @@ pub fn register_audio_sampler(registry: &mut PluginRegistry, samples: SharedSamp
     registry.register_instrument(move || Box::new(AudioSampler::new(Arc::clone(&samples))));
 }
 
+/// Registers the drum sampler, reading the same bank as the audio sampler.
+pub fn register_drum_sampler(registry: &mut PluginRegistry, samples: SharedSamples) {
+    registry.register_instrument(move || Box::new(AudioSampler::drums(Arc::clone(&samples))));
+}
+
+/// `true` for both instruments that play the project's own audio sources through a zone map.
+///
+/// They store the same state and are edited by the same commands; only what they offer a user
+/// differs.
+pub fn plays_project_audio(instrument_id: &str) -> bool {
+    instrument_id == AUDIO_SAMPLER_ID || instrument_id == DRUM_SAMPLER_ID
+}
+
 /// `true` for an instrument that is silent until a file has been chosen for it.
 ///
-/// Both samplers are: a SoundFont player with no preset and an audio sampler with no sample are
-/// registered instruments that make no sound. Anything choosing an instrument *for* somebody — a
-/// fallback, a timbre search, a composer filling a track — must skip them.
+/// Every sampler is: a SoundFont player with no preset, and an audio or drum sampler with no
+/// sample, are registered instruments that make no sound. Anything choosing an instrument *for*
+/// somebody — a fallback, a timbre search, a composer filling a track — must skip them.
 pub fn needs_asset(instrument_id: &str) -> bool {
-    instrument_id == crate::SAMPLER_ID || instrument_id == AUDIO_SAMPLER_ID
+    instrument_id == crate::SAMPLER_ID || plays_project_audio(instrument_id)
 }
 
 /// One sounding copy of a sample.
@@ -218,6 +237,10 @@ struct Playable {
     gain: f32,
     /// Loop bounds in frames, `None` when looping is off or the region is too short.
     loop_region: Option<(usize, usize)>,
+    /// Plays to its end whatever the note's length.
+    one_shot: bool,
+    /// The choke group its hits cut.
+    choke: Option<u8>,
 }
 
 /// Plays audio sources across the keyboard, each pitched from its root note.
@@ -229,8 +252,13 @@ struct Playable {
 /// The loop, when it is on, runs between two fractions of each sample's length for as long as
 /// the note is held *and* through its release, so the release time is what ends a looped note.
 /// Off, the sound plays to its end and the note is over there whatever the envelope says.
+///
+/// [`AudioSampler::drums`] is the same player as the **drum sampler**: key tracking is always off
+/// and there is no loop, so neither is offered, and each key plays the recordings on it alone.
 pub struct AudioSampler {
     samples: SharedSamples,
+    /// Plays as the drum sampler.
+    drums: bool,
     params: Vec<ParamDescriptor>,
     values: [f32; PARAM_COUNT],
     level: SmoothedValue,
@@ -253,11 +281,20 @@ pub struct AudioSampler {
 impl AudioSampler {
     /// A sampler reading audio from `samples`.
     pub fn new(samples: SharedSamples) -> Self {
+        Self::build(samples, false)
+    }
+
+    /// The drum sampler, reading audio from `samples`.
+    pub fn drums(samples: SharedSamples) -> Self {
+        Self::build(samples, true)
+    }
+
+    fn build(samples: SharedSamples, drums: bool) -> Self {
         let params = vec![
             ParamDescriptor::decibels(LEVEL as u32, "level", "Level", -60.0, 12.0, 0.0),
             ParamDescriptor::new(TUNE as u32, "tune", "Fine Tune", -1.0, 1.0, 0.0)
                 .with_unit(ParamUnit::Semitones),
-            ParamDescriptor::toggle(KEY_TRACKING as u32, "key_tracking", "Key Tracking", true),
+            ParamDescriptor::toggle(KEY_TRACKING as u32, KEY_TRACKING_KEY, "Key Tracking", true),
             ParamDescriptor::new(ATTACK as u32, "attack", "Attack", 0.0, 2.0, 0.0)
                 .with_unit(ParamUnit::Seconds)
                 .with_curve(ParamValueCurve::Power(3.0)),
@@ -277,8 +314,23 @@ impl AudioSampler {
         for (slot, descriptor) in values.iter_mut().zip(&params) {
             *slot = descriptor.default;
         }
+        // A kit is played by key and never loops, so the drum sampler offers neither switch.
+        let params: Vec<ParamDescriptor> = params
+            .into_iter()
+            .filter(|descriptor| {
+                !drums
+                    || !matches!(
+                        descriptor.id.index(),
+                        KEY_TRACKING | LOOP | LOOP_START | LOOP_END
+                    )
+            })
+            .collect();
+        if drums {
+            values[KEY_TRACKING] = 0.0;
+        }
         let mut sampler = Self {
             samples,
+            drums,
             params,
             values,
             level: SmoothedValue::new(1.0, LEVEL_SMOOTHING_SECONDS, 48_000.0),
@@ -326,7 +378,8 @@ impl AudioSampler {
         );
         for playable in &mut self.playable {
             playable.loop_region = None;
-            if !looped {
+            // A one-shot plays to its end, and a loop has no end.
+            if !looped || playable.one_shot {
                 continue;
             }
             let length = playable.buffer.frame_count();
@@ -355,7 +408,7 @@ impl AudioSampler {
     }
 
     fn key_tracking(&self) -> bool {
-        self.values[KEY_TRACKING] >= 0.5
+        !self.drums && self.values[KEY_TRACKING] >= 0.5
     }
 
     fn note_on(&mut self, key: u8, pitch: f32, velocity: f32) {
@@ -376,6 +429,21 @@ impl AudioSampler {
             return;
         };
         self.turn = self.turn.wrapping_add(1);
+        // A hit in a choke group cuts whatever of the group still rings, itself included, with
+        // the de-click ramp rather than the release: an open hat closed by the pedal stops.
+        if let Some(group) = self.playable[zone].choke {
+            for voice in &mut self.voices {
+                if voice.key.is_some()
+                    && self
+                        .playable
+                        .get(voice.zone)
+                        .is_some_and(|playable| playable.choke == Some(group))
+                {
+                    voice.held = false;
+                    voice.envelope.kill();
+                }
+            }
+        }
         let index = self
             .voices
             .iter()
@@ -414,6 +482,7 @@ impl AudioSampler {
     ///
     /// One release answers one strike. A key struck twice before either release is two notes,
     /// and letting both go at the first release would cut the second short of what was written.
+    /// A one-shot's release is counted but not obeyed: the strike is let go, the sound goes on.
     fn note_off(&mut self, key: u8) {
         let held = self
             .voices
@@ -422,7 +491,13 @@ impl AudioSampler {
             .min_by_key(|voice| voice.started);
         if let Some(voice) = held {
             voice.held = false;
-            voice.envelope.release();
+            let one_shot = self
+                .playable
+                .get(voice.zone)
+                .is_some_and(|playable| playable.one_shot);
+            if !one_shot {
+                voice.envelope.release();
+            }
         }
     }
 
@@ -558,12 +633,17 @@ impl Parameterized for AudioSampler {
     }
 
     fn param(&self, id: ParamId) -> f32 {
-        self.values.get(id.index()).copied().unwrap_or(0.0)
+        match self.params.iter().any(|descriptor| descriptor.id == id) {
+            true => self.values.get(id.index()).copied().unwrap_or(0.0),
+            false => 0.0,
+        }
     }
 
     fn set_param(&mut self, id: ParamId, value: f32) {
         let index = id.index();
-        let Some(descriptor) = self.params.get(index) else {
+        // Found by id: the drum sampler offers only some of the parameters, so a position in the
+        // list is not an id.
+        let Some(descriptor) = self.params.iter().find(|descriptor| descriptor.id == id) else {
             return;
         };
         self.values[index] = descriptor.clamp(value);
@@ -600,12 +680,20 @@ impl Parameterized for AudioSampler {
 
 impl Instrument for AudioSampler {
     fn descriptor(&self) -> PluginDescriptor {
-        PluginDescriptor::instrument(
-            AUDIO_SAMPLER_ID,
-            "Sampler",
-            "Plays audio files across the keyboard",
-            PluginCategory::Sampler,
-        )
+        match self.drums {
+            true => PluginDescriptor::instrument(
+                DRUM_SAMPLER_ID,
+                "Drum Sampler",
+                "Plays an audio file on each drum lane",
+                PluginCategory::Drum,
+            ),
+            false => PluginDescriptor::instrument(
+                AUDIO_SAMPLER_ID,
+                "Sampler",
+                "Plays audio files across the keyboard",
+                PluginCategory::Sampler,
+            ),
+        }
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {
@@ -639,6 +727,8 @@ impl Instrument for AudioSampler {
                         buffer,
                         gain: db_to_gain(zone.gain_db),
                         loop_region: None,
+                        one_shot: zone.one_shot,
+                        choke: zone.choke,
                     });
                 }
                 None => log::warn!("sampler: no audio loaded for source {}", zone.source.0),
@@ -932,6 +1022,128 @@ mod tests {
         // The zone's own level: -6 dB on a 0.5 sine at full velocity.
         let expected = 0.5 * db_to_gain(-6.0);
         assert!((peak(&out[1_000..]) - expected).abs() < 0.01);
+    }
+
+    /// Renders `blocks` blocks of 512, each with the events listed against its index.
+    fn render_scored(
+        sampler: &mut AudioSampler,
+        score: &[(usize, NoteEvent)],
+        blocks: usize,
+    ) -> Vec<f32> {
+        let mut left = Vec::new();
+        let mut out = AudioBuffer::new(2, 512, RATE);
+        let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
+        for block in 0..blocks {
+            let events: Vec<NoteEvent> = score
+                .iter()
+                .filter(|(at, _)| *at == block)
+                .map(|(_, event)| *event)
+                .collect();
+            sampler.process(&events, &mut out, &ctx);
+            left.extend_from_slice(out.channel(0));
+        }
+        left
+    }
+
+    #[test]
+    fn the_drum_sampler_plays_every_key_unpitched_and_offers_no_loop_or_tracking() {
+        let bank = SampleBank::shared();
+        bank.insert(SourceId(1), sine(440.0, 1.0));
+        let mut drums = AudioSampler::drums(bank);
+        assert_eq!(drums.descriptor().id, DRUM_SAMPLER_ID);
+        assert_eq!(drums.descriptor().category, PluginCategory::Drum);
+        let keys: Vec<&str> = drums.parameters().iter().map(|p| &*p.key).collect();
+        assert!(!keys.contains(&KEY_TRACKING_KEY) && !keys.contains(&LOOP_KEY));
+        assert!(keys.contains(&"level") && keys.contains(&"release"));
+        // A state saved by the audio sampler with tracking and the loop on changes neither.
+        let mut state = AudioSampler::new(SampleBank::shared()).save_state();
+        state.params.insert(KEY_TRACKING_KEY.into(), 1.0);
+        state.params.insert(LOOP_KEY.into(), 1.0);
+        // A zone on a range rather than one key: still unpitched on every key it covers.
+        store_zones(&mut state, &[SampleZone::new(SourceId(1), 60)]);
+        drums.load_state(&state);
+        drums.prepare(&PrepareContext::new(RATE, 512, 2));
+        assert!(!drums.save_state().params.contains_key(LOOP_KEY));
+        let out = render(&mut drums, &[note(84, 1.0)], 40);
+        let measured = frequency(&out[4_800..19_200]);
+        assert!((measured - 440.0).abs() < 1.0, "{measured} Hz");
+        // And the level still answers, by id rather than by position in the shorter list.
+        drums.set_param_by_key("level", -6.0);
+        let level = drums
+            .parameters()
+            .iter()
+            .find(|p| &*p.key == "level")
+            .unwrap()
+            .id;
+        assert_eq!(drums.param(level), -6.0);
+        let release = drums
+            .parameters()
+            .iter()
+            .find(|p| &*p.key == "release")
+            .unwrap()
+            .id;
+        drums.set_param(release, 0.5);
+        assert_eq!(drums.param(release), 0.5);
+    }
+
+    #[test]
+    fn a_one_shot_plays_to_its_end_through_a_short_note() {
+        let off = NoteEvent::NoteOff { frame: 0, key: 38 };
+        // A sixteenth at 120 bpm is an eighth of a second; the hit is a second long.
+        let score = [(0, note(38, 1.0)), (12, off)];
+        let mut held = mapped(vec![(sine(440.0, 1.0), {
+            let mut zone = SampleZone::hit(SourceId(1), 38);
+            zone.one_shot = false;
+            zone
+        })]);
+        let cut = render_scored(&mut held, &score, 100);
+        // An ordinary zone is gone a release (0.1 s) after its note.
+        assert_eq!(peak(&cut[24_000..]), 0.0);
+        let mut shot = mapped(vec![(sine(440.0, 1.0), SampleZone::hit(SourceId(1), 38))]);
+        let rung = render_scored(&mut shot, &score, 100);
+        assert!((peak(&rung[40_000..47_000]) - 0.5).abs() < 0.01);
+        // And it is still over at the end of its recording.
+        assert_eq!(peak(&rung[48_100..]), 0.0);
+        assert_eq!(shot.active_voices(), 0);
+    }
+
+    #[test]
+    fn a_one_shot_ignores_the_loop_and_an_ordinary_zone_keeps_it() {
+        let mut sampler = mapped(vec![
+            (sine(440.0, 0.25), SampleZone::hit(SourceId(1), 38)),
+            (sine(440.0, 0.25), SampleZone::new(SourceId(2), 60)),
+        ]);
+        sampler.set_param_by_key(LOOP_KEY, 1.0);
+        let out = render(&mut sampler, &[note(38, 1.0), note(60, 1.0)], 60);
+        // The hit has ended by half a second; the looped note is still sounding alone.
+        assert!((peak(&out[24_000..30_000]) - 0.5).abs() < 0.01);
+        assert_eq!(sampler.active_voices(), 1);
+    }
+
+    #[test]
+    fn a_hit_in_a_choke_group_cuts_the_others_and_leaves_the_rest() {
+        let open = SampleZone {
+            choke: Some(1),
+            ..SampleZone::hit(SourceId(1), 46)
+        };
+        let closed = SampleZone {
+            choke: Some(1),
+            ..SampleZone::hit(SourceId(2), 42)
+        };
+        let crash = SampleZone::hit(SourceId(3), 49);
+        let mut sampler = mapped(vec![
+            (sine(440.0, 1.0), open),
+            (sine(440.0, 0.05), closed),
+            (sine(440.0, 1.0), crash),
+        ]);
+        render_scored(&mut sampler, &[(0, note(46, 1.0)), (0, note(49, 1.0))], 4);
+        assert_eq!(sampler.active_voices(), 2);
+        // The closed hat stops the open one within the de-click ramp, the crash rings on, and
+        // the closed hat itself is over at the end of its 50 ms.
+        render_scored(&mut sampler, &[(0, note(42, 1.0))], 10);
+        assert_eq!(sampler.active_voices(), 1);
+        let held: Vec<u8> = sampler.voices.iter().filter_map(|v| v.key).collect();
+        assert_eq!(held, vec![49]);
     }
 
     #[test]

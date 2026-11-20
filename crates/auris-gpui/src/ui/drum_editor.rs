@@ -122,7 +122,46 @@ fn row_at(y: Pixels, scroll: f32, count: usize) -> Option<usize> {
         .filter(|row| *row < count)
 }
 
+/// What a lane says about the files it plays: the first one's name, and how many more alternate
+/// with it.
+fn sample_badge(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => format!("♪ {only}"),
+        [first, rest @ ..] => format!("♪ {first} +{}", rest.len()),
+    }
+}
+
 impl AurisApp {
+    /// What a drum row is called: its name, else its roles, else its General MIDI name, with
+    /// the key it plays.
+    fn drum_row_label(&self, row: &DrumRow) -> String {
+        if !row.name.is_empty() {
+            format!("{} · {}", row.name, row.pitch)
+        } else if row.roles.is_empty() {
+            self.general_midi_drum_name(row.pitch).map_or_else(
+                || format!("MIDI {}", row.pitch),
+                |name| format!("{name} · {}", row.pitch),
+            )
+        } else {
+            format!(
+                "{} · {}",
+                row.roles
+                    .iter()
+                    .map(|role| self.t(role_key(*role)))
+                    .collect::<Vec<_>>()
+                    .join(" / "),
+                row.pitch
+            )
+        }
+    }
+
+    /// The label of one key of a drum track, as its row shows it.
+    pub(crate) fn drum_lane_title(&self, track: TrackId, note: u8) -> String {
+        let map = self.session.drum_assignments(track).unwrap_or_default();
+        self.drum_row_label(&row_for(&map, note))
+    }
+
     /// Whether the selected note clip belongs to a drum track.
     pub(crate) fn editing_a_drum_clip(&self) -> bool {
         self.selected_clip
@@ -336,7 +375,9 @@ impl AurisApp {
                         track,
                         lane: Some(lane.id),
                     },
-                )
+                );
+            menu = menu
+                .separator()
                 .item(
                     self.t(Key::MenuMoveUp),
                     MenuCommand::MoveDrumLane {
@@ -672,32 +713,13 @@ impl AurisApp {
             .scroll
             .clamp(0.0, (rows.len() as f32 * ROW_HEIGHT - height).max(0.0));
         let scroll = self.drum_editor.scroll;
-        let theme = self.theme.clone();
-        let labels: Vec<String> = rows
-            .iter()
-            .map(|row| {
-                if !row.name.is_empty() {
-                    format!("{} · {}", row.name, row.pitch)
-                } else if row.roles.is_empty() {
-                    self.general_midi_drum_name(row.pitch).map_or_else(
-                        || format!("MIDI {}", row.pitch),
-                        |name| format!("{name} · {}", row.pitch),
-                    )
-                } else {
-                    format!(
-                        "{} · {}",
-                        row.roles
-                            .iter()
-                            .map(|role| self.t(role_key(*role)))
-                            .collect::<Vec<_>>()
-                            .join(" / "),
-                        row.pitch
-                    )
-                }
-            })
-            .collect();
-        let selected_lane = self.drum_editor.selected_lane;
         let track = self.selected_drum_track();
+        let theme = self.theme.clone();
+        let labels: Vec<String> = rows.iter().map(|row| self.drum_row_label(row)).collect();
+        let lane_samples = track
+            .map(|track| self.session.drum_pads(track))
+            .unwrap_or_default();
+        let selected_lane = self.drum_editor.selected_lane;
         let label_elements = rows
             .iter()
             .zip(labels.iter())
@@ -710,6 +732,23 @@ impl AurisApp {
                 let pitch = row.pitch;
                 let lane = row.lane;
                 let label = label.clone();
+                let sample =
+                    lane_samples
+                        .iter()
+                        .find(|sample| sample.note == pitch)
+                        .map(|sample| {
+                            let color = match sample.loaded {
+                                true => theme.text_muted,
+                                false => theme.danger,
+                            };
+                            div()
+                                .flex_shrink()
+                                .min_w_0()
+                                .max_w(px(LABEL_WIDTH * 0.45))
+                                .truncate()
+                                .text_color(color)
+                                .child(sample_badge(&sample.names))
+                        });
                 let selected = lane.is_some() && lane == selected_lane;
                 let handle = match (track, lane) {
                     (Some(track), Some(lane)) => Some(
@@ -749,6 +788,7 @@ impl AurisApp {
                     .when(selected, |row| row.bg(theme.accent_soft))
                     .children(handle)
                     .child(div().flex_1().min_w_0().truncate().child(label.clone()))
+                    .children(sample)
                     .tooltip(crate::ui::tooltip::text_tip(label));
                 if let Some(track) = track {
                     element = element
@@ -1554,6 +1594,16 @@ mod tests {
         assert_eq!(
             used.iter().map(|row| row.pitch).collect::<Vec<_>>(),
             [18, 91]
+        );
+    }
+
+    #[test]
+    fn a_lane_badge_names_its_first_take_and_counts_the_rest() {
+        assert_eq!(sample_badge(&[]), "");
+        assert_eq!(sample_badge(&["Kick".into()]), "♪ Kick");
+        assert_eq!(
+            sample_badge(&["HatA".into(), "HatB".into(), "HatC".into()]),
+            "♪ HatA +2"
         );
     }
 

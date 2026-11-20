@@ -143,6 +143,28 @@ pub fn drop_action(paths: &[PathBuf]) -> DropAction {
     }
 }
 
+/// The one audio file a drop onto a drum sampler pad gives it, or `None` for anything else.
+///
+/// A pad plays one sound, so a drop of several files on one is not guessed at: they become new
+/// pads instead, as they would dropped anywhere else in the pad list.
+pub fn drum_sample_drop(paths: &[PathBuf]) -> Option<PathBuf> {
+    match sort_dropped(paths).accepted.as_slice() {
+        [(path, DropKind::Audio)] if paths.len() == 1 => Some(path.clone()),
+        _ => None,
+    }
+}
+
+/// The audio files a drop onto the drum sampler's pad list makes new pads of, in the order given;
+/// anything that is not audio is left out.
+pub fn drum_pad_drops(paths: &[PathBuf]) -> Vec<PathBuf> {
+    sort_dropped(paths)
+        .accepted
+        .into_iter()
+        .filter(|(_, kind)| matches!(kind, DropKind::Audio))
+        .map(|(path, _)| path)
+        .collect()
+}
+
 /// How far along the clip lanes a drop at `pointer` landed, from their left edge.
 ///
 /// `None` when it landed anywhere else — a panel, the transport, the track headers — where there
@@ -196,6 +218,27 @@ mod tests {
 
     fn paths(names: &[&str]) -> Vec<PathBuf> {
         names.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn a_pad_takes_one_audio_file_and_nothing_else() {
+        assert_eq!(
+            drum_sample_drop(&paths(&["kick.wav"])),
+            Some(PathBuf::from("kick.wav"))
+        );
+        assert_eq!(drum_sample_drop(&paths(&["kick.wav", "snare.wav"])), None);
+        assert_eq!(drum_sample_drop(&paths(&["kick.wav", "notes.pdf"])), None);
+        assert_eq!(drum_sample_drop(&paths(&["kit.sf2"])), None);
+        assert_eq!(drum_sample_drop(&[]), None);
+    }
+
+    #[test]
+    fn a_drop_on_the_pad_list_makes_a_pad_of_each_audio_file() {
+        assert_eq!(
+            drum_pad_drops(&paths(&["kick.wav", "notes.pdf", "snare.flac", "kit.sf2"])),
+            paths(&["kick.wav", "snare.flac"])
+        );
+        assert!(drum_pad_drops(&[]).is_empty());
     }
 
     #[test]

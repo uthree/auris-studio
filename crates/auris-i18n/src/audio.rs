@@ -256,6 +256,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Reverb", "リバーブ"),
     ("SoundFont", "サウンドフォント"),
     ("Sampler", "サンプラー"),
+    ("Drum Sampler", "ドラムサンプラー"),
 ];
 
 /// Japanese versions of the one-line descriptions shown in the plugin browser.
@@ -487,6 +488,10 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "Plays audio files across the keyboard",
         "オーディオファイルを鍵盤に割り当て、近いルート音のサンプルを音程を変えて鳴らします",
+    ),
+    (
+        "Plays an audio file on each drum lane",
+        "ドラムのレーンごとに音声ファイルを鳴らします",
     ),
 ];
 

@@ -432,3 +432,102 @@ fn several_samples_make_a_map_the_window_can_retune_layer_and_trim(cx: &mut Test
         );
     });
 }
+
+#[gpui::test]
+fn a_drum_sampler_window_lists_its_lanes_as_pads_the_window_can_set(cx: &mut TestAppContext) {
+    let (app, cx) = crate::harness::open(cx);
+    let rate = app.read_with(cx, |this, _| this.project().sample_rate);
+    let (track, kick) = app.update(cx, |this, _| {
+        let track = this.session.add_default_drum_track("Kit").unwrap();
+        let kick = this.session.drum_assignments(track).unwrap().voices[&DrumRole::Kick];
+        let hit = AudioBuffer::from_planar(vec![vec![0.5; 4_800]], rate).unwrap();
+        this.take_drum_sample(
+            track,
+            kick,
+            std::path::Path::new("/samples/Kick.wav"),
+            crate::ui::commands::Loaded::Audio(hit),
+            false,
+        )
+        .unwrap();
+        (track, kick)
+    });
+    app.update(cx, |this, _| {
+        let inner = this
+            .project()
+            .track(track)
+            .unwrap()
+            .kind
+            .as_instrument()
+            .unwrap();
+        assert_eq!(inner.instrument_id, DRUM_SAMPLER_ID);
+        this.edit_drum_pad(
+            track,
+            kick,
+            auris_session::DrumPadEdit {
+                gain_db: Some(-4.0),
+                one_shot: Some(false),
+                ..Default::default()
+            },
+        );
+        let pad = this.session.drum_pads(track)[0].clone();
+        assert_eq!((pad.gain_db, pad.one_shot), (-4.0, false));
+        let menu = this.drum_pad_choke_menu(gpui::point(px(0.), px(0.)), track, kick);
+        assert!(!menu.is_empty());
+        this.select_track(track);
+        this.panels.show(crate::dock::Panel::Inspector);
+    });
+    paint(&app, cx);
+    click("inst-open", cx);
+    paint(&app, cx);
+    app.read_with(cx, |this, _| {
+        assert_eq!(
+            this.plugin_window.unwrap().subject,
+            PluginSubject::Instrument(track)
+        );
+    });
+    // The pads are drawn in the plugin's own window, in place of the keyboard sampler's map.
+    let handle = app.read_with(cx, |this, _| this.auxiliary_windows[&Surface::Plugin]);
+    let mut utility = gpui::VisualTestContext::from_window(handle.into(), cx);
+    paint(&app, &mut utility);
+    assert!(utility.debug_bounds("pw-drum-pads").is_some());
+    assert!(
+        utility
+            .debug_bounds(Box::leak(format!("pw-drum-pad-{kick}").into_boxed_str()))
+            .is_some()
+    );
+    assert!(utility.debug_bounds("pw-sample-map").is_none());
+
+    // The window adds a pad on a key nothing uses, and takes one off again with its lane.
+    app.update(cx, |this, _| {
+        let free = this.session.free_drum_pad_key(track).unwrap();
+        let clap = AudioBuffer::from_planar(vec![vec![0.5; 4_800]], rate).unwrap();
+        let line = this
+            .take_drum_pad(
+                track,
+                std::path::Path::new("/samples/Clap.wav"),
+                crate::ui::commands::Loaded::Audio(clap),
+            )
+            .unwrap();
+        assert!(line.contains("Clap"), "{line}");
+        assert!(
+            this.session
+                .drum_pads(track)
+                .iter()
+                .any(|pad| pad.note == free)
+        );
+        this.remove_drum_pad(track, kick);
+        assert!(
+            this.session
+                .drum_pads(track)
+                .iter()
+                .all(|pad| pad.note != kick)
+        );
+        assert!(
+            this.session
+                .drum_lanes(track)
+                .unwrap()
+                .iter()
+                .all(|lane| lane.note != kick)
+        );
+    });
+}
