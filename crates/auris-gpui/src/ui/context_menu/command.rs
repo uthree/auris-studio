@@ -134,16 +134,12 @@ pub enum MenuCommand {
     },
     /// Recognize written chords on one track, or across all pitched tracks.
     AnalyzeChords(Option<TrackId>),
-    /// Analyze tempo and chords in the trimmed source of an audio clip.
-    AnalyzeAudio(ClipId),
     /// Write the notes a hummed or sung audio clip holds onto a track of their own.
     HumToNotes(ClipId),
     /// Cancel an offline CPU analysis.
     CancelMusicAnalysis,
     /// Display the current draft with its alternatives.
     ViewMusicAnalysis,
-    /// Choose a local model and estimate instruments in the audio clip.
-    AnalyzeInstruments(ClipId),
     /// Explicitly accept supported chord intervals.
     ApplyMusicChords,
     /// Accept one alternative in the symbolic chord report.
@@ -153,8 +149,6 @@ pub enum MenuCommand {
         /// Alternative within that interval.
         candidate: usize,
     },
-    /// Adopt a candidate as the analyzed clip's source BPM.
-    ApplyMusicTempo(usize),
     /// Measure this instrument using rendered audio, without changing its notes.
     AnalyzeDrums(TrackId),
     /// Store the measured assignment for future generation, preserving every existing clip.
@@ -1013,20 +1007,15 @@ impl AurisApp {
                 self.session.end_transaction();
             }
             MenuCommand::AnalyzeChords(track) => self.begin_chord_analysis(track, cx),
-            MenuCommand::AnalyzeAudio(clip) => self.begin_audio_analysis(clip, cx),
             MenuCommand::HumToNotes(clip) => self.begin_hum_transcription(clip, cx),
             MenuCommand::CancelMusicAnalysis => {
                 self.music_analysis.cancel_requested();
                 self.set_status(self.t(Key::AnalysisCancelled));
             }
             MenuCommand::ViewMusicAnalysis => self.view_music_analysis(),
-            MenuCommand::AnalyzeInstruments(clip) => self.choose_instrument_model(clip, cx),
-            MenuCommand::ApplyMusicChords => self.accept_music_analysis(None, None),
+            MenuCommand::ApplyMusicChords => self.accept_music_analysis(None),
             MenuCommand::ApplyMusicCandidate { segment, candidate } => {
-                self.accept_music_analysis(Some((segment, candidate)), None)
-            }
-            MenuCommand::ApplyMusicTempo(candidate) => {
-                self.accept_music_analysis(None, Some(candidate))
+                self.accept_music_analysis(Some((segment, candidate)))
             }
             MenuCommand::AnalyzeDrums(track) => self.begin_drum_analysis(track, cx),
             MenuCommand::ApplyDrumMap(track) => self.apply_measured_drums(track, true),

@@ -176,8 +176,7 @@ pub use plugin_discovery::InstalledPluginFiles;
 pub(crate) use plugin_discovery::scan_installed_plugin_files;
 pub use readiness::{PlaybackReadiness, PlaybackState};
 pub use recognition::{
-    AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,
-    ClipHumTranscription, ClipInstrumentAnalysis, analyze_audio_file, analyze_instrument_file,
+    AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipHumTranscription,
 };
 pub use rhythm::{RhythmGrid, RhythmRow};
 pub use singer::{

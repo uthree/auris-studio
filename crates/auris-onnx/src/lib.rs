@@ -2,9 +2,9 @@
 //!
 //! Since 2.0.0-rc.14, `ort` builds every session under an explicit [`ort::environment::Environment`], and
 //! [`ort::init`] succeeds only once per process: a second build is refused even after the first
-//! environment has been dropped. Two crates open sessions — `auris-singer` for voice models and
-//! `auris-analysis` for instrument tagging — and the desktop application links both, so neither
-//! may build its own. This crate is the single owner they share.
+//! environment has been dropped. Every crate that opens a session — today `auris-singer`, for its
+//! voice models — therefore takes the environment from here rather than building its own, so a
+//! second user cannot break the first.
 //!
 //! The environment is built on first use rather than at start-up, so a session that never loads
 //! a model never loads the runtime. It is kept in a static that is never dropped: tearing ONNX

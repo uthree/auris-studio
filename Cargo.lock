@@ -671,14 +671,9 @@ name = "auris-analysis"
 version = "0.23.0"
 dependencies = [
  "auris-core",
- "auris-dsp",
- "auris-onnx",
- "hex",
- "ort",
  "schemars",
  "serde",
  "serde_json",
- "sha2 0.11.1",
  "thiserror 2.0.21",
 ]
 

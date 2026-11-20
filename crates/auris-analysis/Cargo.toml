@@ -1,6 +1,6 @@
 [package]
 name = "auris-analysis"
-description = "CPU music recognition from notes and PCM audio"
+description = "CPU music recognition from notes and sung audio"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,12 +9,7 @@ repository.workspace = true
 
 [dependencies]
 auris-core.workspace = true
-auris-dsp.workspace = true
-auris-onnx.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
-hex.workspace = true
-ort.workspace = true
 schemars = "1"

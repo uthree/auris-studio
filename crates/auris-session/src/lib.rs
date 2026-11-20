@@ -100,14 +100,12 @@ pub use video::{
 };
 pub mod voice_setup;
 
-pub use auris_analysis::audio::{AudioAnalysis, AudioChordSegment, TempoAnalysis, TempoCandidate};
 pub use auris_analysis::transcription::{NoteTranscription, TranscribedNote, TranscriptionSource};
 mod transcription;
 mod transcription_draft;
 pub use auris_analysis::chords::{
     ChordCandidate, ChordOptions, ChordReading, ChordState, SymbolicChordSegment,
 };
-pub use auris_analysis::instruments::{InstrumentAnalysis, InstrumentCandidate, InstrumentWindow};
 pub use auris_analysis::{AnalysisControl, AnalysisError};
 /// Workspace-owned error variants exposed for frontend localisation.
 pub use auris_core::CoreError;
@@ -173,10 +171,7 @@ pub use session::{
     WHEEL_STEPS, decode_audio, fader_for, faders_lift_db, input_level_of, master_gain_db,
     quantized, read_soundfont, recovery_dir, shadows_musical_typing, take_fingerprint,
 };
-pub use session::{
-    AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,
-    ClipHumTranscription, ClipInstrumentAnalysis, analyze_audio_file, analyze_instrument_file,
-};
+pub use session::{AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipHumTranscription};
 pub use session::{CheckpointJob, CheckpointOperation, CheckpointResult};
 pub use session::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};
 pub use session::{

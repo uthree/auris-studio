@@ -99,11 +99,9 @@ image parts. UTF-8 text, Markdown, lyrics, CSV, JSON and source files are sent a
 delimited reference data, up to 256 KiB
 per text file. Instructions inside an attachment remain reference content.
 The selected model must support the supplied media. With a CLI backend,
-audio files are analyzed locally and sent as text measurements: duration,
-constant-tempo alternatives, estimated beats and major/minor chord candidates.
-Long reports sample up to 256 beats and 256 chord windows across the recording,
-with source timestamps and sampling strides. Analysis runs in the background
-without editing or importing into the song. Raw audio stays local on these routes.
+an audio file is sent as a text reference: its name, size and an attachment ID that
+`export_audio_attachment` writes back out for local analysis. Nothing about its
+content is measured, and the song is not edited. Raw audio stays local on these routes.
 
 Audio references are immutable snapshots scoped to the conversation, retained
 within eight files/1 GiB on disk in aggregate. Attaching more files can expire older
@@ -255,7 +253,7 @@ the existing Auris gate. V1 receives the authenticated server through ACP stdin.
 
 The authenticated live MCP server edits the open song, including unsaved changes,
 through the existing permission and Undo paths. Images and text use ACP content
-blocks; audio uses the same local analysis and external-note import tools as the other
+blocks; audio uses the same attachment export and external-note import tools as the other
 CLI backends. Stop revokes live calls, sends `session/cancel` and terminates the
 child. Auris persists and restores its own text transcript; OpenCode may also keep
 sessions in its normal data directory. Manual compaction from Auris is not yet

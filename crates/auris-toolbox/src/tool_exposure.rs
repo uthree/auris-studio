@@ -84,9 +84,7 @@ impl ToolGroups {
 /// Primary task group for a saved-project callable.
 pub fn tool_group(name: &str) -> &'static str {
     match name {
-        "analyze_audio" | "analyze_chords" | "analyze_instruments" | "import_transcription" => {
-            "transcription"
-        }
+        "analyze_chords" | "import_transcription" => "transcription",
         "write_lyrics" | "edit_lyrics" | "sing" | "list_voices" | "inspect_singer"
         | "set_singer_voice" | "edit_vocal_notes" | "analyze_lyrics" | "diagnose_song"
         | "repair_lyrics" | "lyric_accent" | "lyric_rhythm" => "vocals",

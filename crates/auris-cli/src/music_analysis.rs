@@ -1,4 +1,4 @@
-//! CPU music analysis command-line parsing and presentation.
+//! Chord recognition from written notes: command-line parsing and presentation.
 
 use super::*;
 use auris_session::{AnalysisControl, ChordOptions};
@@ -15,32 +15,20 @@ fn beat(value: &str) -> Result<Ticks, String> {
 }
 
 pub(super) fn run(args: &[String]) -> Result<(), String> {
-    let command = args.first().map(String::as_str).unwrap_or("");
-    let usage = match command {
-        "analyze-chords" => Key::CliAnalyzeChordsUsage,
-        "analyze-audio" => Key::CliAnalyzeAudioUsage,
-        "analyze-instruments" => Key::CliAnalyzeInstrumentsUsage,
-        _ => return Err(Key::CliUsage.get(LANGUAGE).into()),
-    }
-    .get(LANGUAGE);
+    let usage = Key::CliAnalyzeChordsUsage.get(LANGUAGE);
     let path = args.get(1).ok_or(usage)?;
     let mut options = BTreeMap::new();
     let mut at = 2;
     while at < args.len() {
         let key = args[at].as_str();
-        let allowed = match command {
-            "analyze-chords" => [
-                "--track",
-                "--from-beat",
-                "--to-beat",
-                "--window-beats",
-                "--apply",
-            ]
-            .contains(&key),
-            "analyze-audio" => false,
-            "analyze-instruments" => ["--model", "--threshold"].contains(&key),
-            _ => false,
-        };
+        let allowed = [
+            "--track",
+            "--from-beat",
+            "--to-beat",
+            "--window-beats",
+            "--apply",
+        ]
+        .contains(&key);
         if !allowed || options.contains_key(key) {
             return Err(usage.into());
         }
@@ -54,23 +42,7 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         at += 1;
     }
     let control = AnalysisControl::default();
-    let value = if command == "analyze-instruments" {
-        let model = options.get("--model").ok_or(usage)?;
-        let threshold = options
-            .get("--threshold")
-            .copied()
-            .unwrap_or("0.2")
-            .parse::<f32>()
-            .map_err(|_| usage)?;
-        let report = auris_session::analyze_instrument_file(
-            Path::new(path),
-            Path::new(model),
-            threshold,
-            &control,
-        )
-        .map_err(|e| e.to_string())?;
-        serde_json::to_value(report).map_err(|e| e.to_string())?
-    } else if command == "analyze-chords" {
+    let value = {
         let mut session = Session::new(SessionOptions::headless()).map_err(|e| e.to_string())?;
         session.open(Path::new(path)).map_err(|e| e.to_string())?;
         let mut tracks = Vec::new();
@@ -109,10 +81,6 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
             session.save_with_checkpoint().map_err(|e| e.to_string())?;
         }
         serde_json::to_value(report).map_err(|e| e.to_string())?
-    } else {
-        let report = auris_session::analyze_audio_file(Path::new(path), &control)
-            .map_err(|e| e.to_string())?;
-        serde_json::to_value(report).map_err(|e| e.to_string())?
     };
     let json = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
     printed(writeln!(std::io::stdout(), "{json}"))
@@ -124,7 +92,7 @@ mod tests {
     #[test]
     fn malformed_options_fail_before_opening_audio() {
         for args in [
-            vec!["analyze-audio", "absent.wav", "--apply"],
+            vec!["analyze-chords", "absent.auris", "--model", "x"],
             vec![
                 "transcribe-audio",
                 "absent.wav",
