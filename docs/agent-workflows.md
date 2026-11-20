@@ -242,8 +242,9 @@ For example, `{"track":1,"part":"lead","start_bar":5,"bars":4,"seed":42}` writes
 starting at bar 5. Parts are `lead`, `chords`, `pad`, `arp`, `bass`, `drums`, `kick`, `snare`
 and `hat`. `start_bar` is 1-based; `bars` is 1..1024; `seed` defaults to zero.
 The optional `settings` object starts the take from `density` (0..1), a pitch `range`
-(`{"low":48,"high":64}`, MIDI notes at least an octave apart), a grid `rhythm` (`x..x..x.`)
-and `swing` (50..75). The range moves the part by whole octaves, at most two from its own
+(`{"low":48,"high":64}`, MIDI notes at least an octave apart) and a grid `rhythm`
+(`x..x..x.`). The phrase is written straight and legato; swing and held length are
+`set_performance`'s `swing_percent` and `gate`. The range moves the part by whole octaves, at most two from its own
 register; the result's `pitch_range` says where it landed and `range_missed` that it could not
 get there. A lead on a singer track arrives without a recipe, in the A3..E5 singing range unless
 `range` says otherwise, ready for `write_lyrics`.
@@ -259,12 +260,13 @@ generation recipe and stored notes, so it can be edited or regenerated through t
 clip controls.
 
 `edit_recipe` reads, patches or regenerates 1..16 explicit clip IDs. A `patch`
-changes only supplied recipe settings; `regenerate` selects the same, next or an
+changes only supplied recipe settings; `regenerate` selects the same, next, previous or an
 explicit seed. Both regenerate stored notes. `subdivision` is one of `eighth`, `sixteenth`,
 `eighth-triplet`, `sixteenth-triplet`; it sets the grid, not held note duration.
 `rhythm` repeats grid steps: `x` hit, `X` accent, `o` ghost, `.`/`~`/`-` rest, with optional
 spaces, tabs and `|` separators (for example `x...x...`). Empty clears the pattern.
-Use `density` and `gate` for note count and held length. Enum and rhythm constraints
+Use `density` for note count. Held length and swing are how the notes are played, not
+written: set them with `set_performance` `gate` and `swing_percent`. Enum and rhythm constraints
 remain in compact schemas sent to every backend. Hand-edited notes require
 `replace_hand_edits:true`; otherwise the complete batch is refused. Optional
 `drum_voice` selects a single drum lane. `set_drum_assignment` changes a drum role's
@@ -278,6 +280,12 @@ their shared live catalog and permission checks. Read-only and Plan modes refuse
 Call `inspect_performance` with a MIDI `clip` ID before changing its Performance controls.
 Use `set_performance` with a partial `settings` object, for example
 `{"clip":2,"settings":{"swing_percent":62,"gate":0.8,"expression":{"timing":0.15}}}`.
+The inspection names the track's `instrument_family` and lists the stage families that suit it
+in `suited_stages` — the same choice the window makes when it decides which dials to draw.
+A stage outside that list is still applied, with an `instrument_warning` in the result.
+`shape` (0..1) scales `contour`, `expression.swell` and `expression.accent` together, keeping
+their proportions, like the window's Shape dial; it is not combined with those three fields in
+one call, and the result reads it back as `settings.shape`.
 Only supplied fields change. Within a family, the first matching stage is edited in place;
 other stages retain their order. Stored notes, generation recipes, authored controller curves
 and automatic volume contour shapes remain intact. The live host groups changed calls by

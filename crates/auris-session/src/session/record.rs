@@ -558,7 +558,11 @@ impl Session {
         // device any more. Cleared here rather than at every call site, because this is the one
         // funnel a change of input passes through.
         self.input_channels = None;
-        if self.input.is_none() || self.take.is_some() || self.calibration.is_some() {
+        if self.input.is_none()
+            || self.take.is_some()
+            || self.voice.is_some()
+            || self.calibration.is_some()
+        {
             return;
         }
         self.input = None;
@@ -606,7 +610,11 @@ impl Session {
     /// shows an indicator it is a light saying the application is listening. Leaving one open
     /// against the next take would be convenient and would also be that.
     pub(super) fn close_input_if_idle(&mut self) {
-        if self.take.is_none() && self.monitored.is_empty() && self.calibration.is_none() {
+        if self.take.is_none()
+            && self.voice.is_none()
+            && self.monitored.is_empty()
+            && self.calibration.is_none()
+        {
             self.input = None;
         }
     }
@@ -809,6 +817,9 @@ impl Session {
     /// there is nothing in the document to undo.
     pub fn stop_recording(&mut self) -> Result<RecordingReport, SessionError> {
         if self.note_take.is_some() {
+            // What the microphone was still deciding belongs in the take, so it is heard out
+            // before the take is closed.
+            self.finish_voice();
             return self.stop_note_take();
         }
         let take = self.take.take().ok_or(SessionError::NotRecording)?;

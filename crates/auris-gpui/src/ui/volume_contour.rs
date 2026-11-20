@@ -283,20 +283,19 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness::{
-        choose, click, drag_to, paint, press, release, resize, right_press, with_a_clip,
-    };
+    use crate::harness::{choose, click, drag_to, paint, press, release, resize, right_press};
     use gpui::{Modifiers, TestAppContext};
 
     #[gpui::test]
     fn presets_and_point_gestures_preserve_score_and_support_undo(cx: &mut TestAppContext) {
-        let (app, cx, _, clip) = with_a_clip(cx);
+        let (app, cx, _, clip) = crate::harness::with_a_synth_clip(cx);
         app.update(cx, |this, _| {
             this.panels = crate::dock::PanelLayout::default();
             this.session
                 .add_note(clip, Note::new(60, Ticks::ZERO, Ticks(3840)))
                 .unwrap();
             this.open_clip_in_editor(clip);
+            this.show_techniques(clip, &[crate::ui::techniques::Technique::Pitch]);
         });
         resize(&app, cx, size(px(1920.0), px(3000.0)));
         click("score-performed", cx);

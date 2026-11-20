@@ -309,7 +309,8 @@ fn write_reaching(
     let settings = ScoreSettings {
         style: recipe.style,
         mood: frame.mood,
-        swing: recipe.swing,
+        // A phrase is written straight: its swing is played by the clip's performance stack.
+        swing: 50,
         dynamics: recipe.dynamics.clamp(0.0, 1.0),
         fill: recipe.fill.clamp(0.0, 1.0),
         groove: recipe.groove.clone(),
@@ -368,7 +369,9 @@ fn write_reaching(
             part.density = Some(recipe.density.clamp(0.0, 1.0));
             // Keep articulation independent of role defaults when another dial moves.
             part.subdivision = recipe.subdivision;
-            part.gate = recipe.gate;
+            // Written legato, whatever the role would pick: how much of each note is held is
+            // the performance stack's gate, so one dial decides it rather than two.
+            part.gate = 1.0;
             part.low_root = recipe.low_root;
             part.strum = recipe.strum;
             part.voices = recipe.voices;
@@ -899,7 +902,6 @@ mod tests {
                     for seed in [1, 7] {
                         let mut recipe = ClipRecipe::new(preset, seed);
                         recipe.groove = groove.to_string();
-                        recipe.swing = 63;
                         let write = |harmony: &Harmony| {
                             write_phrase(
                                 harmony,
@@ -1163,10 +1165,9 @@ mod tests {
     }
 
     #[test]
-    fn dense_chords_with_a_short_gate_are_released_before_the_next_strike() {
+    fn dense_chords_are_released_before_the_next_strike() {
         let mut recipe = ClipRecipe::new(ClipPreset::Chords, 3);
         recipe.density = 1.0;
-        recipe.gate = 0.3;
         let stab = write_phrase(&axis(), Ticks::ZERO, BAR * 4, four_four(), &recipe, None);
         let chords = phrase(ClipPreset::Chords, 3);
         assert!(

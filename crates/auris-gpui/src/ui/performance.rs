@@ -14,6 +14,8 @@
 //! neither has a dial here yet.
 
 use auris_i18n::Key;
+use auris_session::live_agent::performance::{ResetStage, ShapeParts};
+use auris_session::performance_presets::stage_suits;
 use auris_session::prelude::*;
 
 use gpui::{AnyElement, IntoElement, MouseDownEvent, Pixels, Point, div, prelude::*};
@@ -21,22 +23,36 @@ use gpui::{AnyElement, IntoElement, MouseDownEvent, Pixels, Point, div, prelude:
 use crate::app::{AurisApp, Drag};
 use crate::ui::context_menu::{ContextMenu, MenuCommand, subdivision_key};
 use crate::ui::expression::{expression_settings, with_expression_settings};
-use crate::ui::part::{GATE_MIN, SWING_MAX, SWING_MIN};
 use crate::ui::strum::{strum_settings, with_strum_settings};
 use crate::ui::widgets::{
     ButtonStyle, SLIDER_PERCENT_STEP, SliderFill, SliderKeyboardEvent, button, disclosure, divider,
     value_slider,
 };
 
+/// Straight eighths. Anything less would rush the offbeat, which is not a feel anybody asks for.
+pub const SWING_MIN: u8 = 50;
+
+/// As far as the swing dial goes: the offbeat on the last sixteenth of its beat.
+///
+/// Past the dotted feel the second eighth is so late that it is heard as an early downbeat of the
+/// next beat rather than as swing, and at 100 it lands on it exactly.
+pub const SWING_MAX: u8 = 75;
+
+/// The shortest the gate dial reaches, as a share of the written length.
+///
+/// Not zero: a note of no length is a note nobody hears, and a dial whose bottom end silences the
+/// part is a dial with a broken position on it. A twentieth of the gap is already a click.
+pub const GATE_MIN: f32 = 0.05;
+
 /// One slider of the performance section.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PerformDial {
     /// One parameter of automatic instrument pitch bend.
     Pitch(crate::ui::pitch_performance::PitchDial),
-    /// Independent timing wander.
-    ExpressionTiming,
-    /// Independent velocity wander.
-    ExpressionVelocity,
+    /// How the wander the humanise dial sets is split between timing and velocity: 0 is all
+    /// timing, 1 all velocity, and the middle both alike. The amount itself is the humanise
+    /// dial's, so there is one dial for how much and one for what kind.
+    ExpressionBalance,
     /// Crescendo and decrescendo within a phrase.
     PhraseSwell,
     /// Signed beat versus offbeat emphasis.
@@ -84,6 +100,10 @@ pub enum PerformDial {
     Sustain,
     /// How strongly the melodic line shapes dynamics and each phrase's ending.
     Contour,
+    /// How much the playing is shaped at all: the melodic contour, the phrase swell and the beat
+    /// accent moved together, keeping the proportions between them. The three stay separately
+    /// reachable under the expression details.
+    Shape,
     /// How strongly each chord's top voice is brought out over the others.
     Voicing,
     /// How strongly written-legato connections are played by what they connect to.
@@ -103,21 +123,116 @@ fn perform_keyboard_step(dial: PerformDial) -> f32 {
     }
 }
 
-/// The sliders in the order the panel shows them — which is also the order the stack plays them.
+/// The four dials every clip is played with, drawn first: how swung, how long, how loose and how
+/// shaped. Everything else is a technique (`crate::ui::techniques`), drawn only once the clip uses
+/// it.
 pub const PERFORM_DIALS: &[PerformDial] = &[
     PerformDial::Swing,
     PerformDial::Gate,
-    PerformDial::Sustain,
-    PerformDial::Pedal,
-    PerformDial::Articulate,
-    PerformDial::Contour,
-    PerformDial::Voicing,
-    PerformDial::Brush,
-    PerformDial::Slide,
-    PerformDial::Mute,
-    PerformDial::Stroke,
     PerformDial::Humanize,
+    PerformDial::Shape,
 ];
+
+/// Whether a top-level dial is drawn for a clip of `family` whose stack is `stack`.
+///
+/// What the instrument is offered is [`stage_suits`]'s answer, shared with the agent's
+/// `inspect_performance`. A stage already on the clip is drawn whatever the instrument, so a
+/// technique that arrived some other way — a preset, an agent, a file — can still be seen and
+/// turned off. The brush is a strumming hand's quiet chord, so it needs both a ghost and a strum.
+pub fn offers_dial(family: PresetFamily, stack: &[NoteTransform], dial: PerformDial) -> bool {
+    if dial == PerformDial::Brush {
+        return stack
+            .iter()
+            .any(|stage| matches!(stage, NoteTransform::Brush { .. }))
+            || (stage_suits(family, ResetStage::Ghost) && stage_suits(family, ResetStage::Strum));
+    }
+    dial_stage(dial).is_none_or(|stage| offers_stage(family, stack, stage))
+}
+
+/// Whether a family of stages is offered: suited to the instrument, or already on the clip.
+pub fn offers_stage(family: PresetFamily, stack: &[NoteTransform], stage: ResetStage) -> bool {
+    stage_suits(family, stage) || stack.iter().any(|held| ResetStage::of(held) == Some(stage))
+}
+
+/// The stage family a dial edits.
+fn dial_stage(dial: PerformDial) -> Option<ResetStage> {
+    Some(match dial {
+        PerformDial::Swing => ResetStage::Swing,
+        PerformDial::Gate => ResetStage::Gate,
+        PerformDial::Sustain => ResetStage::Sustain,
+        PerformDial::Pedal => ResetStage::Pedal,
+        PerformDial::Articulate => ResetStage::Articulation,
+        PerformDial::Contour => ResetStage::Contour,
+        PerformDial::Shape => ResetStage::Expression,
+        PerformDial::Voicing => ResetStage::Voicing,
+        PerformDial::Brush
+        | PerformDial::GhostDensity
+        | PerformDial::GhostLength
+        | PerformDial::GhostVariation => ResetStage::Ghost,
+        PerformDial::Slide => ResetStage::Slide,
+        PerformDial::Mute => ResetStage::Mute,
+        PerformDial::Stroke
+        | PerformDial::StrumUpVelocity
+        | PerformDial::StrumLowAccent
+        | PerformDial::StrumStringTime
+        | PerformDial::StrumVariation => ResetStage::Strum,
+        PerformDial::Humanize
+        | PerformDial::ExpressionBalance
+        | PerformDial::PhraseSwell
+        | PerformDial::BeatAccent
+        | PerformDial::EnsembleShared
+        | PerformDial::PerformanceDelay => ResetStage::Expression,
+        PerformDial::GrooveTiming | PerformDial::GrooveVelocity => ResetStage::Groove,
+        PerformDial::Pitch(crate::ui::pitch_performance::PitchDial::OctaveAbove)
+        | PerformDial::Pitch(crate::ui::pitch_performance::PitchDial::OctaveBelow) => {
+            ResetStage::Octaves
+        }
+        PerformDial::Pitch(_) => ResetStage::Pitch,
+    })
+}
+
+/// Turns the shape dial to `fraction`: [`ShapeParts::scaled`] decides the three, and this writes
+/// them where the panel's own dials would.
+pub fn with_shape(
+    stack: &[NoteTransform],
+    fraction: f32,
+    seed: u64,
+    line: bool,
+) -> Vec<NoteTransform> {
+    let parts = ShapeParts::of(stack);
+    let next = parts.scaled(fraction, line);
+    let mut out = with_dial(stack, PerformDial::Contour, next.contour, seed);
+    if next.swell != parts.swell || next.accent != parts.accent {
+        let mut settings = expression_settings(&out, seed);
+        settings.swell = next.swell;
+        settings.accent = next.accent;
+        out = with_expression_settings(&out, settings);
+    }
+    out
+}
+
+/// Where the balance dial sits for a wander of `timing` and `velocity`: 0 all timing, 1 all
+/// velocity, ½ both alike — and ½ when there is no wander to split.
+pub fn wander_balance(timing: f32, velocity: f32) -> f32 {
+    let (timing, velocity) = (timing.max(0.0), velocity.max(0.0));
+    if timing == 0.0 && velocity == 0.0 {
+        0.5
+    } else if timing >= velocity {
+        velocity / timing / 2.0
+    } else {
+        1.0 - timing / velocity / 2.0
+    }
+}
+
+/// The timing and velocity wander a balance asks of a wander of `peak`: the larger axis keeps
+/// the peak, which is what the humanise dial reads, so turning this never changes that dial.
+pub fn split_wander(peak: f32, balance: f32) -> (f32, f32) {
+    let balance = balance.clamp(0.0, 1.0);
+    (
+        peak * (2.0 * (1.0 - balance)).min(1.0),
+        peak * (2.0 * balance).min(1.0),
+    )
+}
 
 /// The grid a swing added by the panel delays, until its picker says otherwise.
 ///
@@ -131,8 +246,7 @@ impl PerformDial {
     pub fn label(self) -> Key {
         match self {
             PerformDial::Pitch(dial) => dial.label(),
-            PerformDial::ExpressionTiming => Key::PerformTiming,
-            PerformDial::ExpressionVelocity => Key::PerformVelocity,
+            PerformDial::ExpressionBalance => Key::PerformBalance,
             PerformDial::PhraseSwell => Key::PerformSwell,
             PerformDial::BeatAccent => Key::PerformAccent,
             PerformDial::EnsembleShared => Key::PerformShared,
@@ -155,6 +269,7 @@ impl PerformDial {
             PerformDial::Gate => Key::PartGate,
             PerformDial::Sustain => Key::PerformSustain,
             PerformDial::Contour => Key::PerformContour,
+            PerformDial::Shape => Key::PerformShape,
             PerformDial::Voicing => Key::PerformVoicing,
             PerformDial::Articulate => Key::PerformArticulate,
             PerformDial::Pedal => Key::PerformPedal,
@@ -224,9 +339,12 @@ fn answers_to(transform: &NoteTransform, dial: PerformDial) -> bool {
 /// first paint.
 pub fn dial_fraction(stack: &[NoteTransform], dial: PerformDial) -> f32 {
     match dial {
+        PerformDial::Shape => ShapeParts::of(stack).peak(),
         PerformDial::Pitch(dial) => dial.fraction(stack),
-        PerformDial::ExpressionTiming => expression_settings(stack, 0).timing.clamp(0.0, 1.0),
-        PerformDial::ExpressionVelocity => expression_settings(stack, 0).velocity.clamp(0.0, 1.0),
+        PerformDial::ExpressionBalance => {
+            let settings = expression_settings(stack, 0);
+            wander_balance(settings.timing, settings.velocity)
+        }
         PerformDial::PhraseSwell => expression_settings(stack, 0).swell.clamp(0.0, 1.0),
         PerformDial::BeatAccent => {
             (expression_settings(stack, 0).accent.clamp(-1.0, 1.0) + 1.0) / 2.0
@@ -359,6 +477,9 @@ pub fn with_dial(
     seed: u64,
 ) -> Vec<NoteTransform> {
     let fraction = (fraction.clamp(0.0, 1.0) * 100.0).round() / 100.0;
+    if dial == PerformDial::Shape {
+        return with_shape(stack, fraction, seed, true);
+    }
     if let PerformDial::Pitch(dial) = dial {
         return dial.change(stack, fraction);
     }
@@ -383,8 +504,7 @@ pub fn with_dial(
     }
     if matches!(
         dial,
-        PerformDial::ExpressionTiming
-            | PerformDial::ExpressionVelocity
+        PerformDial::ExpressionBalance
             | PerformDial::PhraseSwell
             | PerformDial::BeatAccent
             | PerformDial::EnsembleShared
@@ -396,8 +516,10 @@ pub fn with_dial(
     {
         let mut settings = expression_settings(stack, seed);
         match dial {
-            PerformDial::ExpressionTiming => settings.timing = fraction,
-            PerformDial::ExpressionVelocity => settings.velocity = fraction,
+            PerformDial::ExpressionBalance => {
+                (settings.timing, settings.velocity) =
+                    split_wander(settings.timing.max(settings.velocity), fraction);
+            }
             PerformDial::PhraseSwell => settings.swell = fraction,
             PerformDial::BeatAccent => settings.accent = fraction * 2.0 - 1.0,
             PerformDial::EnsembleShared => settings.shared = fraction,
@@ -455,9 +577,8 @@ pub fn with_dial(
         return with_ghost_settings(stack, settings);
     }
     let replacement = match dial {
-        PerformDial::Pitch(_) => unreachable!(),
-        PerformDial::ExpressionTiming
-        | PerformDial::ExpressionVelocity
+        PerformDial::Pitch(_) | PerformDial::Shape => unreachable!(),
+        PerformDial::ExpressionBalance
         | PerformDial::PhraseSwell
         | PerformDial::BeatAccent
         | PerformDial::EnsembleShared
@@ -584,9 +705,15 @@ pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> 
         PerformDial::PerformanceDelay => {
             format!("{:+.0} ms", expression_settings(stack, 0).delay_ms)
         }
-        PerformDial::ExpressionTiming
-        | PerformDial::ExpressionVelocity
-        | PerformDial::PhraseSwell
+        PerformDial::ExpressionBalance => {
+            let settings = expression_settings(stack, 0);
+            format!(
+                "{:.0}% / {:.0}%",
+                settings.timing * 100.0,
+                settings.velocity * 100.0
+            )
+        }
+        PerformDial::PhraseSwell
         | PerformDial::EnsembleShared
         | PerformDial::GrooveTiming
         | PerformDial::GrooveVelocity => format!("{:.0}%", dial_fraction(stack, dial) * 100.0),
@@ -605,6 +732,7 @@ pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> 
         | PerformDial::Brush
         | PerformDial::Slide
         | PerformDial::Contour
+        | PerformDial::Shape
         | PerformDial::Voicing
         | PerformDial::Articulate
         | PerformDial::Pedal => format!("{:.0}%", dial_fraction(stack, dial) * 100.0),
@@ -633,8 +761,7 @@ fn sustain_text(ticks: i64) -> String {
 fn dial_element_key(dial: PerformDial) -> usize {
     match dial {
         PerformDial::Pitch(dial) => 20 + dial as usize,
-        PerformDial::ExpressionTiming => 12,
-        PerformDial::ExpressionVelocity => 13,
+        PerformDial::ExpressionBalance => 12,
         PerformDial::PhraseSwell => 14,
         PerformDial::BeatAccent => 15,
         PerformDial::EnsembleShared => 16,
@@ -657,6 +784,7 @@ fn dial_element_key(dial: PerformDial) -> usize {
         PerformDial::Gate => 2,
         PerformDial::Sustain => 40,
         PerformDial::Contour => 43,
+        PerformDial::Shape => 47,
         PerformDial::Voicing => 44,
         PerformDial::Articulate => 45,
         PerformDial::Pedal => 46,
@@ -704,12 +832,35 @@ impl AurisApp {
         .debug_selector(move || format!("perform-dial-{}", dial_element_key(dial)))
         .into_any_element()
     }
-    fn ghost_detail_rows(
+    /// The order a chord stroke sounds its pitches in.
+    pub(crate) fn stroke_direction_row(
+        &self,
+        clip: ClipId,
+        stack: &[NoteTransform],
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        self.picker_row(
+            "perform-stroke-direction",
+            Key::PerformDirection,
+            self.t(direction_label(stroke_direction(stack))).to_string(),
+            Self::opens_menu(cx, move |this, at| this.perform_stroke_menu(at, clip)),
+        )
+        .into_any_element()
+    }
+
+    pub(crate) fn ghost_detail_rows(
         &self,
         clip: ClipId,
         stack: &[NoteTransform],
         cx: &mut gpui::Context<Self>,
     ) -> Vec<AnyElement> {
+        if !crate::ui::performance::offers_stage(
+            self.clip_preset_family(clip),
+            stack,
+            auris_session::live_agent::performance::ResetStage::Ghost,
+        ) {
+            return Vec::new();
+        }
         let theme = &self.theme;
         let mut rows = vec![
             disclosure(
@@ -877,27 +1028,13 @@ impl AurisApp {
         let stack = stack.to_vec();
         let theme = self.theme.clone();
         let straight = self.t(Key::PartStraight);
-        let is_drum = self
-            .project()
-            .midi_clip(clip)
-            .and_then(|(track, _)| self.project().track(track))
-            .is_some_and(|track| track.kind.is_drum());
+        let family = self.clip_preset_family(clip);
 
         let mut rows: Vec<AnyElement> = vec![self.perform_preset_row(clip, &stack, cx)];
 
         for dial in PERFORM_DIALS {
             let dial = *dial;
-            if is_drum
-                && matches!(
-                    dial,
-                    PerformDial::Gate
-                        | PerformDial::Sustain
-                        | PerformDial::Contour
-                        | PerformDial::Voicing
-                        | PerformDial::Articulate
-                        | PerformDial::Pedal
-                )
-            {
+            if !offers_dial(family, &stack, dial) {
                 continue;
             }
             let fraction = dial_fraction(&stack, dial);
@@ -941,18 +1078,11 @@ impl AurisApp {
             );
         }
 
-        if dial_fraction(&stack, PerformDial::Stroke) > 0.0 {
-            rows.push(
-                self.picker_row(
-                    "perform-stroke-direction",
-                    Key::PerformDirection,
-                    self.t(direction_label(stroke_direction(&stack)))
-                        .to_string(),
-                    Self::opens_menu(cx, move |this, at| this.perform_stroke_menu(at, clip)),
-                )
+        rows.push(
+            self.group_heading(Key::PerformTechniques)
                 .into_any_element(),
-            );
-        }
+        );
+        rows.extend(self.technique_rows(clip, &stack, cx));
 
         if !stack.is_empty() {
             rows.push(
@@ -975,10 +1105,7 @@ impl AurisApp {
         }
 
         rows.push(divider(&theme).into_any_element());
-        rows.extend(self.ghost_detail_rows(clip, &stack, cx));
-        rows.extend(self.strum_detail_rows(clip, &stack, cx));
         rows.extend(self.expression_detail_rows(clip, &stack, cx));
-        rows.extend(self.pitch_detail_rows(clip, &stack, cx));
         rows
     }
 
@@ -1015,7 +1142,13 @@ impl AurisApp {
         let Ok(stack) = self.session.clip_transforms(clip) else {
             return;
         };
-        let next = with_dial(stack, dial, fraction, clip.0);
+        let next = if dial == PerformDial::Shape {
+            // A kit has no line for the contour to read, so its shape starts from the swell.
+            let line = stage_suits(self.clip_preset_family(clip), ResetStage::Contour);
+            with_shape(stack, fraction, clip.0, line)
+        } else {
+            with_dial(stack, dial, fraction, clip.0)
+        };
         let _ = self.session.set_clip_transforms(clip, next);
     }
 
@@ -1135,6 +1268,66 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_instrument_is_offered_its_own_techniques_and_keeps_any_already_on_it() {
+        let empty: &[NoteTransform] = &[];
+        assert!(!offers_dial(PresetFamily::Keys, empty, PerformDial::Mute));
+        assert!(!offers_dial(PresetFamily::Keys, empty, PerformDial::Slide));
+        assert!(offers_dial(PresetFamily::Keys, empty, PerformDial::Pedal));
+        assert!(!offers_dial(
+            PresetFamily::Guitar,
+            empty,
+            PerformDial::Pedal
+        ));
+        assert!(offers_dial(PresetFamily::Guitar, empty, PerformDial::Brush));
+        assert!(!offers_dial(PresetFamily::Bass, empty, PerformDial::Brush));
+        assert!(!offers_dial(PresetFamily::Drums, empty, PerformDial::Gate));
+        // Swing and the wander are every part's.
+        for family in PresetFamily::ALL {
+            assert!(offers_dial(family, empty, PerformDial::Swing));
+            assert!(offers_dial(family, empty, PerformDial::Humanize));
+        }
+        // A stage that got there some other way stays in reach, so it can be turned off.
+        let muted = [NoteTransform::Mute { amount: 0.5 }];
+        assert!(offers_dial(PresetFamily::Keys, &muted, PerformDial::Mute));
+    }
+
+    #[test]
+    fn the_shape_dial_scales_what_is_there_and_starts_from_the_line() {
+        // Nothing yet: the contour, which reads the written line.
+        let started = with_shape(&[], 0.6, 3, true);
+        assert_eq!(started, vec![NoteTransform::Contour { amount: 0.6 }]);
+        // A kit has no line, so its shape starts from the swell.
+        let kit = with_shape(&[], 0.6, 3, false);
+        assert_eq!(ShapeParts::of(&kit).swell, 0.6);
+        assert_eq!(ShapeParts::of(&kit).contour, 0.0);
+        // Proportions survive, the accent keeps its sign, and the strongest lands on the dial.
+        let mut set = with_dial(&[], PerformDial::Contour, 0.4, 3);
+        set = with_dial(&set, PerformDial::PhraseSwell, 0.2, 3);
+        set = with_dial(&set, PerformDial::BeatAccent, 0.4, 3);
+        let doubled = with_shape(&set, 0.8, 3, true);
+        let parts = ShapeParts::of(&doubled);
+        assert_eq!((parts.contour, parts.swell, parts.accent), (0.8, 0.4, -0.4));
+        assert_eq!(dial_fraction(&doubled, PerformDial::Shape), 0.8);
+    }
+
+    #[test]
+    fn the_balance_splits_the_wander_without_moving_the_humanise_dial() {
+        assert_eq!(split_wander(0.4, 0.5), (0.4, 0.4));
+        assert_eq!(split_wander(0.4, 0.0), (0.4, 0.0));
+        assert_eq!(split_wander(0.4, 1.0), (0.0, 0.4));
+        assert_eq!(split_wander(0.4, 0.75), (0.2, 0.4));
+        for balance in [0.0, 0.1, 0.25, 0.5, 0.6, 0.9, 1.0] {
+            let (timing, velocity) = split_wander(0.8, balance);
+            assert!(
+                (wander_balance(timing, velocity) - balance).abs() < 1e-6,
+                "{balance}"
+            );
+            assert_eq!(timing.max(velocity), 0.8);
+        }
+        assert_eq!(wander_balance(0.0, 0.0), 0.5);
+    }
+
+    #[test]
     fn live_agent_parameters_match_the_existing_performance_controls() {
         use crate::ui::pitch_performance::PitchDial;
         use auris_session::{Session, SessionOptions, live_agent::Command};
@@ -1173,9 +1366,9 @@ mod tests {
                 serde_json::json!({"humanize":0.4}),
             ),
             (
-                PerformDial::ExpressionTiming,
-                0.4,
-                serde_json::json!({"expression":{"timing":0.4}}),
+                PerformDial::ExpressionBalance,
+                0.75,
+                serde_json::json!({"expression":{"timing":0.1}}),
             ),
             (
                 PerformDial::StrumUpVelocity,
@@ -1183,6 +1376,7 @@ mod tests {
                 serde_json::json!({"strum":{"up_velocity":0.6}}),
             ),
             (PerformDial::Brush, 0.4, serde_json::json!({"brush":0.4})),
+            (PerformDial::Shape, 0.5, serde_json::json!({"shape":0.5})),
             (
                 PerformDial::Contour,
                 0.6,
@@ -1244,6 +1438,14 @@ mod tests {
         app.update(cx, |this, _| {
             this.panels = crate::dock::PanelLayout::default();
             this.open_clip_in_editor(clip);
+            this.show_techniques(
+                clip,
+                &[
+                    crate::ui::techniques::Technique::Ghost,
+                    crate::ui::techniques::Technique::Strum,
+                    crate::ui::techniques::Technique::Pitch,
+                ],
+            );
         });
         crate::harness::resize(&app, cx, gpui::size(px(1920.0), px(3000.0)));
         click("score-performed", cx);
@@ -1346,7 +1548,7 @@ mod tests {
 
     #[gpui::test]
     fn articulation_controls_edit_the_stack_and_freeze_is_undoable(cx: &mut TestAppContext) {
-        let (app, cx, track, clip) = with_a_clip(cx);
+        let (app, cx, track, clip) = crate::harness::with_a_synth_clip(cx);
         let original = app.update(cx, |this, _| {
             this.panels = crate::dock::PanelLayout::default();
             for pitch in [60, 64, 67] {
@@ -1356,6 +1558,15 @@ mod tests {
             }
             this.select_track(track);
             this.select_clip(Some(clip));
+            this.show_techniques(
+                clip,
+                &[
+                    crate::ui::techniques::Technique::Strum,
+                    crate::ui::techniques::Technique::Mute,
+                    crate::ui::techniques::Technique::Ghost,
+                    crate::ui::techniques::Technique::Slide,
+                ],
+            );
             this.session.midi_clip(clip).unwrap().notes.clone()
         });
         paint(&app, cx);

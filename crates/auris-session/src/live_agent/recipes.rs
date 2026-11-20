@@ -3,7 +3,8 @@
 use crate::{Edit, Session, prelude::*};
 use serde::{Deserialize, Serialize};
 
-/// Partial score-writing controls. Performance controls remain independent.
+/// Partial score-writing controls. Swing and held length are performance, not writing: they
+/// are `set_performance`'s `swing_percent` and `gate`.
 #[derive(Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RecipePatch {
@@ -13,9 +14,6 @@ pub struct RecipePatch {
     /// Playing intensity, 0..1.
     #[schemars(range(min = 0.0, max = 1.0))]
     pub intensity: Option<f32>,
-    /// Gate ratio, 0..1.
-    #[schemars(range(min = 0.0, max = 1.0))]
-    pub gate: Option<f32>,
     /// Dynamic variation, 0..1.
     #[schemars(range(min = 0.0, max = 1.0))]
     pub dynamics: Option<f32>,
@@ -28,9 +26,6 @@ pub struct RecipePatch {
     /// Octave offset -2..2 relative to the writer's native register; 0 keeps it.
     #[schemars(range(min = -2, max = 2))]
     pub octave: Option<i32>,
-    /// Swing percentage, 50..75.
-    #[schemars(range(min = 50, max = 75))]
-    pub swing: Option<u8>,
     /// Exact groove name from this schema or the recipe inspector.
     #[schemars(schema_with = "groove_schema")]
     pub groove: Option<String>,
@@ -89,10 +84,6 @@ pub struct PhraseSettings {
     /// 3+3+2 figure in sixteenths).
     #[schemars(length(max = 4096), regex(pattern = r"^[xXo.~ 	|-]*$"))]
     pub rhythm: Option<String>,
-    /// Offbeat delay as a percentage, 50 (straight) to 75 (hard swing); a swung song swings
-    /// every part alike.
-    #[schemars(range(min = 50, max = 75))]
-    pub swing: Option<u8>,
 }
 
 impl PhraseSettings {
@@ -101,7 +92,6 @@ impl PhraseSettings {
         RecipePatch {
             density: self.density,
             rhythm: self.rhythm.clone(),
-            swing: self.swing,
             ..RecipePatch::default()
         }
         .apply(recipe)
@@ -140,6 +130,8 @@ pub enum Take {
     Same,
     /// Increment the current seed.
     Next,
+    /// Decrement the current seed: the take before, as the window's step back reaches it.
+    Previous,
     /// Select an explicit seed.
     Seed {
         /// Desired deterministic seed.
@@ -183,7 +175,6 @@ impl RecipePatch {
         for (name, value, target) in [
             ("density", self.density, &mut recipe.density),
             ("intensity", self.intensity, &mut recipe.intensity),
-            ("gate", self.gate, &mut recipe.gate),
             ("dynamics", self.dynamics, &mut recipe.dynamics),
             ("syncopation", self.syncopation, &mut recipe.syncopation),
             ("fill", self.fill, &mut recipe.fill),
@@ -215,12 +206,6 @@ impl RecipePatch {
                 return Err("voices must be 0 (the chord's own tones) or 2..6".into());
             }
             recipe.voices = value;
-        }
-        if let Some(value) = self.swing {
-            if !(50..=75).contains(&value) {
-                return Err("swing must be 50..75".into());
-            }
-            recipe.swing = value;
         }
         if let Some(value) = &self.groove {
             if !groove_catalog().iter().any(|groove| groove.name == value) {
@@ -272,7 +257,7 @@ impl RecipePatch {
 }
 
 pub(crate) fn summary(recipe: &ClipRecipe) -> serde_json::Value {
-    serde_json::json!({"part":recipe.preset.name(),"seed":recipe.seed,"density":recipe.density,"intensity":recipe.intensity,"gate":recipe.gate,"dynamics":recipe.dynamics,"syncopation":recipe.syncopation,"fill":recipe.fill,"octave":recipe.octave,"low_root":recipe.low_root,"strum":recipe.strum,"centre":recipe.chord_centre(),"voices":recipe.voices,"swing":recipe.swing,"groove":recipe.groove,"subdivision":recipe.subdivision,"motif":recipe.motif,"rhythm":recipe.rhythm,"drum_voices":recipe.drum_voices.iter().map(|voice|serde_json::json!({"name":voice.name,"has_recipe":voice.recipe.is_some()})).collect::<Vec<_>>()})
+    serde_json::json!({"part":recipe.preset.name(),"seed":recipe.seed,"density":recipe.density,"intensity":recipe.intensity,"dynamics":recipe.dynamics,"syncopation":recipe.syncopation,"fill":recipe.fill,"octave":recipe.octave,"low_root":recipe.low_root,"strum":recipe.strum,"centre":recipe.chord_centre(),"voices":recipe.voices,"groove":recipe.groove,"subdivision":recipe.subdivision,"motif":recipe.motif,"rhythm":recipe.rhythm,"drum_voices":recipe.drum_voices.iter().map(|voice|serde_json::json!({"name":voice.name,"has_recipe":voice.recipe.is_some()})).collect::<Vec<_>>()})
 }
 
 impl Session {
@@ -322,6 +307,7 @@ impl Session {
                     let seed = match take {
                         Take::Same => candidate.seed,
                         Take::Next => candidate.seed.wrapping_add(1),
+                        Take::Previous => candidate.seed.wrapping_sub(1),
                         Take::Seed { seed } => *seed,
                     };
                     candidate = candidate.with_seed(seed);
@@ -451,7 +437,7 @@ mod tests {
         let before = session.project().clone();
         let patch = || Operation::Patch {
             settings: RecipePatch {
-                gate: Some(0.2),
+                dynamics: Some(0.2),
                 ..Default::default()
             },
             replace_hand_edits: false,
@@ -461,7 +447,7 @@ mod tests {
             .unwrap();
         assert_eq!(session.clip_recipe(first).unwrap().seed, 41);
         assert_eq!(session.clip_recipe(second).unwrap().seed, 82);
-        assert_eq!(session.clip_recipe(second).unwrap().gate, 0.2);
+        assert_eq!(session.clip_recipe(second).unwrap().dynamics, 0.2);
         session.undo();
         assert_eq!(session.project(), &before);
         assert!(

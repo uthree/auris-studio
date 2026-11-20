@@ -403,6 +403,45 @@ impl AurisApp {
         midi_listener(&open, frontmost).is_none_or(|listener| listener == me)
     }
 
+    /// Puts every project's realtime audio to sleep, this one's included, so that something
+    /// outside them all — a reference editor recording — can hold the hardware.
+    pub(crate) fn release_all_audio(&mut self, cx: &mut Context<Self>) -> bool {
+        if let Err(error) = self.session.set_audio_suspended(true) {
+            self.report_session_error(&error);
+            return false;
+        }
+        self.stop_audition();
+        self.release_physical_preview();
+        self.session.set_midi_input(false);
+        if !installed(cx) {
+            return true;
+        }
+        for project in projects(cx) {
+            if project.entity_id() == cx.entity_id() {
+                continue;
+            }
+            let result = project.update(cx, |view, cx| {
+                let result = view.session.set_audio_suspended(true);
+                if result.is_ok() {
+                    view.stop_audition();
+                    view.release_physical_preview();
+                }
+                cx.notify();
+                result
+            });
+            if let Err(error) = result {
+                let message = if matches!(error, auris_session::SessionError::RecordingInProgress) {
+                    self.t(auris_i18n::Key::OtherProjectRecording).to_string()
+                } else {
+                    crate::i18n::error_text(&error, self.language())
+                };
+                self.set_failed_status(message);
+                return false;
+            }
+        }
+        true
+    }
+
     pub(crate) fn acquire_audio(&mut self, cx: &mut Context<Self>) -> bool {
         if !installed(cx) || !self.session.audio_suspended() {
             return true;

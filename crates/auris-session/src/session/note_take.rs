@@ -314,8 +314,12 @@ impl Session {
     pub(super) fn note_take_status(&self) -> Option<RecordingStatus> {
         let take = self.note_take.as_ref()?;
         let rate = self.engine.sample_rate().max(1.0);
+        let device = match (self.voice.is_some(), self.input.as_ref()) {
+            (true, Some(capture)) => capture.name().to_string(),
+            _ => String::new(),
+        };
         Some(RecordingStatus {
-            device: String::new(),
+            device,
             seconds: ((self.performed_frame() - take.start) / rate).max(0.0),
             start: Some(self.tick_of_frame(take.start.max(0.0) as u64)),
             dropped_frames: 0,
@@ -332,9 +336,16 @@ impl Session {
         if !self.project.tracks[index].kind.holds_notes() {
             return Err(SessionError::NothingToRecordOnto);
         }
+        // Before anything is counted in, so a microphone that will not open leaves the transport
+        // as it was.
+        if self.voice_input {
+            self.start_voice(track)?;
+        }
         let count = self.count_in();
         self.engine
             .expect_count_in(count.map_or(0, |count| count.remaining_frames));
+        // After the count is written down and before it is played: see `record`.
+        self.begin_voice();
         let start = self.engine.playhead_frames() as f64;
         self.counting = count;
         if let Some(count) = count {

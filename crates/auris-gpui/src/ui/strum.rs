@@ -64,6 +64,13 @@ impl AurisApp {
         stack: &[NoteTransform],
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        if !crate::ui::performance::offers_stage(
+            self.clip_preset_family(clip),
+            stack,
+            auris_session::live_agent::performance::ResetStage::Strum,
+        ) {
+            return Vec::new();
+        }
         let theme = &self.theme;
         let mut rows = vec![
             disclosure(

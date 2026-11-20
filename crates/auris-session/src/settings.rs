@@ -878,6 +878,8 @@ pub struct MidiPreferences {
     pub quantize_division: u32,
     /// How far towards the grid, 0 to 1.
     pub quantize_strength: f32,
+    /// Whether a note take also follows the microphone, writing down what is sung or hummed.
+    pub voice_input: bool,
 }
 
 impl Default for MidiPreferences {
@@ -890,6 +892,7 @@ impl Default for MidiPreferences {
             record_mode: crate::NoteRecordMode::default(),
             quantize_division: 0,
             quantize_strength: 1.0,
+            voice_input: false,
         }
     }
 }

@@ -474,14 +474,7 @@ mod tests {
             .find(|b| b["properties"]["kind"]["const"] == "patch")
             .unwrap();
         let settings = &patch["properties"]["settings"]["properties"];
-        for name in [
-            "density",
-            "intensity",
-            "gate",
-            "dynamics",
-            "syncopation",
-            "fill",
-        ] {
+        for name in ["density", "intensity", "dynamics", "syncopation", "fill"] {
             assert_eq!(
                 settings[name]["minimum"], 0.0,
                 "missing lower bound for {name}"
@@ -493,8 +486,9 @@ mod tests {
         }
         assert_eq!(settings["octave"]["minimum"], -2);
         assert_eq!(settings["octave"]["maximum"], 2);
-        assert_eq!(settings["swing"]["minimum"], 50);
-        assert_eq!(settings["swing"]["maximum"], 75);
+        // Swing and held length are performance controls, so the writing tool does not offer them.
+        assert!(settings["swing"].is_null());
+        assert!(settings["gate"].is_null());
         let mut grooves = auris_session::prelude::groove_catalog()
             .iter()
             .map(|groove| serde_json::Value::String(groove.name.to_owned()))
@@ -541,7 +535,7 @@ mod tests {
         assert_eq!(settings["rhythm"]["maxLength"], 4096);
         let description = crate::tool_exposure::concise_description(&tool.description);
         assert!(description.contains("Rhythm must use repeating grid steps"));
-        assert!(description.contains("density and gate, not subdivision"));
+        assert!(description.contains("set_performance gate and swing_percent"));
     }
 
     #[test]

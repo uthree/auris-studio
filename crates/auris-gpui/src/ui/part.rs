@@ -22,24 +22,8 @@ use crate::ui::widgets::{
     button, dragged, picker_row, value_slider,
 };
 
-/// Straight eighths. Anything less would rush the offbeat, which is not a feel anybody asks for.
-pub const SWING_MIN: u8 = 50;
-
-/// As far as the swing dial goes: the offbeat on the last sixteenth of its beat.
-///
-/// Past the dotted feel the second eighth is so late that it is heard as an early downbeat of the
-/// next beat rather than as swing, and at 100 it lands on it exactly.
-pub const SWING_MAX: u8 = 75;
-
-/// The shortest a gate dial reaches, as a share of the gap to the next note.
-///
-/// Not zero: a note of no length is a note nobody hears, and a dial whose bottom end silences the
-/// part is a dial with a broken position on it. A twentieth of the gap is already a click.
-pub const GATE_MIN: f32 = 0.05;
-
 fn dial_keyboard_step(dial: Dial) -> f32 {
     match dial {
-        Dial::Swing => 1.0 / f32::from(SWING_MAX - SWING_MIN),
         Dial::Centre => 1.0 / 127.0,
         _ => SLIDER_PERCENT_STEP,
     }
@@ -48,25 +32,22 @@ fn dial_keyboard_step(dial: Dial) -> f32 {
 /// One continuous dial on a [`ClipRecipe`].
 ///
 /// The seed, the preset, the groove and the subdivision are all choices from a set and are picked
-/// from a menu; these are the ones with a range, and so the ones that get a bar to drag. How
-/// *loose* the clip is played stopped being one of them: the humanise is a performance
-/// transform now — see `crate::ui::performance` — and turning it no longer rewrites the text.
+/// from a menu; these are the ones with a range, and so the ones that get a bar to drag. Every one
+/// of them changes *what is written*. How the text is played — how loose, how swung, how much of
+/// each note is held — is the performance section's (`crate::ui::performance`), with one dial
+/// there rather than a second here.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Dial {
     /// How busy the part is.
     Density,
     /// How far the figures pull off the beat.
     Syncopation,
-    /// How long each note sounds, against the gap to the next.
-    Gate,
     /// How hard it is played.
     Intensity,
     /// How far apart the hardest and softest notes are struck.
     Dynamics,
     /// How much of the last bar the snare runs as a fill.
     Fill,
-    /// How late the offbeats are.
-    Swing,
     /// The MIDI note a chord part's voicings average to. In no [`dials_for`] list: it is drawn
     /// with the chord's other hand controls, where the octave would be.
     Centre,
@@ -78,11 +59,9 @@ impl Dial {
         match self {
             Dial::Density => Key::PartDensity,
             Dial::Syncopation => Key::PartSyncopation,
-            Dial::Gate => Key::PartGate,
             Dial::Intensity => Key::PartIntensity,
             Dial::Dynamics => Key::PartDynamics,
             Dial::Fill => Key::PartFill,
-            Dial::Swing => Key::PartSwing,
             Dial::Centre => Key::PartCentre,
         }
     }
@@ -95,11 +74,6 @@ impl Dial {
             Dial::Intensity => recipe.intensity,
             Dial::Dynamics => recipe.dynamics,
             Dial::Fill => recipe.fill,
-            Dial::Gate => (recipe.gate - GATE_MIN) / (1.0 - GATE_MIN),
-            Dial::Swing => {
-                let span = f32::from(SWING_MAX - SWING_MIN);
-                (f32::from(recipe.swing) - f32::from(SWING_MIN)) / span
-            }
             Dial::Centre => f32::from(recipe.chord_centre()) / 127.0,
         };
         value.clamp(0.0, 1.0)
@@ -122,11 +96,6 @@ impl Dial {
             Dial::Intensity => recipe.intensity = whole_percent(fraction),
             Dial::Dynamics => recipe.dynamics = whole_percent(fraction),
             Dial::Fill => recipe.fill = whole_percent(fraction),
-            Dial::Gate => recipe.gate = GATE_MIN + whole_percent(fraction) * (1.0 - GATE_MIN),
-            Dial::Swing => {
-                let span = f32::from(SWING_MAX - SWING_MIN);
-                recipe.swing = SWING_MIN + (fraction * span).round() as u8;
-            }
             Dial::Centre => {
                 recipe.centre = Some((fraction * 127.0).round() as u8);
                 // The centre says where the part sits to the semitone; an octave left set under
@@ -151,58 +120,27 @@ pub fn dials_for(recipe: &ClipRecipe) -> &'static [Dial] {
     // An authored arpeggio strikes exactly the supplied rhythm. Its generated rate and
     // syncopation cannot change those onsets, so neither belongs on the pad or in a slider.
     if recipe.preset == ClipPreset::Arp && recipe.rhythm.is_some() {
-        return if recipe.subdivision.is_triplet() {
-            &[Dial::Gate, Dial::Intensity, Dial::Dynamics]
-        } else {
-            &[Dial::Gate, Dial::Intensity, Dial::Dynamics, Dial::Swing]
-        };
+        return &[Dial::Intensity, Dial::Dynamics];
     }
-    // A kit reads neither the gate nor the syncopation: a one-shot drum ignores its note-off,
-    // and where it plays is which groove it plays. It ignores the subdivision too, which is why
-    // its swing is the one that is never inert. The fill is its alone — nothing else has a last
-    // bar to announce.
+    // A kit reads no syncopation: where it plays is which groove it plays. The fill is its
+    // alone — nothing else has a last bar to announce.
     if recipe.preset.is_drums() {
         if matches!(recipe.preset, ClipPreset::Kick | ClipPreset::Hat) {
-            return &[Dial::Density, Dial::Intensity, Dial::Dynamics, Dial::Swing];
+            return &[Dial::Density, Dial::Intensity, Dial::Dynamics];
         }
-        return &[
-            Dial::Density,
-            Dial::Fill,
-            Dial::Intensity,
-            Dial::Dynamics,
-            Dial::Swing,
-        ];
+        return &[Dial::Density, Dial::Fill, Dial::Intensity, Dial::Dynamics];
     }
     // A pad has no figure for the syncopation to pull off the beat: it sounds each chord once,
     // where the chord is, and a dial that moved that would be moving the harmony rather than the
-    // part. Swing stays, because a chord that begins on an offbeat is swung like anything else.
+    // part.
     if recipe.preset == ClipPreset::Pad {
-        return &[
-            Dial::Density,
-            Dial::Gate,
-            Dial::Intensity,
-            Dial::Dynamics,
-            Dial::Swing,
-        ];
-    }
-    // Swing exists to push a straight offbeat toward the third triplet. A part already dividing
-    // its beats in three is sitting there, and has nothing left for the dial to do.
-    if recipe.subdivision.is_triplet() {
-        return &[
-            Dial::Density,
-            Dial::Syncopation,
-            Dial::Gate,
-            Dial::Intensity,
-            Dial::Dynamics,
-        ];
+        return &[Dial::Density, Dial::Intensity, Dial::Dynamics];
     }
     &[
         Dial::Density,
         Dial::Syncopation,
-        Dial::Gate,
         Dial::Intensity,
         Dial::Dynamics,
-        Dial::Swing,
     ]
 }
 
@@ -291,8 +229,8 @@ fn drum_control_applies(recipe: &ClipRecipe, dial: Dial) -> bool {
             recipe.rhythm.is_none()
                 && matches!(recipe.preset, ClipPreset::Drums | ClipPreset::Snare)
         }
-        Dial::Intensity | Dial::Dynamics | Dial::Swing => true,
-        Dial::Gate | Dial::Syncopation | Dial::Centre => false,
+        Dial::Intensity | Dial::Dynamics => true,
+        Dial::Syncopation | Dial::Centre => false,
     }
 }
 
@@ -330,7 +268,6 @@ pub fn with_preset(recipe: &ClipRecipe, preset: ClipPreset) -> ClipRecipe {
     ClipRecipe {
         preset,
         density: untouched(recipe.density, was.density, becomes.density),
-        gate: untouched(recipe.gate, was.gate, becomes.gate),
         intensity: untouched(recipe.intensity, was.intensity, becomes.intensity),
         dynamics: untouched(recipe.dynamics, was.dynamics, becomes.dynamics),
         syncopation: untouched(recipe.syncopation, was.syncopation, becomes.syncopation),
@@ -340,15 +277,9 @@ pub fn with_preset(recipe: &ClipRecipe, preset: ClipPreset) -> ClipRecipe {
     }
 }
 
-/// What a dial reads as, given the word this language uses for unswung eighths.
-pub fn dial_text(dial: Dial, recipe: &ClipRecipe, straight: &str) -> String {
+/// What a dial reads as.
+pub fn dial_text(dial: Dial, recipe: &ClipRecipe) -> String {
     match dial {
-        Dial::Swing if recipe.swing <= SWING_MIN => straight.to_string(),
-        Dial::Swing => format!("{}%", recipe.swing),
-        // The stored share of the gap, not the bar's position: at the bottom of its travel the
-        // bar is empty and the note is still a twentieth long, and a readout saying 0% would be
-        // describing the control rather than the music.
-        Dial::Gate => format!("{}%", (recipe.gate * 100.0).round() as i32),
         Dial::Centre => centre_text(recipe.chord_centre()),
         _ => format!("{}%", (dial.fraction(recipe) * 100.0).round() as i32),
     }
@@ -359,8 +290,6 @@ fn dial_element_key(dial: Dial) -> usize {
     match dial {
         Dial::Density => 0,
         Dial::Intensity => 1,
-        Dial::Swing => 2,
-        Dial::Gate => 4,
         Dial::Dynamics => 5,
         Dial::Syncopation => 6,
         Dial::Fill => 7,
@@ -492,18 +421,91 @@ impl AurisApp {
             rows.push(self.group_heading(Key::PartTakes).into_any_element());
         }
 
-        // The seed is shown, and typeable, because "another take" is the *next* seed and not a
-        // random one. That is what makes a take somebody liked reachable again — but only by
-        // somebody who saw its number and can put it back.
+        rows.push(self.take_row(clip, &recipe, drummer, cx));
+        // A standing note, not a dialog: it appears when the clip's notes drift from what the
+        // recipe last wrote and stays for as long as they differ, which is the same rule the
+        // costly-feature warnings follow. The buttons above still work exactly as they say.
+        if self.session.clip_hand_edited(clip) {
+            rows.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .min_h(Metrics::CONTROL_HEIGHT)
+                    .text_xs()
+                    .text_color(theme.warning)
+                    .child(self.t(Key::PartEditedByHand))
+                    .into_any_element(),
+            );
+        }
         rows.push(
-            self.command_row(
+            button(
+                "part-freeze",
+                self.t(Key::MenuFreezeClip),
+                ButtonStyle::Normal,
+                false,
+                theme.accent,
+                &theme,
+                cx.listener(move |this, _, _, cx| {
+                    this.freeze_clip(clip);
+                    cx.notify();
+                }),
+            )
+            .into_any_element(),
+        );
+        rows
+    }
+
+    /// Which take this is, stepped either way, and the rewrite of it, on one line.
+    ///
+    /// The number is shown, and typeable, because the next take is the *next* seed and not a
+    /// random one. That is what makes a take somebody liked reachable again — by stepping back to
+    /// it, or by typing the number they saw. Rewriting is the same take written again over the
+    /// harmony as it is now, which is what a hand-edited clip or a changed chord needs; a kit
+    /// follows no harmony and has no rewrite.
+    fn take_row(
+        &self,
+        clip: ClipId,
+        recipe: &ClipRecipe,
+        drummer: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let theme = &self.theme;
+        let seed = recipe.seed;
+        let label = if drummer {
+            Key::PartSeed
+        } else {
+            Key::PartTake
+        };
+        let step = |id: &'static str, text: &'static str, tip: Key, previous: bool| {
+            button(
+                id,
+                text,
+                ButtonStyle::Normal,
+                false,
+                theme.accent,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    if previous {
+                        this.set_clip_seed(clip, seed.wrapping_sub(1));
+                    } else {
+                        this.reroll_clip(clip);
+                    }
+                    cx.notify();
+                }),
+            )
+            .tooltip(crate::ui::tooltip::text_tip(self.t(tip).to_string()))
+        };
+        let mut row = div()
+            .flex()
+            .gap_1()
+            .child(step("part-previous-take", "◀", Key::PartPreviousTake, true))
+            .child(div().flex_1().min_w_0().child(button(
                 "part-seed",
-                if drummer {
-                    Key::PartSeed
-                } else {
-                    Key::PartTakeNumber
-                },
-                recipe.seed.to_string(),
+                format!("{} {seed}", self.t(label)),
+                ButtonStyle::Normal,
+                false,
+                theme.accent,
+                theme,
                 cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                     let title = this.t(if drummer {
                         Key::SetSeedTitle
@@ -517,72 +519,23 @@ impl AurisApp {
                     this.open_prompt(Prompt::new(title, PromptTarget::Seed(clip), current));
                     cx.notify();
                 }),
-            )
-            .into_any_element(),
-        );
-        // A standing note, not a dialog: it appears when the clip's notes drift from what the
-        // recipe last wrote and stays for as long as they differ, which is the same rule the
-        // costly-feature warnings follow. The buttons below still work exactly as they say.
-        if self.session.clip_hand_edited(clip) {
-            rows.push(
-                div()
-                    .flex()
-                    .items_center()
-                    .min_h(Metrics::CONTROL_HEIGHT)
-                    .text_xs()
-                    .text_color(theme.warning)
-                    .child(self.t(Key::PartEditedByHand))
-                    .into_any_element(),
-            );
-        }
+            )))
+            .child(step("part-reroll", "▶", Key::MenuRerollClip, false));
         if !drummer {
-            rows.push(
-                button(
-                    "part-regenerate",
-                    self.t(Key::MenuRegenerateClip),
-                    ButtonStyle::Normal,
-                    false,
-                    theme.accent,
-                    &theme,
-                    cx.listener(move |this, _, _, cx| {
-                        this.regenerate_clip(clip);
-                        cx.notify();
-                    }),
-                )
-                .into_any_element(),
-            );
+            row = row.child(button(
+                "part-regenerate",
+                self.t(Key::MenuRegenerateClip),
+                ButtonStyle::Normal,
+                false,
+                theme.accent,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    this.regenerate_clip(clip);
+                    cx.notify();
+                }),
+            ));
         }
-        rows.push(
-            div()
-                .flex()
-                .gap_1()
-                .child(div().flex_1().child(button(
-                    "part-reroll",
-                    self.t(Key::MenuRerollClip),
-                    ButtonStyle::Normal,
-                    false,
-                    theme.accent,
-                    &theme,
-                    cx.listener(move |this, _, _, cx| {
-                        this.reroll_clip(clip);
-                        cx.notify();
-                    }),
-                )))
-                .child(div().flex_1().child(button(
-                    "part-freeze",
-                    self.t(Key::MenuFreezeClip),
-                    ButtonStyle::Normal,
-                    false,
-                    theme.accent,
-                    &theme,
-                    cx.listener(move |this, _, _, cx| {
-                        this.freeze_clip(clip);
-                        cx.notify();
-                    }),
-                )))
-                .into_any_element(),
-        );
-        rows
+        row.into_any_element()
     }
 
     /// The melodic writers are visible choices, with the current role highlighted.
@@ -678,7 +631,7 @@ impl AurisApp {
         value_slider(
             ("part-dial", dial_element_key(dial)),
             self.t(dial.label()),
-            dial_text(dial, recipe, self.t(Key::PartStraight)),
+            dial_text(dial, recipe),
             fraction,
             self.theme.accent,
             SliderFill::FromStart,
@@ -965,7 +918,7 @@ impl AurisApp {
                         } else {
                             dial.label()
                         }),
-                        dial_text(dial, writer, self.t(Key::PartStraight)),
+                        dial_text(dial, writer),
                         fraction,
                         theme.accent,
                         SliderFill::FromStart,
@@ -1203,8 +1156,6 @@ mod tests {
             assert!(!dials.contains(&Dial::Density));
             assert!(!dials.contains(&Dial::Syncopation));
             assert!(dials.contains(&Dial::Intensity));
-            assert!(dials.contains(&Dial::Gate));
-            assert_eq!(dials.contains(&Dial::Swing), !subdivision.is_triplet());
         }
     }
 
@@ -1364,7 +1315,6 @@ mod tests {
             let midi = this.session.midi_clip(clip).unwrap();
             let settings = midi.recipe.as_ref().unwrap();
             assert_eq!(settings.preset, ClipPreset::Chords);
-            assert_eq!(settings.gate, recipe(ClipPreset::Chords).gate);
             assert_eq!(settings.seed, 1);
             midi.clone()
         });
@@ -1620,7 +1570,7 @@ mod tests {
     fn a_dial_reads_back_what_it_was_set_to() {
         // The bar is drawn from `fraction` and dragged into `set`, so a value that did not survive
         // the round trip would make the bar jump away from the pointer while it was being dragged.
-        for dial in [Dial::Density, Dial::Gate, Dial::Intensity, Dial::Dynamics] {
+        for dial in [Dial::Density, Dial::Intensity, Dial::Dynamics] {
             for target in [0.0, 0.25, 0.5, 0.75, 1.0] {
                 let mut recipe = recipe(ClipPreset::Lead);
                 dial.set(&mut recipe, target);
@@ -1633,50 +1583,6 @@ mod tests {
     }
 
     #[test]
-    fn the_swing_dial_runs_from_straight_to_dotted_and_no_further() {
-        // Swing is stored as whole percent, so it round trips to within one step of the bar
-        // rather than exactly — but it must never leave the range the composer can play.
-        let mut recipe = recipe(ClipPreset::Drums);
-
-        Dial::Swing.set(&mut recipe, 0.0);
-        assert_eq!(
-            recipe.swing, SWING_MIN,
-            "the bottom of the dial is straight"
-        );
-
-        Dial::Swing.set(&mut recipe, 1.0);
-        assert_eq!(recipe.swing, SWING_MAX);
-
-        // Below the bottom is not "swing the other way", it is rushing the offbeat.
-        Dial::Swing.set(&mut recipe, -1.0);
-        assert_eq!(recipe.swing, SWING_MIN);
-
-        Dial::Swing.set(&mut recipe, 2.0);
-        assert_eq!(recipe.swing, SWING_MAX);
-
-        for percent in SWING_MIN..=SWING_MAX {
-            let mut recipe = recipe.clone();
-            recipe.swing = percent;
-            let fraction = Dial::Swing.fraction(&recipe);
-            let mut round_tripped = recipe.clone();
-            Dial::Swing.set(&mut round_tripped, fraction);
-            assert_eq!(round_tripped.swing, percent, "{percent}%");
-        }
-    }
-
-    #[test]
-    fn the_swing_dial_reaches_every_whole_percent_of_its_range() {
-        // The one dial that is not a float: it stores a `u8` of percent, over a range narrow
-        // enough that a bar rounding to hundredths would skip values the readout can show.
-        let mut recipe = recipe(ClipPreset::Drums);
-        let span = f32::from(SWING_MAX - SWING_MIN);
-        for percent in 0..=(SWING_MAX - SWING_MIN) {
-            Dial::Swing.set(&mut recipe, f32::from(percent) / span);
-            assert_eq!(recipe.swing, SWING_MIN + percent);
-        }
-    }
-
-    #[test]
     fn every_drum_writer_offers_only_controls_its_generator_reads() {
         for preset in ClipPreset::ALL {
             let dials = dials_for(&recipe(preset));
@@ -1684,14 +1590,6 @@ mod tests {
             // than replacing it, thinning from the weakest hits and filling the free steps with
             // ghosts. Which groove is still the groove, which is why the kit has a picker too.
             assert!(dials.contains(&Dial::Density), "{}", preset.name());
-            // The gate is the kit's exception: a one-shot drum ignores its note-off, so
-            // shortening one changes nothing anybody can hear.
-            assert_eq!(
-                dials.contains(&Dial::Gate),
-                !takes_a_groove(preset),
-                "{} offers the wrong gate row",
-                preset.name()
-            );
             // Fills are played by the snare, alone or inside the full kit.
             assert_eq!(
                 dials.contains(&Dial::Fill),
@@ -1719,13 +1617,12 @@ mod tests {
         assert!(!takes_a_subdivision(ClipPreset::Drums));
         assert!(!takes_an_octave(ClipPreset::Drums));
 
-        // Everything reads how hard and how evenly it is played, kit included. (How *loose* is
-        // the performance panel's business now, not the recipe's.)
+        // Everything reads how hard and how evenly it is played, kit included. (How loose, how
+        // swung and how long it is held are the performance panel's business, not the recipe's.)
         for preset in ClipPreset::ALL {
             let dials = dials_for(&recipe(preset));
             assert!(dials.contains(&Dial::Intensity), "{}", preset.name());
             assert!(dials.contains(&Dial::Dynamics), "{}", preset.name());
-            assert!(dials.contains(&Dial::Swing), "{}", preset.name());
         }
 
         // The syncopation reaches a part that rolls its own figure and nothing else. A kit plays
@@ -1771,36 +1668,11 @@ mod tests {
     }
 
     #[test]
-    fn a_part_on_a_triplet_grid_is_not_offered_a_swing_dial() {
-        // Swing pushes a straight offbeat toward the third triplet; a grid already there has
-        // nothing left to be pushed. The composer returns no offset at all for one, so a dial
-        // drawn here would sweep its whole travel and change not one tick.
-        for subdivision in Subdivision::ALL {
-            let mut recipe = recipe(ClipPreset::Chords);
-            recipe.subdivision = subdivision;
-            assert_eq!(
-                dials_for(&recipe).contains(&Dial::Swing),
-                !subdivision.is_triplet(),
-                "{}",
-                subdivision.name()
-            );
-        }
-
-        // The kit is the exception at both ends: it ignores the subdivision, so its swing is
-        // never inert whatever the rest of the recipe says.
-        let mut kit = recipe(ClipPreset::Drums);
-        kit.subdivision = Subdivision::EighthTriplet;
-        assert!(dials_for(&kit).contains(&Dial::Swing));
-    }
-
-    #[test]
     fn changing_the_preset_keeps_the_dials_somebody_moved_and_replaces_the_ones_they_did_not() {
         // Choosing a role uses its defaults until a dial has been deliberately adjusted.
         let pad = recipe(ClipPreset::Pad);
         let chords = with_preset(&pad, ClipPreset::Chords);
         assert_eq!(chords.preset, ClipPreset::Chords);
-        assert_eq!(chords.gate, ClipRecipe::new(ClipPreset::Chords, 1).gate);
-
         assert_eq!(
             chords.density,
             ClipRecipe::new(ClipPreset::Chords, 1).density
@@ -1808,10 +1680,13 @@ mod tests {
 
         // And a dial that was moved is the person's, not the preset's.
         let mut deliberate = recipe(ClipPreset::Pad);
-        Dial::Gate.set(&mut deliberate, 0.5);
-        let moved = deliberate.gate;
+        Dial::Dynamics.set(&mut deliberate, 0.4);
+        let moved = deliberate.dynamics;
         let chords = with_preset(&deliberate, ClipPreset::Chords);
-        assert_eq!(chords.gate, moved, "the preset overwrote a deliberate gate");
+        assert_eq!(
+            chords.dynamics, moved,
+            "the preset overwrote a deliberate dial"
+        );
 
         // The seed never moves: another take is the next seed, and changing what the part is
         // should not also change which take of it you are hearing.
@@ -1824,11 +1699,9 @@ mod tests {
         // Sweeping a bar is hundreds of them, so a dial that acted on every one would fill the
         // history with a drag nobody could take back in a single press.
         //
-        // The two numbers are either side of the coarsest resolution any of these has: a swing is
-        // a whole percent of a 25-point range, so it moves in fortieths, and everything else is a
-        // hundredth. Three thousandths is inside all of them and a twentieth is outside all of
-        // them, which is what makes one set of numbers do for the whole list.
-        for dial in [Dial::Density, Dial::Gate, Dial::Intensity, Dial::Swing] {
+        // Every dial here moves in hundredths: three thousandths is inside that and a twentieth
+        // is outside it.
+        for dial in [Dial::Density, Dial::Intensity, Dial::Dynamics] {
             let mut recipe = recipe(ClipPreset::Lead);
             dial.set(&mut recipe, 0.5);
             let settled = recipe.clone();
@@ -1850,39 +1723,29 @@ mod tests {
         for hundredths in 0..=100 {
             let mut recipe = recipe(ClipPreset::Lead);
             Dial::Density.set(&mut recipe, hundredths as f32 / 100.0 + 0.004);
-            assert_eq!(
-                dial_text(Dial::Density, &recipe, "straight"),
-                format!("{hundredths}%")
-            );
+            assert_eq!(dial_text(Dial::Density, &recipe), format!("{hundredths}%"));
             assert!((recipe.density * 100.0 - hundredths as f32).abs() < 1e-4);
         }
     }
 
     #[test]
-    fn a_dial_reads_as_a_percentage_and_straight_swing_reads_as_a_word() {
+    fn a_dial_reads_as_a_percentage() {
         let mut recipe = recipe(ClipPreset::Lead);
         recipe.density = 0.5;
-        assert_eq!(dial_text(Dial::Density, &recipe, "straight"), "50%");
-
-        recipe.swing = SWING_MIN;
-        assert_eq!(dial_text(Dial::Swing, &recipe, "straight"), "straight");
-        recipe.swing = 66;
-        assert_eq!(dial_text(Dial::Swing, &recipe, "straight"), "66%");
-
-        // The gate reads the share of the gap it stores, not the bar's position. At the bottom of
-        // its travel the bar is empty and the note is still a twentieth long; a readout of 0%
-        // there would be describing the control rather than the music.
-        Dial::Gate.set(&mut recipe, 0.0);
-        assert_eq!(Dial::Gate.fraction(&recipe), 0.0);
-        assert_eq!(dial_text(Dial::Gate, &recipe, "straight"), "5%");
-        Dial::Gate.set(&mut recipe, 1.0);
-        assert_eq!(dial_text(Dial::Gate, &recipe, "straight"), "100%");
+        assert_eq!(dial_text(Dial::Density, &recipe), "50%");
     }
 
     #[test]
     fn every_dial_gets_its_own_element_key() {
         let mut seen = std::collections::BTreeSet::new();
-        for dial in [Dial::Density, Dial::Gate, Dial::Intensity, Dial::Swing] {
+        for dial in [
+            Dial::Density,
+            Dial::Syncopation,
+            Dial::Intensity,
+            Dial::Dynamics,
+            Dial::Fill,
+            Dial::Centre,
+        ] {
             assert!(seen.insert(dial_element_key(dial)), "{dial:?} collided");
         }
     }

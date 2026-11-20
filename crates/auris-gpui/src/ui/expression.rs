@@ -75,9 +75,19 @@ impl AurisApp {
         if !self.performance_details[2] {
             return rows;
         }
+        // The balance splits a wander the humanise dial set; with none, there is nothing to split.
+        if crate::ui::performance::dial_fraction(stack, PerformDial::Humanize) > 0.0 {
+            rows.push(self.performance_slider(clip, PerformDial::ExpressionBalance, stack, cx));
+        }
+        // The shape dial's three parts, each on its own: the contour where there is a line to read.
+        if crate::ui::performance::offers_dial(
+            self.clip_preset_family(clip),
+            stack,
+            PerformDial::Contour,
+        ) {
+            rows.push(self.performance_slider(clip, PerformDial::Contour, stack, cx));
+        }
         for dial in [
-            PerformDial::ExpressionTiming,
-            PerformDial::ExpressionVelocity,
             PerformDial::PhraseSwell,
             PerformDial::BeatAccent,
             PerformDial::EnsembleShared,
@@ -158,7 +168,7 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness::{choose, click, paint, resize, with_a_clip};
+    use crate::harness::{choose, click, paint, resize};
     use crate::ui::performance::{dial_fraction, with_dial};
     use gpui::{TestAppContext, px, size};
 
@@ -166,7 +176,7 @@ mod tests {
     fn reference_picker_and_independent_controls_update_the_performance_layer(
         cx: &mut TestAppContext,
     ) {
-        let (app, cx, track, clip) = with_a_clip(cx);
+        let (app, cx, track, clip) = crate::harness::with_a_synth_clip(cx);
         let reference = app.update(cx, |this, _| {
             this.panels = crate::dock::PanelLayout::default();
             this.session
@@ -204,11 +214,15 @@ mod tests {
                 Ticks(480)
             );
         });
-        let at = cx.debug_bounds("perform-dial-13").unwrap().center();
-        crate::harness::press(cx, at);
-        let end = gpui::point(at.x + px(120.0), at.y);
-        crate::harness::drag_to(cx, end);
+        // No wander yet, so there is nothing for the balance to split and no row for it.
+        assert!(cx.debug_bounds("perform-dial-12").is_none());
+        app.update(cx, |this, _| {
+            this.set_perform_dial(clip, PerformDial::Humanize, 0.5);
+            this.set_perform_dial(clip, PerformDial::ExpressionBalance, 1.0);
+        });
         paint(&app, cx);
+        assert!(cx.debug_bounds("perform-dial-12").is_some());
+        // All velocity: the groove still places the note, and only its strength wanders.
         app.read_with(cx, |this, _| {
             assert_eq!(this.score_preview_notes().unwrap()[0].start, Ticks(540));
             assert_ne!(
@@ -216,7 +230,6 @@ mod tests {
                 this.session.midi_clip(clip).unwrap().notes[0].velocity
             );
         });
-        crate::harness::release(cx, end);
         app.update(cx, |this, _| {
             this.set_perform_dial(clip, PerformDial::GrooveTiming, 0.0)
         });
@@ -232,15 +245,16 @@ mod tests {
             amount: 0.8,
             seed: 91,
         }];
-        let timing = with_dial(&original, PerformDial::ExpressionTiming, 0.4, 10);
-        let settings = expression_settings(&timing, 10);
+        let leaning = with_dial(&original, PerformDial::ExpressionBalance, 0.75, 10);
+        let settings = expression_settings(&leaning, 10);
         assert_eq!(
             (settings.timing, settings.velocity, settings.seed),
             (0.4, 0.8, 91)
         );
-        let master = with_dial(&timing, PerformDial::Humanize, 0.4, 10);
-        assert_eq!(dial_fraction(&master, PerformDial::ExpressionTiming), 0.2);
-        assert_eq!(dial_fraction(&master, PerformDial::ExpressionVelocity), 0.4);
+        let master = with_dial(&leaning, PerformDial::Humanize, 0.4, 10);
+        let settings = expression_settings(&master, 10);
+        assert_eq!((settings.timing, settings.velocity), (0.2, 0.4));
+        assert_eq!(dial_fraction(&master, PerformDial::ExpressionBalance), 0.75);
         let muted = with_dial(&master, PerformDial::Humanize, 0.0, 10);
         assert!(matches!(&muted[0], NoteTransform::Expression { .. }));
     }

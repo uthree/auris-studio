@@ -1037,3 +1037,54 @@ fn a_tight_strum_reports_its_measured_spread_and_says_it_is_heard_as_one_hit() {
         "{stage}"
     );
 }
+
+#[test]
+fn an_unsuited_technique_is_applied_with_a_warning_and_inspection_lists_what_suits() {
+    let (mut session, clip) = fixture();
+    let track = session.project().midi_clip(clip).unwrap().0;
+    session.rename_track(track, "Piano").unwrap();
+    let inspected: Value = serde_json::from_str(
+        &session
+            .agent_command(
+                serde_json::from_value(json!({"action":"inspect_performance","clip":clip.0}))
+                    .unwrap(),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(inspected["instrument_family"], "keys");
+    let suited = inspected["suited_stages"].as_array().unwrap();
+    assert!(suited.contains(&json!("pedal")));
+    assert!(!suited.contains(&json!("mute")));
+
+    let muted = edit(&mut session, clip, json!({"mute":0.5}), None).unwrap();
+    assert!(
+        muted["instrument_warning"]
+            .as_str()
+            .is_some_and(|text| text.contains("mute")),
+        "{muted}"
+    );
+    // Editing a stage that is already there does not warn again.
+    let again = edit(&mut session, clip, json!({"mute":0.4}), None).unwrap();
+    assert!(again.get("instrument_warning").is_none(), "{again}");
+    let pedalled = edit(&mut session, clip, json!({"pedal":0.5}), None).unwrap();
+    assert!(pedalled.get("instrument_warning").is_none(), "{pedalled}");
+}
+
+#[test]
+fn shape_scales_contour_swell_and_accent_together() {
+    let (mut session, clip) = fixture();
+    edit(
+        &mut session,
+        clip,
+        json!({"contour":0.4,"expression":{"swell":0.2,"accent":-0.2}}),
+        None,
+    )
+    .unwrap();
+    let shaped = edit(&mut session, clip, json!({"shape":0.8}), None).unwrap();
+    assert_eq!(shaped["settings"]["shape"], 0.8);
+    let parts = ShapeParts::of(session.clip_transforms(clip).unwrap());
+    assert_eq!((parts.contour, parts.swell, parts.accent), (0.8, 0.4, -0.4));
+    // One door, one meaning: shape and the fields it moves are not set in the same call.
+    assert!(edit(&mut session, clip, json!({"shape":0.5,"contour":0.1}), None).is_err());
+}

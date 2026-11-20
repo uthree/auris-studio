@@ -20,6 +20,7 @@ use auris_core::{
 use serde::{Deserialize, Serialize};
 
 use crate::error::SessionError;
+use crate::live_agent::performance::ResetStage;
 use crate::settings::{config_dir, read_config_text, write_config_bytes};
 
 /// The longest name a kept preset may have, in characters.
@@ -309,6 +310,40 @@ pub(crate) fn kept_stack(stack: &[NoteTransform]) -> Vec<NoteTransform> {
         .collect()
 }
 
+/// Whether a kind of performance stage is worth offering on an instrument of `family`.
+///
+/// The window draws a control only where this says yes, and an agent's `inspect_performance`
+/// lists the same answer, so both doors offer one instrument the same playing techniques. It is
+/// an offer, not a lock: a stage already on a clip is still shown and still edited wherever it
+/// came from, and `set_performance` applies an unsuited stage with a warning rather than refusing
+/// it. [`PresetFamily::Synth`] and [`PresetFamily::Other`] say nothing about how the instrument is
+/// played, so they are offered everything.
+pub fn stage_suits(family: PresetFamily, stage: ResetStage) -> bool {
+    use PresetFamily as F;
+    use ResetStage as S;
+    if matches!(family, F::Synth | F::Other) {
+        return true;
+    }
+    match stage {
+        S::Swing | S::Expression | S::Groove | S::Transpose | S::Lean => true,
+        // A one-shot drum ignores its note-off, and a kit has no line to shape.
+        S::Gate | S::Contour | S::Articulation | S::Octaves => family != F::Drums,
+        // Held releases are a damper pedal's.
+        S::Sustain | S::Pedal => family == F::Keys,
+        // A top voice to bring out needs chords.
+        S::Voicing => matches!(family, F::Keys | F::Guitar | F::Strings | F::Brass),
+        // A spread chord: a strummed guitar, a rolled piano chord, a harp-like string chord.
+        S::Strum => matches!(family, F::Keys | F::Guitar | F::Strings),
+        // Ghost notes, and the brush's quiet chords: the funk hand on guitar, bass and keys, and
+        // the snare's ghost strokes.
+        S::Ghost => matches!(family, F::Keys | F::Guitar | F::Bass | F::Drums),
+        // A damped retrigger is a plucked string's.
+        S::Mute => matches!(family, F::Guitar | F::Bass),
+        // Pitch that moves between or within notes: anything but a fixed-pitch keyboard or a kit.
+        S::Slide | S::Pitch => !matches!(family, F::Keys | F::Drums),
+    }
+}
+
 /// The family a preset falls in by default, read from a track's instrument.
 ///
 /// A SoundFont patch says what it is by its General MIDI number, which outranks whatever the
@@ -483,6 +518,27 @@ fn clip_shape(clip: &MidiClip) -> (bool, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_keyboard_is_not_offered_bends_and_a_guitar_is_not_offered_a_damper() {
+        assert!(!stage_suits(PresetFamily::Keys, ResetStage::Pitch));
+        assert!(!stage_suits(PresetFamily::Keys, ResetStage::Mute));
+        assert!(stage_suits(PresetFamily::Keys, ResetStage::Pedal));
+        assert!(!stage_suits(PresetFamily::Guitar, ResetStage::Pedal));
+        assert!(stage_suits(PresetFamily::Guitar, ResetStage::Strum));
+        assert!(!stage_suits(PresetFamily::Drums, ResetStage::Gate));
+        assert!(stage_suits(PresetFamily::Drums, ResetStage::Ghost));
+        // An instrument nothing is known about is offered everything.
+        for family in [PresetFamily::Synth, PresetFamily::Other] {
+            assert!(stage_suits(family, ResetStage::Pedal));
+            assert!(stage_suits(family, ResetStage::Pitch));
+        }
+        // The feel every part shares is offered everywhere.
+        for family in PresetFamily::ALL {
+            assert!(stage_suits(family, ResetStage::Swing));
+            assert!(stage_suits(family, ResetStage::Expression));
+        }
+    }
     use auris_core::time::Ticks;
 
     fn preset(name: &str) -> PerformancePreset {

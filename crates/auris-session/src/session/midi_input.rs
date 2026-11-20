@@ -118,6 +118,7 @@ impl Session {
         self.midi.inputs.set_octave(preferences.octave);
         self.set_note_record_mode(preferences.record_mode);
         self.set_record_quantize(preferences.record_quantize());
+        self.set_voice_input(preferences.voice_input);
     }
 
     /// Chooses how hard a key has to be struck for how loud a note, from the next note on.

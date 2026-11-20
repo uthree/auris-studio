@@ -402,6 +402,52 @@ answers. Audiobox takes the GPU whenever one is visible. On a GPU, scores match 
 adapters turn both off. `song_aesthetics.py --precision bf16` is about 1.6 times faster but moves
 scores by up to 0.8; fp16 turns MuQ's output into NaN.
 
+## Performance dials against human playing
+
+The starting value a technique takes when it is added from the performance section's
+**+ Add a technique** menu, and where the **Shape** dial starts, are read from human performances
+by `tools/eval/performance_stats.py`. Each stage scales its effect linearly with its amount, so a
+statistic measured on human playing, divided by the stage's effect at full strength, is the
+amount that reproduces it. Piano statistics come from 200 MAESTRO v3 performances (seed 0);
+guitar strums from GuitarSet's 180 comping takes. The figures below are medians over pieces;
+the full summary is
+[performance-dials-2026-11-19.json](../tools/eval/references/performance-dials-2026-11-19.json).
+
+| Technique | Human statistic | Implied amount | Start |
+| --- | --- | ---: | ---: |
+| Voicing | inner voices 13% under the top; bass 14% under; top 6 ms ahead | 0.52; 0.48; 0.38 | 0.5 |
+| Pedal | 71% of notes released under the pedal | 0.71 | 0.7 |
+| Sustain | 0.39 s held past release (0.78 beat at 120 BPM) | — | ¾ beat |
+| Strum | 20 ms guitar stroke; 22 ms piano chord | 0.20; 0.22 | 0.2 |
+| Articulation | leaps detached by 14 ms; repeated keys lifted 86 ms early (most legato quarter) | 0.48; 0.61 | 0.5 |
+| Shape | melody 12% louder an octave up; 2% a doubled interval; last attack 4% softer; phrase arch | contour 0.62, 0.63, 0.61; swell 0.05 | contour only |
+
+The data cannot set three things. A performance is not its score, so it cannot show which
+steps were written legato; the articulation's step overlap is not measured. Ghost notes,
+slides and mutes have no corpus here and start halfway. And one classical piano corpus is
+one repertoire: these are starting points, not the right amount for every song.
+
+The stages' own constants are set from the same measurement, so that an amount between 0.5 and
+0.7 plays what the pianists did rather than an amount past full. Three readings need saying:
+
+* The contour's three terms — pitch against the phrase mean, each interval against the phrase
+  median, and the last attack — are fitted together, with the phrase arch beside them. A phrase
+  often ends low, so its last note is soft partly because of its pitch; the plain ratio of the
+  last attack to the rest (0.90) counted that twice, and with pitch fitted the last attack is
+  only about 4% softer.
+* The bass is read over every chord of two pitches or more, which is what the voicing stage
+  softens: 14% under the top. In chords of three or more it is 19%, below the inner voices.
+* A repeated key's lift grows with the interval, about two thirds of it from sixteenths to half
+  notes, so the median (115 ms, amount 0.82) is the touch of repeats played detached. The stage
+  lifts only written-legato repeats, and is matched to the most legato quarter of each pianist's
+  lifts instead. It still keeps at least half of every written note.
+
+```sh
+uv run tools/eval/performance_stats.py MAESTRO_DIR GUITARSET_DIR --out stats.json
+```
+
+MAESTRO is CC BY-NC-SA 4.0: download both corpora under `target/` and commit only aggregates.
+
 ## Controlled melody listening
 
 A 2026-10-26 local trial
@@ -429,6 +475,8 @@ uv run --python 3.11 --with pytest --with numpy --with scipy --with soundfile py
 uv run --with ruff ruff check tools/eval/music.py tools/eval/learned_models.py
 uv run --with pytest --with mido==1.3.3 pytest tools/eval/test_accompaniment_parts.py
 uv run --with ruff ruff check tools/eval/accompaniment_parts.py
+uv run --with pytest --with mido==1.3.3 --with numpy pytest tools/eval/test_performance_stats.py
+uv run --with ruff ruff check tools/eval/performance_stats.py tools/eval/test_performance_stats.py
 ```
 
 The contract tests require no model download. Real-model comparisons should use

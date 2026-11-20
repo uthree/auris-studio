@@ -32,9 +32,10 @@ show both values. Each drag rewrites the selected clip as one undo step and keep
 and Performance settings.
 
 **Phrasing** groups subdivision, five octave buttons from −2 to +2, and the applicable
-expression sliders. **Takes** groups the editable take number (the seed), **Write It Again**,
-**Another Take**, and **Keep This One**. After editing the chords, use **Write It Again** to
-follow them with the current take. **Keep This One** preserves the notes and removes the
+expression sliders. **Takes** is one row: ◀ steps back to the previous take, the take number (the seed) can be
+clicked to type one, ▶ is **Another Take**, and **Write It Again** rewrites the current take.
+**Keep This One** sits under it. After editing the chords, use **Write It Again** to follow
+them with the current take. **Keep This One** preserves the notes and removes the
 generation controls. These controls edit the selected clip, so different sections on the
 same instrument track can have different settings.
 
@@ -46,11 +47,9 @@ The controls mean:
 | **Octave** | Which register, ±2 from where the preset sits |
 | **Density** | How busy the part is; chords above 75% fill more of the subdivision, reaching every step at 100% |
 | **Syncopation** | How far the figure pulls off the beat, without making it busier |
-| **Gate** | How long each note sounds, as a share of the gap to the next |
 | **Intensity** | How hard it is played |
 | **Dynamics** | How far apart the hardest and softest notes are struck |
 | **Fill** | How much of a bar the snare runs where the kit turns: its last bar, and in a long clip the end of every second phrase — drums only |
-| **Swing** | How late the offbeats are |
 
 Intensity and dynamics are the level and the spread, and they are separate because they are two
 questions: a part can be played hard and flat, or softly with everything in it moving. At 0 the
@@ -63,9 +62,10 @@ The dynamics dial is narrow at the top on purpose: a part's strokes sit within a
 their own level there. That is a band phrasing; wider and the same idea reads as a band that has
 not rehearsed, which is what it was until it was measured across the presets and pulled in.
 
-How *loosely* a clip is played is not a recipe dial at all. The humanise — a timing and velocity
-wander — lives in the clip's **Performance** section along with a swing and a gate of its own,
-because it is how the text is played rather than what it says: the piano roll keeps showing notes
+How a clip is *played* — how loosely, how swung, how much of each note is held — is not a recipe
+dial at all. The humanise, the swing and the gate live in the clip's **Performance** section,
+once each, because they are how the text is played rather than what it says: a generated
+phrase is written straight and legato, and the piano roll keeps showing notes
 on the grid, the wander is turned without rewriting the clip, and a looped clip is loose
 differently on every pass. A generated clip arrives with its part's feel already installed — at
 the top of the dial a pitched note sounds within six milliseconds of where it is written, at
@@ -111,16 +111,14 @@ the middle of the tune. The rate is set beat by beat: quarters at the bottom of 
 round the middle and every step at the top, and between them the beats turn over one at a time,
 the weakest first — a little above quarters is long, long, long, short-short.
 
-Only the rows a preset can actually hear are drawn. A kit has no gate, subdivision, octave or
-syncopation — a one-shot ignores its note-off, its pitches are drum numbers rather than notes, and
-where it plays is which groove it plays. Nothing but a kit has a fill, because nothing else has a
-last bar to announce. A pad has no syncopation, because it sounds each chord where the chord is. A
-part on a triplet grid has no swing.
+Only the rows a preset can actually hear are drawn. A kit has no subdivision, octave or
+syncopation — its pitches are drum numbers rather than notes, and where it plays is which groove
+it plays. Nothing but a kit has a fill, because nothing else has a last bar to announce. A pad has
+no syncopation, because it sounds each chord where the chord is.
 
 The subdivision is per part, not per song, so a stab hammering triplets over a straight kit is a
-setting rather than a fight. Swing disappears on a triplet grid, because a grid already sitting
-where swing is trying to push it has nothing left to be pushed — and a drum kit ignores the
-subdivision entirely, since a groove is written in sixteenths and read by index.
+setting rather than a fight. A drum kit ignores the subdivision entirely, since a groove is
+written in sixteenths and read by index.
 
 A chord part picks its figure once for the section and restates it, the way a keyboard player picks
 a feel and keeps it; only the closing bar of a planned phrase can turn it over, and only
@@ -142,8 +140,9 @@ the voices that have somewhere to go, where a comp restrikes every one of them. 
 difference between a chord *changing* and a chord *drifting*, and it is the reason the two presets
 are two presets rather than one with the rhythm turned off.
 
-For short, repeated piano chords, choose **Chords**, set density near 100%, subdivision to
-1/16, and gate near 30%. Density controls the attacks; gate controls their length. Lower
+For short, repeated piano chords, choose **Chords**, set density near 100% and subdivision to
+1/16, then turn the Performance gate near 30%. Density controls the attacks; the gate controls
+their length. Lower
 the Performance humanize amount for tighter timing. Changing presets preserves dials that
 were deliberately adjusted.
 

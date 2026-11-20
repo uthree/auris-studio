@@ -1483,6 +1483,9 @@ pub struct AurisApp {
     /// [`crate::ui::project_chooser::WelcomeTransition`].
     pub(crate) welcome_transition: Option<crate::ui::project_chooser::WelcomeTransition>,
     pub(crate) song_workshop: Option<crate::ui::song_workshop::SongWorkshop>,
+    /// The reference editor this project's realtime audio and MIDI keyboards are lent to while
+    /// it records; see `ui::agent_chat::midi_record`.
+    pub(crate) lent_audio: Option<gpui::WeakEntity<AurisApp>>,
     pub(crate) attachment_preview: Option<crate::ui::attachment_preview::AttachmentPreview>,
     pub(crate) inline_attachments: Vec<crate::ui::attachment_preview::AttachmentPreview>,
     pub(crate) project_window: Option<gpui::WindowId>,
@@ -1534,6 +1537,8 @@ pub struct AurisApp {
     pub(crate) score_layer: ScoreLayer,
     pub(crate) score_preview: Option<ScorePreview>,
     pub(crate) performance_details: [bool; 4],
+    /// Techniques added to a clip from the performance section's menu, drawn even at zero.
+    pub(crate) performance_added: Vec<(ClipId, crate::ui::techniques::Technique)>,
     pub(crate) drag: Option<Drag>,
     /// Where each panel is docked, which of them are showing, and how large each dock is.
     pub(crate) panels: PanelLayout,
@@ -2042,8 +2047,13 @@ impl AurisApp {
                 .detach();
         }
         let mut session = Session::new(if reference {
+            // Able to hold the hardware, though it opens asleep and stays so until it records:
+            // the project it belongs to lends it the output and the keyboards for a take.
             SessionOptions {
                 shipped_dictionary: !cfg!(test),
+                audio: !cfg!(test),
+                audio_suspended: true,
+                audio_preferences: settings.audio.clone(),
                 ..SessionOptions::headless()
             }
         } else {
@@ -2159,6 +2169,7 @@ impl AurisApp {
             project_chooser: None,
             welcome_transition: None,
             song_workshop: None,
+            lent_audio: None,
             attachment_preview: None,
             inline_attachments: Vec::new(),
             project_window: None,
@@ -2186,6 +2197,7 @@ impl AurisApp {
             score_layer: ScoreLayer::default(),
             score_preview: None,
             performance_details: [false; 4],
+            performance_added: Vec::new(),
             drag: None,
             panels: PanelLayout::load(),
             status,
@@ -2952,7 +2964,10 @@ impl AurisApp {
     /// the same one the typing keyboard plays; the session lets a running take keep the keyboard
     /// on the track it is writing.
     pub(crate) fn poll_midi_input(&mut self, cx: &mut Context<Self>) {
-        let listening = !cfg!(test) && self.settings.midi.enabled && self.listens_to_midi(cx);
+        let listening = !cfg!(test)
+            && self.settings.midi.enabled
+            && self.lent_audio.is_none()
+            && self.listens_to_midi(cx);
         self.session.set_midi_input(listening);
         if !listening {
             return;
