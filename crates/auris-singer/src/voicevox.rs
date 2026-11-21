@@ -28,6 +28,13 @@ const NAME: &str = "VOICEVOX";
 /// Gives consonants room before a first-beat note and the decoder context at both boundaries.
 const BOUNDARY_SECONDS: f64 = 1.0;
 const WAV_HEADER_ALLOWANCE: usize = 64 * 1024;
+/// Rest kept on each side of a phrase that is sung on its own. A rest of twice this length
+/// separates two phrases, so neither one's request contains the other's notes.
+const PHRASE_MARGIN_SECONDS: f64 = 0.5;
+/// Ramp at a phrase's inner edges, so a decoder's noise floor cannot click against silence.
+const PHRASE_FADE_SECONDS: f64 = 0.01;
+/// Rendered requests kept for reuse, in seconds of the voice's own audio.
+const CACHE_SECONDS: f64 = 15.0 * 60.0;
 
 pub(crate) fn validate_lyrics(score: &SingerScore) -> Result<(), SingError> {
     padded_score(score, 2).map(|_| ())
@@ -535,9 +542,108 @@ pub(crate) struct VoicevoxBackend {
     path: PathBuf,
     acceleration: Acceleration,
     automatic_access_safe: bool,
+    cache: RenderCache,
+}
+
+/// Engine answers kept per request, so an edit re-sings only the phrases it touched.
+///
+/// A request is reused only for an input equal in every frame, not merely in hash. The Engine
+/// is identified by what it declares about itself; when that changes the cache is emptied, so
+/// an updated model is never reported for audio an older one sang.
+#[derive(Default)]
+struct RenderCache {
+    engine: Option<Value>,
+    entries: Vec<CachedRequest>,
+    clock: u64,
+}
+
+struct CachedRequest {
+    hash: u64,
+    speaker: u32,
+    frames: SingerFrames,
+    score: SingerScore,
+    samples: Vec<f32>,
+    pitch: Vec<f64>,
+    used: u64,
+}
+
+fn request_hash(speaker: u32, frames: &SingerFrames, score: &SingerScore) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    speaker.hash(&mut hasher);
+    frames.hop_seconds.to_bits().hash(&mut hasher);
+    frames.inventory.hash(&mut hasher);
+    frames.phonemes.hash(&mut hasher);
+    for value in frames.f0_hz.iter().chain(&frames.energy) {
+        value.to_bits().hash(&mut hasher);
+    }
+    for note in &score.notes {
+        (note.key, note.frame_length, &note.lyric).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+impl RenderCache {
+    fn get(
+        &mut self,
+        hash: u64,
+        speaker: u32,
+        frames: &SingerFrames,
+        score: &SingerScore,
+    ) -> Option<(Vec<f32>, Vec<f64>)> {
+        self.clock += 1;
+        let entry = self.entries.iter_mut().find(|entry| {
+            entry.hash == hash
+                && entry.speaker == speaker
+                && entry.score == *score
+                && entry.frames == *frames
+        })?;
+        entry.used = self.clock;
+        Some((entry.samples.clone(), entry.pitch.clone()))
+    }
+
+    fn insert(&mut self, entry: CachedRequest, limit: usize) {
+        if entry.samples.len() > limit {
+            return;
+        }
+        self.clock += 1;
+        self.entries.push(CachedRequest {
+            used: self.clock,
+            ..entry
+        });
+        let mut held: usize = self.entries.iter().map(|entry| entry.samples.len()).sum();
+        while held > limit {
+            let Some(oldest) = (0..self.entries.len()).min_by_key(|&at| self.entries[at].used)
+            else {
+                break;
+            };
+            held -= self.entries.swap_remove(oldest).samples.len();
+        }
+    }
 }
 
 impl VoicevoxBackend {
+    /// What the Engine declares about itself: version, manifest and the singers it serves.
+    fn engine_declaration(&self) -> Value {
+        json!([
+            self.provenance_metadata("/version"),
+            self.provenance_metadata("/engine_manifest"),
+            self.provenance_metadata("/singers"),
+        ])
+    }
+
+    /// Empties the cache if the Engine is no longer the one that filled it.
+    fn check_cached_engine(&mut self) {
+        if self.cache.entries.is_empty() {
+            return;
+        }
+        let engine = self.engine_declaration();
+        if self.cache.engine.as_ref() != Some(&engine) {
+            self.cache.entries.clear();
+        }
+        self.cache.engine = Some(engine);
+    }
+
     /// Observe bounded optional server metadata after synthesis; unavailable fields stay unknown.
     fn provenance_metadata(&self, endpoint: &str) -> Value {
         let metadata = (|| -> Option<Value> {
@@ -656,6 +762,7 @@ impl VoicevoxBackend {
             path: path.to_path_buf(),
             acceleration,
             automatic_access_safe,
+            cache: RenderCache::default(),
         })
     }
 
@@ -960,6 +1067,8 @@ impl SingingBackend for VoicevoxBackend {
         let version = self.provenance_metadata("/version");
         let manifest = self.provenance_metadata("/engine_manifest");
         let singers = self.provenance_metadata("/singers");
+        // The declaration just observed names the Engine the cache now holds answers from.
+        self.cache.engine = Some(json!([version, manifest, singers]));
         let mut identity = SynthesisIdentity {
             backend: "voicevox".into(),
             engine: SynthesisComponent {
@@ -1097,16 +1206,105 @@ impl SingingBackend for VoicevoxBackend {
         }
         let hop = self.info.hop_length as usize;
         let count = checked_sample_count(frames.len(), hop, "VOICEVOX rendered audio")?;
-        let plan = chunks::ChunkPlan::new(score, frames.len(), self.config.frame_rate);
-        if plan.cores.len() == 1 {
-            return self.sing_chunk(frames, score, speaker, seed, progress);
-        }
-        let total = plan.cores.len() * 2;
-        if !progress(0, total) {
+        let frame_rate = self.config.frame_rate;
+        let context = (frame_rate * BOUNDARY_SECONDS).ceil() as usize;
+        // Normalize on the complete score so mora splitting, prolonged vowels and
+        // lyric-error indices cannot depend on where a phrase or window starts.
+        let normalized = padded_score(score, context as u32)?;
+        let margin = (frame_rate * PHRASE_MARGIN_SECONDS).ceil() as usize;
+        let spans = chunks::phrase_spans(&normalized, context, frames.len(), margin);
+        // A single phrase filling the timeline sings exactly as an unsplit score always has.
+        let whole = match spans.as_slice() {
+            [] => true,
+            [only] => *only == (0..frames.len()),
+            _ => false,
+        };
+        let phrases: Vec<(std::ops::Range<usize>, SingerFrames, SingerScore)> = if whole {
+            vec![(0..frames.len(), frames.clone(), score.clone())]
+        } else {
+            spans
+                .into_iter()
+                .map(|span| {
+                    let local_score =
+                        chunks::slice_score(&normalized, span.start + context..span.end + context);
+                    let local_frames = chunks::slice_frames(frames, span.clone());
+                    (span, local_frames, local_score)
+                })
+                .collect()
+        };
+        let plans: Vec<chunks::ChunkPlan> = phrases
+            .iter()
+            .map(|(span, _, score)| chunks::ChunkPlan::new(score, span.len(), frame_rate))
+            .collect();
+        let total: usize = plans.iter().map(|plan| plan.cores.len() * 2).sum();
+        if total > 2 && !progress(0, total) {
             return Err(SingError::Cancelled);
         }
-        // Normalize on the complete score so mora splitting, prolonged vowels and
-        // lyric-error indices cannot depend on where an inference window starts.
+        self.check_cached_engine();
+        let mut samples = crate::limits::try_zeroed_f32(count, "VOICEVOX rendered audio")?;
+        let mut pitch = Vec::new();
+        pitch
+            .try_reserve_exact(frames.len())
+            .map_err(|_| SingError::Allocation {
+                resource: "VOICEVOX displayed pitch",
+            })?;
+        pitch.resize(frames.len(), 0.0);
+        let fade = ((f64::from(self.info.sample_rate) * PHRASE_FADE_SECONDS) as usize).max(1);
+        let mut done = 0;
+        for ((span, local_frames, local_score), plan) in phrases.iter().zip(&plans) {
+            let (audio, hz) = self.sing_phrase(
+                local_frames,
+                local_score,
+                plan,
+                speaker,
+                seed,
+                &mut |step| progress(done + step, total),
+            )?;
+            let output = &mut samples[span.start * hop..span.end * hop];
+            output.copy_from_slice(&audio);
+            if span.start > 0 {
+                let ramp = fade.min(output.len());
+                for (index, sample) in output[..ramp].iter_mut().enumerate() {
+                    *sample *= index as f32 / ramp as f32;
+                }
+            }
+            if span.end < frames.len() {
+                let ramp = fade.min(output.len());
+                let length = output.len();
+                for (index, sample) in output[length - ramp..].iter_mut().enumerate() {
+                    *sample *= (ramp - 1 - index) as f32 / ramp as f32;
+                }
+            }
+            pitch[span.clone()].copy_from_slice(&hz);
+            done += plan.cores.len() * 2;
+        }
+        Ok(crate::SingingRender {
+            provenance: None,
+            samples,
+            backend_pitch: Some(auris_core::SingerPitch {
+                hop_seconds: frames.hop_seconds,
+                hz: pitch,
+            }),
+        })
+    }
+}
+
+impl VoicevoxBackend {
+    /// Sings one phrase, in bounded windows with real context when it is too long for one.
+    fn sing_phrase(
+        &mut self,
+        frames: &SingerFrames,
+        score: &SingerScore,
+        plan: &chunks::ChunkPlan,
+        speaker: u32,
+        seed: u64,
+        progress: &mut dyn FnMut(usize) -> bool,
+    ) -> Result<(Vec<f32>, Vec<f64>), SingError> {
+        if plan.cores.len() == 1 {
+            return self.sing_cached(frames, score, speaker, seed, progress);
+        }
+        let hop = self.info.hop_length as usize;
+        let count = checked_sample_count(frames.len(), hop, "VOICEVOX rendered audio")?;
         let normalized = padded_score(score, plan.context as u32)?;
         let mut samples = crate::limits::try_zeroed_f32(count, "VOICEVOX rendered audio")?;
         let mut pitch = Vec::new();
@@ -1122,39 +1320,62 @@ impl SingingBackend for VoicevoxBackend {
                 window.start + plan.context..window.end + plan.context,
             );
             let local_frames = chunks::slice_frames(frames, window.clone());
-            let render = self.sing_chunk(
-                &local_frames,
-                &local_score,
-                speaker,
-                seed,
-                &mut |done, _| progress(2 * index + done, total),
-            )?;
+            let (audio, local_pitch) =
+                self.sing_cached(&local_frames, &local_score, speaker, seed, &mut |done| {
+                    progress(2 * index + done)
+                })?;
             let local_start = core.start - window.start;
             let keep_end = (core.end + plan.crossfade).min(frames.len());
-            let incoming = &render.samples[local_start * hop..(keep_end - window.start) * hop];
+            let incoming = &audio[local_start * hop..(keep_end - window.start) * hop];
             let overlap = if index == 0 { 0 } else { plan.crossfade * hop };
             chunks::stitch_audio(
                 &mut samples[core.start * hop..keep_end * hop],
                 incoming,
                 overlap,
             );
-            let local_pitch = render.backend_pitch.ok_or_else(|| {
-                SingError::Inference("VOICEVOX chunk did not return its pitch".into())
-            })?;
-            pitch.extend_from_slice(&local_pitch.hz[local_start..local_start + core.len()]);
+            pitch.extend_from_slice(&local_pitch[local_start..local_start + core.len()]);
         }
-        Ok(crate::SingingRender {
-            provenance: None,
-            samples,
-            backend_pitch: Some(auris_core::SingerPitch {
-                hop_seconds: frames.hop_seconds,
-                hz: pitch,
-            }),
-        })
+        Ok((samples, pitch))
     }
-}
 
-impl VoicevoxBackend {
+    /// One Engine request, answered from the cache when the same input was sung before.
+    fn sing_cached(
+        &mut self,
+        frames: &SingerFrames,
+        score: &SingerScore,
+        speaker: u32,
+        seed: u64,
+        progress: &mut dyn FnMut(usize) -> bool,
+    ) -> Result<(Vec<f32>, Vec<f64>), SingError> {
+        let hash = request_hash(speaker, frames, score);
+        if let Some(cached) = self.cache.get(hash, speaker, frames, score) {
+            if !progress(2) {
+                return Err(SingError::Cancelled);
+            }
+            return Ok(cached);
+        }
+        let render =
+            self.sing_chunk(frames, score, speaker, seed, &mut |done, _| progress(done))?;
+        let pitch = render
+            .backend_pitch
+            .ok_or_else(|| SingError::Inference("VOICEVOX chunk did not return its pitch".into()))?
+            .hz;
+        let limit = (f64::from(self.info.sample_rate) * CACHE_SECONDS) as usize;
+        self.cache.insert(
+            CachedRequest {
+                hash,
+                speaker,
+                frames: frames.clone(),
+                score: score.clone(),
+                samples: render.samples.clone(),
+                pitch: pitch.clone(),
+                used: 0,
+            },
+            limit,
+        );
+        Ok((render.samples, pitch))
+    }
+
     fn sing_chunk(
         &mut self,
         frames: &SingerFrames,
@@ -1549,22 +1770,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
-            for revision in ["model-a", "model-b"] {
-                let (mut query, _) = listener.accept().unwrap();
-                let request = read_request(&mut query);
-                assert!(request.starts_with("POST /sing_frame_audio_query"));
-                let frames: usize = request_body(&request)["notes"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|n| n["frame_length"].as_u64().unwrap() as usize)
-                    .sum();
-                answer(&mut query, "application/json", json!({"f0":vec![440.0;frames],"volume":vec![1.0;frames],"phonemes":[{"phoneme":"a","frame_length":frames}],"outputSamplingRate":24000,"outputStereo":false}).to_string().as_bytes());
-                let (mut synthesis, _) = listener.accept().unwrap();
-                assert!(
-                    read_request(&mut synthesis).starts_with("POST /frame_synthesis?speaker=3001")
-                );
-                answer(&mut synthesis, "audio/wav", &wav(&vec![8192; frames * 240]));
+            let declare = |revision: &str| {
                 for (endpoint, body) in [
                     ("/version", json!("engine-1")),
                     (
@@ -1580,6 +1786,28 @@ mod tests {
                     assert!(read_request(&mut stream).starts_with(&format!("GET {endpoint} ")));
                     answer(&mut stream, "application/json", body.to_string().as_bytes());
                 }
+            };
+            for revision in ["model-a", "model-b"] {
+                if revision == "model-b" {
+                    // The cache holds model-a's answer; the changed declaration must empty it.
+                    declare(revision);
+                }
+                let (mut query, _) = listener.accept().unwrap();
+                let request = read_request(&mut query);
+                assert!(request.starts_with("POST /sing_frame_audio_query"));
+                let frames: usize = request_body(&request)["notes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|n| n["frame_length"].as_u64().unwrap() as usize)
+                    .sum();
+                answer(&mut query, "application/json", json!({"f0":vec![440.0;frames],"volume":vec![1.0;frames],"phonemes":[{"phoneme":"a","frame_length":frames}],"outputSamplingRate":24000,"outputStereo":false}).to_string().as_bytes());
+                let (mut synthesis, _) = listener.accept().unwrap();
+                assert!(
+                    read_request(&mut synthesis).starts_with("POST /frame_synthesis?speaker=3001")
+                );
+                answer(&mut synthesis, "audio/wav", &wav(&vec![8192; frames * 240]));
+                declare(revision);
             }
         });
         let directory = tempfile::tempdir().unwrap();
@@ -1831,6 +2059,141 @@ mod tests {
             Err(SingError::InvalidLyric { event: 1, .. })
         ));
         std::fs::remove_file(path).unwrap();
+    }
+
+    /// An Engine that answers every request generically and logs each request line.
+    fn logging_engine() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let written = std::sync::Arc::clone(&log);
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                let request = read_request(&mut stream);
+                written
+                    .lock()
+                    .unwrap()
+                    .push(request.lines().next().unwrap().to_string());
+                if request.starts_with("GET ") {
+                    answer(&mut stream, "application/json", b"\"engine\"");
+                    continue;
+                }
+                let body = request_body(&request);
+                if request.starts_with("POST /sing_frame_audio_query?") {
+                    let count: usize = body["notes"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|note| note["frame_length"].as_u64().unwrap() as usize)
+                        .sum();
+                    let query = json!({"f0": vec![440.0; count], "volume": vec![1.0; count],
+                        "phonemes": [{"phoneme": "a", "frame_length": count}]});
+                    answer(
+                        &mut stream,
+                        "application/json",
+                        &serde_json::to_vec(&query).unwrap(),
+                    );
+                } else {
+                    let count = body["f0"].as_array().unwrap().len();
+                    answer(&mut stream, "audio/wav", &wav(&vec![16_384; count * 256]));
+                }
+            }
+        });
+        (format!("http://{address}"), log)
+    }
+
+    fn posts(log: &std::sync::Mutex<Vec<String>>) -> usize {
+        let mut log = log.lock().unwrap();
+        let count = log.iter().filter(|line| line.starts_with("POST ")).count();
+        log.clear();
+        count
+    }
+
+    #[test]
+    fn an_edit_re_sings_only_the_phrase_it_touched() {
+        let (url, log) = logging_engine();
+        let path = temp_connection();
+        std::fs::write(
+            &path,
+            connection(
+                &url,
+                24_000,
+                93.75,
+                json!([{"name":"Normal", "query_style_id":6000, "decode_style_id":3001}]),
+            )
+            .to_string(),
+        )
+        .unwrap();
+        // Through the model, which records the Engine's declaration as every real render does.
+        let mut model = crate::VoiceModel::load(&path, Acceleration::Cpu).unwrap();
+        std::fs::remove_file(path).unwrap();
+        // Two phrases with three hundred frames (3.2 s) of rest between them.
+        let mut score = test_score(&[(100, ""), (200, "ア"), (300, ""), (200, "イ"), (100, "")]);
+        let voiced = |score: &SingerScore| {
+            let mut f0 = Vec::new();
+            for note in &score.notes {
+                let hz = note
+                    .key
+                    .map_or(0.0, |key| 440.0 * 2f32.powf((key as f32 - 69.0) / 12.0));
+                f0.extend(std::iter::repeat_n(hz, note.frame_length as usize));
+            }
+            SingerFrames {
+                hop_seconds: 256.0 / 24_000.0,
+                inventory: vec!["<sil>".into(), "a".into()],
+                phonemes: vec![1; f0.len()],
+                energy: f0
+                    .iter()
+                    .map(|hz| if *hz > 0.0 { 1.0 } else { 0.0 })
+                    .collect(),
+                f0_hz: f0,
+            }
+        };
+        let mut sing = |score: &SingerScore| {
+            model
+                .sing_render_with(&voiced(score), score, 0, 0, |_, _| true)
+                .unwrap()
+        };
+
+        let first = sing(&score);
+        assert_eq!(posts(&log), 4, "each phrase is one query and one synthesis");
+        let hop = 256;
+        let margin = (93.75 * PHRASE_MARGIN_SECONDS).ceil() as usize;
+        assert_eq!(
+            first.samples[150 * hop],
+            0.5,
+            "a phrase keeps the Engine's audio"
+        );
+        assert_eq!(
+            first.samples[(300 + margin + 10) * hop],
+            0.0,
+            "the rest between phrases, beyond either margin, is silence"
+        );
+        let pitch = first.backend_pitch.as_ref().unwrap();
+        assert_eq!(pitch.hz.len(), 900);
+        assert_eq!(pitch.hz[450], 0.0);
+
+        let again = sing(&score);
+        assert_eq!(posts(&log), 0, "an unchanged score asks the Engine nothing");
+        assert_eq!(again.samples, first.samples);
+
+        score.notes[3].key = Some(62);
+        let edited = sing(&score);
+        assert_eq!(posts(&log), 2, "only the edited phrase is sung again");
+        assert_eq!(
+            edited.samples[..(300 + margin) * hop],
+            first.samples[..(300 + margin) * hop]
+        );
+
+        // Moving the second phrase later leaves both phrases' contents unchanged.
+        score.notes[2].frame_length += 50;
+        score.notes[4].frame_length -= 50;
+        sing(&score);
+        assert_eq!(
+            posts(&log),
+            0,
+            "a phrase moved in time is still the same phrase"
+        );
     }
 
     fn connection(url: &str, sample_rate: u32, frame_rate: f64, styles: Value) -> Value {
