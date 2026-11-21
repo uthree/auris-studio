@@ -101,6 +101,20 @@ meaning across cuts. Saved notes, total duration, expression controls and the di
 pitch timeline keep their original positions. Cancellation is checked between prediction
 and decoding stages and before each window.
 
+## Re-singing after an edit
+
+A rest of at least one second divides a score into phrases, and each phrase is sung on
+its own with half a second of that rest on either side; the rest beyond is silence, ramped
+over ten milliseconds at a phrase's inner edges. A phrase's request then holds its own notes
+and nothing of its neighbours, so the loaded voice keeps every answer the Engine gave, keyed
+by the request's complete input, and sings again only the phrases an edit touched. A phrase
+moved in time without changing tempo is the same request. On a 93-second test song, one
+changed lyric or pitch re-sings in about 1.2 seconds where the whole score took 8.
+
+Reused audio is only ever reused for the Engine that sang it: before a render consults the
+cache, the Engine's version, manifest and singer list are read again, and any change empties
+it. The cache holds at most fifteen minutes of audio, dropping the least recently used.
+
 The optional live regression
 `a_running_voicevox_engine_sings_a_long_score_in_bounded_windows` exercises a score
 longer than two minutes with a sustained syllable, multi-mora lyrics and pauses.
