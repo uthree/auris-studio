@@ -184,9 +184,10 @@ mod tests {
                 > piano.notes.iter().map(Note::end).max().unwrap()
         );
         let singer = &imported.tracks[1].kind.as_singer().unwrap().clips[0];
-        assert_eq!(singer.name, "桜、咲く！");
-        assert_eq!(singer.notes[0].lyric, "桜、咲く！");
-        assert_eq!(singer.notes[1].lyric, "+");
+        // Each note is labelled with the kana it sings; the written text stays in provenance.
+        assert_eq!(singer.name, "さくらさく");
+        assert_eq!(singer.notes[0].lyric, "さくら");
+        assert_eq!(singer.notes[1].lyric, "さく");
         assert_eq!(singer.notes[1].phonemes, ["s", "a", "k", "ɯ"]);
         let provenance: serde_json::Value =
             serde_json::from_str(imported.transcription_provenance.values().next().unwrap())

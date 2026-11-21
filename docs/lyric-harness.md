@@ -145,9 +145,8 @@ returned by `read_notes`:
 
 Pass nonempty `comparisons`. Live comparisons read stored phonemes
 and verify pitch, relative onset, duration and ornaments as well as mora/closure positions.
-Selected indices must form a contiguous, nonoverlapping phrase. Original phrase labels
-followed by `+` are supported when stored phonemes establish one mora on every note, as
-`write_lyrics` does for kanji. Empty lyrics or missing/multi-mora phonemes are reported as
+Selected indices must form a contiguous, nonoverlapping phrase. A note whose label does not
+spell it is read from its stored phonemes when they establish one mora. Empty lyrics or missing/multi-mora phonemes are reported as
 incomplete. Every diagnosis returns the current document revision.
 
 Saved-file tools add `project` with a project ID or path. It is optional for `analyze_lyrics`,
@@ -189,10 +188,8 @@ candidate passes, `applied` is false and all candidate diagnostics remain availa
 Application writes lyrics and per-mora phonemes only in the selected target notes, clearing
 duration pins only where the words or pronunciation changed. Pitches, timing, velocity,
 ornaments and every other note are retained. One Undo reverses the edit; preview and
-no-op application add no history. Kana-only candidates use per-mora note labels. Non-kana
-text or a candidate with an explicit reading retains the original text on the first note
-and uses `+` on the remaining notes, matching `write_lyrics`. Every note retains its own
-pronunciation, so original spelling and an explicit reading both survive saving.
+no-op application add no history. Every note is labelled with the kana of the mora it
+sings, matching `write_lyrics`, and keeps its own pronunciation.
 
 The live agent enforces at most three distinct alternatives per target/revision in a user
 turn across tool calls and transports. Reusing a previewed candidate for application does

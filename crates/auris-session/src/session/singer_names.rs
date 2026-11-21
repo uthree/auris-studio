@@ -1,4 +1,4 @@
-//! Singer clip titles are the complete written score, never its pronunciation.
+//! Singer clip titles are the notes' lyrics in sung order: one kana mora per note.
 
 use super::Session;
 use auris_core::{ClipId, MidiClip};
@@ -8,9 +8,7 @@ fn lyric_name(clip: &MidiClip) -> String {
     notes.sort_by_key(|(index, note)| (note.start, *index));
     notes
         .into_iter()
-        .filter_map(|(_, note)| {
-            (note.lyric != super::singer::LYRIC_CONTINUATION).then_some(note.lyric.as_str())
-        })
+        .map(|(_, note)| note.lyric.as_str())
         .collect()
 }
 
@@ -42,7 +40,7 @@ mod tests {
     use crate::prelude::{Note, Ticks};
 
     #[test]
-    fn written_kanji_survive_note_edits_split_and_history_without_using_phonemes() {
+    fn clip_names_follow_the_notes_lyrics_through_split_and_history() {
         let mut session = super::super::fixtures::session();
         let track = session.add_singer_track("Singer");
         let clip = session
@@ -50,30 +48,27 @@ mod tests {
             .unwrap();
         let notes = vec![
             Note {
-                lyric: "桜、咲いた！".into(),
+                lyric: "さ".into(),
                 phonemes: vec!["s".into(), "a".into()],
                 ..Note::new(60, Ticks::ZERO, Ticks(480))
             },
             Note {
-                lyric: "+".into(),
-                phonemes: vec!["k".into(), "u".into()],
+                lyric: "く".into(),
+                phonemes: vec!["k".into(), "ɯ".into()],
                 ..Note::new(62, Ticks(480), Ticks(480))
             },
         ];
         session.replace_notes(clip, notes.clone()).unwrap();
-        assert_eq!(session.midi_clip(clip).unwrap().name, "桜、咲いた！");
+        assert_eq!(session.midi_clip(clip).unwrap().name, "さく");
         assert_eq!(session.midi_clip(clip).unwrap().notes, notes);
         let before = session.project().clone();
         let right = session.split_clip(clip, Ticks(480)).unwrap();
-        assert_eq!(session.midi_clip(right).unwrap().name, "桜、咲いた！");
-        assert_eq!(
-            session.midi_clip(right).unwrap().notes[0].phonemes,
-            notes[1].phonemes
-        );
+        assert_eq!(session.midi_clip(clip).unwrap().name, "さ");
+        assert_eq!(session.midi_clip(right).unwrap().name, "く");
         session.undo();
         assert_eq!(session.project(), &before);
         session.redo();
-        assert_eq!(session.midi_clip(right).unwrap().name, "桜、咲いた！");
+        assert_eq!(session.midi_clip(right).unwrap().name, "く");
         session.remove_notes(right, &[0]).unwrap();
         assert_eq!(session.midi_clip(right).unwrap().name, "");
     }

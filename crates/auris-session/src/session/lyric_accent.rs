@@ -33,7 +33,6 @@
 
 use super::Session;
 use super::lyric_lines::join_word;
-use super::singer::LYRIC_CONTINUATION;
 use auris_core::time::{TICKS_PER_QUARTER, Ticks};
 use auris_core::{Project, TrackId, loop_passes};
 use auris_vocal::kana::phonemes_to_kana;
@@ -468,12 +467,7 @@ fn measure_line(
     let mut kana = String::new();
     let mut accent_notes = Vec::with_capacity(notes.len());
     for note in notes {
-        let word = if note.lyric == LYRIC_CONTINUATION {
-            ""
-        } else {
-            note.lyric.as_str()
-        };
-        join_word(&mut text, word);
+        join_word(&mut text, &note.lyric);
         let spelled = phonemes_to_kana(&note.phonemes);
         if let Some(spelled) = &spelled {
             kana.push_str(spelled);

@@ -191,9 +191,9 @@ tick after the terminal control, retaining pedal/control tails after note-off.
 Lyric spans identify ordered, nonoverlapping source notes and their exact outer
 time bounds. `written`, optional `reading`, per-note IPA `phonemes`, confidence
 and recognizer identity stay distinct in persisted provenance. Lyric parts create
-singer tracks with a guide voice, preserving the complete written lyric on the
-first addressed note and `+` on continuations. Supplied IPA is retained per note;
-no reading or phoneme text replaces the written lyric. An explicit instrument
+singer tracks with a guide voice, labelling each addressed note with the kana of
+the mora it sings. Supplied IPA is retained per note; the complete written lyric
+stays in provenance. An explicit instrument
 sound assignment or drums cannot also request singer lyrics. Importing control
 or lyric events establishes score semantics, not an instrument's acoustic response.
 

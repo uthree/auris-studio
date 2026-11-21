@@ -434,14 +434,13 @@ fn score_lyric(lyric: &str, phonemes: &[String]) -> String {
         (lyric, phonemes),
         ("は" | "ハ", [w, a]) if w == "w" && a == "a"
     ) || matches!((lyric, phonemes), ("へ" | "ヘ", [e]) if e == "e");
-    if lyric == "+"
-        || lyric.is_empty()
+    if lyric.is_empty()
         || phrase_on_one_mora
         || read_otherwise
         || (lyric != "ー" && crate::kana_phonemes(lyric).is_none())
     {
         crate::kana::phonemes_to_kana(phonemes).unwrap_or_else(|| match lyric {
-            "" | "+" => "ア".to_string(),
+            "" => "ア".to_string(),
             _ => lyric.to_string(),
         })
     } else {

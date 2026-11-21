@@ -5658,4 +5658,29 @@ mod window_tests {
         assert_eq!(sung[0].lyric, "さ");
         assert_eq!(sung[1].lyric, "く");
     }
+
+    /// One note, one mora: a kanji phrase laid across notes leaves each note its own kana, so
+    /// the lyric sheet on any of them opens on what that note sings — never on a marker.
+    #[gpui::test]
+    fn a_kanji_phrase_leaves_every_note_its_own_kana_to_edit(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_two_sung_notes(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .write_lyrics_with_reading(clip, &[0, 1], "空", Some("そら"))
+                .expect("the reading fits two notes");
+        });
+        let sung = notes(&app, cx);
+        assert_eq!(sung[0].lyric, "そ");
+        assert_eq!(sung[1].lyric, "ら");
+
+        app.update(cx, |this, cx| {
+            this.open_lyric_prompt(clip, 1);
+            cx.notify();
+        });
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let prompt = this.prompt.as_ref().expect("the lyric sheet is open");
+            assert_eq!(prompt.field().unwrap().content(), "ら");
+        });
+    }
 }

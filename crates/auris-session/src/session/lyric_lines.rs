@@ -13,7 +13,6 @@ use auris_core::{ClipId, TrackId};
 use crate::history::Edit;
 
 use super::Session;
-use super::singer::LYRIC_CONTINUATION;
 
 /// One sung line, as read back off the notes or written by a lyric command.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,7 +111,6 @@ impl Session {
                 let start = clip.start + note.start;
                 let end = start + note.length;
                 let word = note.lyric.trim();
-                let word = if word == LYRIC_CONTINUATION { "" } else { word };
                 let breaks = current
                     .as_ref()
                     .is_some_and(|line| start - line.end >= LINE_BREAK);
@@ -326,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn a_word_held_on_its_first_note_reads_back_whole_and_latin_words_are_spaced() {
+    fn sung_notes_read_back_as_one_line_and_latin_words_are_spaced() {
         let mut line = String::new();
         for word in ["Hello", "world", "、", "君"] {
             join_word(&mut line, word);
@@ -344,11 +342,11 @@ mod tests {
         session.project.midi_clip_mut(clip).unwrap().notes = (0..3)
             .map(|at| {
                 let mut note = Note::new(67, Ticks(at * 480), Ticks(480));
-                note.lyric = if at == 0 { "桜".into() } else { "+".into() };
+                note.lyric = ["さ", "く", "ら"][at as usize].into();
                 note
             })
             .collect();
-        assert_eq!(session.sung_lyric_lines(None)[0].text, "桜");
+        assert_eq!(session.sung_lyric_lines(None)[0].text, "さくら");
     }
 
     #[test]

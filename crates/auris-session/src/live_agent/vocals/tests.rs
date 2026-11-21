@@ -75,7 +75,7 @@ fn written_lyrics_with_explicit_reading_survive_without_a_dictionary() {
         }),
     )
     .unwrap();
-    assert_eq!(response["clip_name"], "月の夜");
+    assert_eq!(response["clip_name"], "つきのよ");
     assert_eq!(
         s.project().lyrics.text_at(Ticks::ZERO),
         Some("月の夜"),
@@ -85,7 +85,7 @@ fn written_lyrics_with_explicit_reading_survive_without_a_dictionary() {
     let notes = &s.midi_clip(clip).unwrap().notes;
     assert_eq!(
         notes.iter().map(|n| n.lyric.as_str()).collect::<Vec<_>>(),
-        ["+", "月の夜", "+", "+"]
+        ["の", "つ", "き", "よ"]
     );
     assert!(notes.iter().all(|n| !n.phonemes.is_empty()));
     let after = s.project().clone();

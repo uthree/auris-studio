@@ -180,7 +180,7 @@ pub use recognition::{
 };
 pub use rhythm::{RhythmGrid, RhythmRow};
 pub use singer::{
-    LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerFramesExportJob,
+    MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerFramesExportJob,
     SingerFramesExportResult, SingerLandingJob, SingerLandingResult, SingerTakeState,
     SingerVoiceInfo, SingerVoiceLoadJob, SingerVoiceLoadResult, SungFrames, take_fingerprint,
 };
