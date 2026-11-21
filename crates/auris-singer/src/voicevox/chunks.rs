@@ -73,6 +73,39 @@ impl ChunkPlan {
     }
 }
 
+/// Frame ranges sung independently because only silence lies within `margin` of each.
+///
+/// `normalized` is the padded score, whose host clock starts `offset` frames in. A rest of at
+/// least `2 * margin` frames separates two phrases; each range keeps `margin` frames of that
+/// rest on either side, clamped to the timeline. What a range holds therefore depends on its
+/// own notes alone, not on where its neighbours are, which is what lets a rendered phrase be
+/// reused after an edit elsewhere. The ranges are ordered and never overlap.
+pub(super) fn phrase_spans(
+    normalized: &SingerScore,
+    offset: usize,
+    count: usize,
+    margin: usize,
+) -> Vec<Range<usize>> {
+    let mut sung: Vec<Range<usize>> = Vec::new();
+    let mut at = 0usize;
+    for note in &normalized.notes {
+        let end = at + note.frame_length as usize;
+        let silent = note.key.is_none() && note.lyric.is_empty();
+        let range = at.saturating_sub(offset).min(count)..end.saturating_sub(offset).min(count);
+        at = end;
+        if silent || range.is_empty() {
+            continue;
+        }
+        match sung.last_mut() {
+            Some(last) if range.start < last.end + 2 * margin => last.end = range.end,
+            _ => sung.push(range),
+        }
+    }
+    sung.into_iter()
+        .map(|range| range.start.saturating_sub(margin)..(range.end + margin).min(count))
+        .collect()
+}
+
 /// Slice an already normalized score. A sustained syllable resumes on its final sound,
 /// rather than singing its initial consonant again in the middle of a held note.
 pub(super) fn slice_score(score: &SingerScore, range: Range<usize>) -> SingerScore {
@@ -324,6 +357,45 @@ mod tests {
             51
         );
         super::super::padded_score(&sliced, 94).unwrap();
+    }
+
+    #[test]
+    fn phrases_split_only_at_rests_twice_the_margin_and_keep_the_margin() {
+        let note = |key: Option<u8>, frame_length: u32| SingerNote {
+            key,
+            frame_length,
+            lyric: if key.is_some() { "ア" } else { "" }.into(),
+        };
+        // Offset 10: the padded score's leading rest holds ten frames before the host clock.
+        let score = SingerScore {
+            notes: vec![
+                note(None, 15),
+                note(Some(60), 20),
+                note(None, 19),
+                note(Some(60), 20),
+                note(None, 20),
+                note(Some(60), 20),
+                note(None, 10),
+            ],
+        };
+        let count = 15 + 20 + 19 + 20 + 20 + 20 + 10 - 2 * 10;
+        // Host frames: sung 5..25, 44..64 and 84..104; rests of 19 and 20 between them.
+        assert_eq!(
+            phrase_spans(&score, 10, count, 10),
+            vec![0..74, 74..104],
+            "a 19-frame rest joins two phrases; a 20-frame rest separates them"
+        );
+        assert!(
+            phrase_spans(
+                &SingerScore {
+                    notes: vec![note(None, 30)]
+                },
+                10,
+                10,
+                5
+            )
+            .is_empty()
+        );
     }
 
     #[test]
