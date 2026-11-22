@@ -1380,6 +1380,11 @@ impl Session {
                     reading.as_deref(),
                 );
                 self.annotate_written_lines(&lines);
+                // The notes are kana, one mora each; the clip is named in the written spelling,
+                // every lyric line it holds, so a verse written line by line names it whole.
+                if let Some(name) = self.written_clip_name(ClipId(clip), &text) {
+                    let _ = self.rename_clip(ClipId(clip), name);
+                }
                 self.end_transaction();
                 Ok(
                     serde_json::json!({"filled":filled,"available":indices.len(),"clip_name":self.midi_clip(ClipId(clip)).map(|clip| &clip.name),

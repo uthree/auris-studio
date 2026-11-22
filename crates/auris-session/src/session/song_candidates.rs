@@ -161,9 +161,22 @@ pub struct SongCandidate {
 }
 
 impl SongCandidate {
-    /// Authored lyrics in song order, read from the singer clips' note text: one phrase per
-    /// clip, in the order the clips start.
+    /// Authored lyrics in song order: the song's lyric lines, which keep the written spelling,
+    /// or where there are none the kana the singer clips' notes sing, one phrase per clip in
+    /// the order the clips start.
     pub fn lyrics(&self) -> String {
+        let lines = &self.project.lyrics;
+        if !lines.is_empty() {
+            return lines
+                .points()
+                .iter()
+                .filter_map(|line| line.text.as_deref())
+                .collect::<Vec<_>>()
+                .join(
+                    "
+",
+                );
+        }
         let mut phrases = std::collections::BTreeSet::new();
         for singer in self
             .project
@@ -174,11 +187,7 @@ impl SongCandidate {
             for clip in singer.clips.iter().filter(|clip| !clip.muted) {
                 let mut notes: Vec<_> = clip.notes.iter().enumerate().collect();
                 notes.sort_by_key(|(index, note)| (note.start, *index));
-                let text: String = notes
-                    .iter()
-                    .map(|(_, note)| note.lyric.as_str())
-                    .filter(|text| *text != super::LYRIC_CONTINUATION)
-                    .collect();
+                let text: String = notes.iter().map(|(_, note)| note.lyric.as_str()).collect();
                 if !text.trim().is_empty() {
                     phrases.insert((clip.start, text.trim().to_owned()));
                 }
@@ -980,15 +989,25 @@ mod tests {
                 .unwrap();
             let clip = session.project.midi_clip_mut(clip).unwrap();
             let mut first = Note::new(60, Ticks::ZERO, Ticks(240));
-            first.lyric = "夜の雨".into();
-            let mut continuation = Note::new(62, Ticks(240), Ticks(240));
-            continuation.lyric = super::super::LYRIC_CONTINUATION.into();
+            first.lyric = "よ".into();
+            let mut second = Note::new(62, Ticks(240), Ticks(240));
+            second.lyric = "る".into();
             let mut last = Note::new(64, Ticks(480), Ticks(240));
-            last.lyric = "、また会おう".into();
-            clip.notes = vec![last, continuation, first];
+            last.lyric = "の".into();
+            clip.notes = vec![last, second, first];
         }
         candidate.project = session.project().clone();
-        assert_eq!(candidate.lyrics(), "夜の雨、また会おう");
+        assert_eq!(
+            candidate.lyrics(),
+            "よるの",
+            "the notes' kana, in sung order"
+        );
+        // The written spelling lives on the lyric lines, and wins where there are any.
+        candidate
+            .project
+            .lyrics
+            .write_line(Ticks::ZERO, Ticks(720), "夜の雨");
+        assert_eq!(candidate.lyrics(), "夜の雨");
     }
 
     fn idea() -> SongIdea {

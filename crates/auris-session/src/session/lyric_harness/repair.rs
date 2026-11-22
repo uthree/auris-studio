@@ -16,23 +16,20 @@ fn musical_slots(notes: &[(usize, &Note)]) -> Vec<serde_json::Value> {
         .collect()
 }
 
-fn note_labels(candidate: &LyricCandidate, moras: &[MoraAnalysis]) -> Vec<String> {
-    let written: String = moras.iter().map(|m| m.text.as_str()).collect();
-    if candidate.reading.is_some()
-        || written != candidate.text.trim()
-        || split_kana_lyric(candidate.text.trim()).is_none()
-    {
-        // Match write_lyrics: retain the original surface on the first note, while each
-        // continuation carries its own explicit pronunciation rather than guessing a reading.
-        std::iter::once(candidate.text.trim().to_string())
-            .chain(std::iter::repeat_n(
-                "+".to_string(),
-                moras.len().saturating_sub(1),
-            ))
-            .collect()
-    } else {
-        moras.iter().map(|m| m.text.clone()).collect()
-    }
+/// One label per note, each the kana of the mora that note sings: one note, one mora, whatever
+/// the candidate was written in. Its written text belongs on the song's lyric lines.
+fn note_labels(moras: &[MoraAnalysis]) -> Vec<String> {
+    moras
+        .iter()
+        .map(|m| {
+            if split_kana_lyric(&m.text).is_some() {
+                m.text.clone()
+            } else {
+                auris_vocal::kana::phonemes_to_kana(&m.phonemes)
+                    .unwrap_or_else(|| m.phonemes.concat())
+            }
+        })
+        .collect()
 }
 
 /// Exact note slots of one phrase in an existing singer clip.
@@ -140,11 +137,7 @@ impl Session {
 
     fn analyze_lyric_span(&self, span: &NoteSpan) -> Result<LyricsAnalysis, String> {
         let notes = self.lyric_span_notes(span)?;
-        let text: String = notes
-            .iter()
-            .filter(|(_, n)| n.lyric != "+")
-            .map(|(_, n)| n.lyric.as_str())
-            .collect();
+        let text: String = notes.iter().map(|(_, n)| n.lyric.as_str()).collect();
         let mut moras = Vec::new();
         let mut error = None;
         for (_, note) in &notes {
@@ -162,14 +155,13 @@ impl Session {
                 break;
             }
             let spelling = if note.lyric == "ー"
-                || (note.lyric != "+"
-                    && split_kana_lyric(&note.lyric)
-                        .is_some_and(|m| m.len() == 1 && m[0].1 == note.phonemes))
+                || split_kana_lyric(&note.lyric)
+                    .is_some_and(|m| m.len() == 1 && m[0].1 == note.phonemes)
             {
                 note.lyric.clone()
             } else {
-                // write_lyrics stores an original kanji phrase on its first note and +
-                // on later notes. Their explicit per-note phonemes establish the slots.
+                // A label that does not spell its note (a hand-written kanji) yields to the
+                // note's phonemes, which establish the slot.
                 auris_vocal::kana::phonemes_to_kana(&note.phonemes).unwrap_or_default()
             };
             moras.push(mora_analysis(
@@ -407,12 +399,7 @@ impl Session {
         let mut applied = false;
         let mut changes = Vec::new();
         let labels = selected
-            .map(|index| {
-                note_labels(
-                    &request.candidates[index],
-                    &reports[index].sections[0].analysis.phrases[0].moras,
-                )
-            })
+            .map(|index| note_labels(&reports[index].sections[0].analysis.phrases[0].moras))
             .unwrap_or_default();
         if let Some(index) = selected {
             for (((index, note), mora), label) in destination
@@ -447,7 +434,6 @@ impl Session {
                     }
                 }
             }
-            self.sync_singer_clip_names();
             applied = true;
         }
         Ok(serde_json::json!({

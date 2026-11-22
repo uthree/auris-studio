@@ -1630,12 +1630,10 @@ impl Session {
     /// the instances it was given — two Surge XTs added over half a second to opening a song.
     pub(super) fn install_library_fonts(&mut self) {
         let dirty = self.dirty;
-        let mut installed_any = false;
         if self.shipped_library {
             for (font, path) in crate::library::installed_fonts() {
-                match self.adopt_font(&path) {
-                    Some(_) => installed_any = true,
-                    None => log::warn!("could not read the shipped {}", font.name),
+                if self.adopt_font(&path).is_none() {
+                    log::warn!("could not read the shipped {}", font.name);
                 }
             }
         }
@@ -1653,16 +1651,12 @@ impl Session {
                                 None,
                             );
                         }
-                        installed_any = true;
                     }
                 }
                 Err(error) => log::warn!("{error}"),
             }
         }
         self.dirty = dirty;
-        if installed_any {
-            self.sync_singer_clip_names();
-        }
     }
 
     /// Reads a library font into the document without recording an edit.

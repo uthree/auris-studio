@@ -167,7 +167,8 @@ Choose a singer voice with list_voices/set_singer_voice and inspect_singer; writ
 a real take. Confirm take_state current before completion. A guide voice or stale take is unfinished.
 Every song with words must carry the song-wide lyrics annotation (video captions and lyric sheets read it,
 never the clips): write_lyrics writes it for the lines it sets; after editing sung notes or
-lyrics any other way, call edit_lyrics from_vocals or write explicit lines in the original spelling. Before
+lyrics any other way, write the lines with edit_lyrics write in the original kanji spelling. Notes carry only
+kana, so edit_lyrics from_vocals can only add kana lines (it keeps lines already written that still fit). Before
 finishing, inspect_project lyrics must cover every sung phrase; a song without it is unfinished.
 Transcription estimates are drafts. Inspect and explicitly accept them; never invent notes from a filename.
 

@@ -120,7 +120,6 @@ pub use workspace::workspace_relative;
 #[cfg(test)]
 mod shared_font_tests;
 mod singer;
-mod singer_names;
 pub mod source_material;
 mod spectrogram;
 mod step_input;
@@ -180,7 +179,7 @@ pub use recognition::{
 };
 pub use rhythm::{RhythmGrid, RhythmRow};
 pub use singer::{
-    LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerFramesExportJob,
+    MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerFramesExportJob,
     SingerFramesExportResult, SingerLandingJob, SingerLandingResult, SingerTakeState,
     SingerVoiceInfo, SingerVoiceLoadJob, SingerVoiceLoadResult, SungFrames, take_fingerprint,
 };
@@ -1802,7 +1801,6 @@ impl Session {
 
     /// Marks the render graph as stale, rebuilding immediately outside a transaction.
     fn invalidate_graph(&mut self) {
-        self.sync_singer_clip_names();
         if self.transaction.is_some() {
             self.needs_rebuild = true;
         } else {
@@ -1993,7 +1991,6 @@ impl Session {
         // is `Session::open`, where a *different* document takes over and could reuse an id for
         // a different plugin, that clears them.
         self.project = project;
-        self.sync_singer_clip_names();
         self.restore_cached_fonts();
         self.armed
             .retain(|arm| self.project.track(arm.track).is_some());

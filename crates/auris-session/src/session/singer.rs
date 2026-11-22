@@ -42,13 +42,6 @@ use super::{Session, lyric_slots};
 const SOKUON_REST: auris_core::time::Ticks =
     auris_core::time::Ticks(auris_core::time::TICKS_PER_QUARTER / 8);
 
-/// The lyric written on every note of a phrase after its first, OpenUTAU's way.
-///
-/// A kanji phrase distributed over notes has no per-note spelling to show — the word is one
-/// thing and the notes are many — so the first note carries the word and the rest carry this,
-/// which anybody who has lyriced a run of notes elsewhere already reads as "still that word".
-pub const LYRIC_CONTINUATION: &str = "+";
-
 /// How long an auditioned note is held, in seconds.
 ///
 /// Long enough to hear the syllable open and settle, short enough that a drag across the
@@ -324,7 +317,6 @@ impl Session {
             // A pin belongs to the phoneme it was placed on; the new word has new ones.
             note.phoneme_seconds.clear();
         }
-        self.sync_singer_clip_names();
         Ok(())
     }
 
@@ -365,8 +357,8 @@ impl Session {
     /// phrase has one. Kana is split by the table, so each note gets its own mora as its lyric —
     /// こんにちは across five notes reads こ ん に ち は. Text the table cannot read goes
     /// through the dictionary as a whole (a word's reading depends on all of it), the phonemes
-    /// are split at each syllabic, and the first note carries the word with
-    /// [`LYRIC_CONTINUATION`] on the rest. Notes past the end of the phrase are left alone —
+    /// are split at each syllabic, and every note is labelled with the kana of the mora it
+    /// sings — one note, one mora, whatever the phrase was written in. Notes past the end of the phrase are left alone —
     /// filling a verse one line at a time is the ordinary use, and a line that cleared the rest
     /// of the verse would make it the only one.
     pub fn write_lyrics(
@@ -380,9 +372,9 @@ impl Session {
 
     /// Write original lyrics with an optional independent kana pronunciation.
     ///
-    /// An explicit reading works without a dictionary. The original text stays on the
-    /// first note with `+` continuations, while phonemes follow the reading one mora per
-    /// note. Invalid readings and insufficient slots fail before recording an edit.
+    /// An explicit reading works without a dictionary. Each note carries the kana of the mora
+    /// it sings, read from the reading; the written text — kanji, punctuation and all — is kept
+    /// on the song's lyric lines, not on the notes. Invalid readings and insufficient slots fail before recording an edit.
     pub fn write_lyrics_with_reading(
         &mut self,
         clip: ClipId,
@@ -407,6 +399,25 @@ impl Session {
         // with their phonemes attached — asking `kana_phonemes` of each mora on its own would
         // lose ー its vowel, which only the mora before it knows.
         let mut portions = self.lyric_portions(text, reading)?;
+        // Kana as typed keeps its script: サクラ labels its notes サ・ク・ラ, not さ・く・ら.
+        let spelt = reading.unwrap_or(text);
+        if !spelt.contains(lyric_slots::NOTE_SEPARATOR) {
+            let spelt: Vec<char> = spelt.chars().filter(|c| !c.is_whitespace()).collect();
+            // The table folds what it reads onto hiragana, so each mora's spelling is cut back
+            // out of the text as typed, character for character.
+            let folded = auris_vocal::split_kana_lyric(&spelt.iter().collect::<String>());
+            if let Some(folded) = folded
+                && folded.len() == portions.len()
+                && folded.iter().map(|(m, _)| m.chars().count()).sum::<usize>() == spelt.len()
+            {
+                let mut at = 0;
+                for ((label, _), (mora, _)) in portions.iter_mut().zip(folded) {
+                    let width = mora.chars().count();
+                    *label = spelt[at..at + width].iter().collect();
+                    at += width;
+                }
+            }
+        }
 
         if portions.len() > order.len() {
             return Err(SessionError::InvalidNotes(format!(
@@ -414,22 +425,6 @@ impl Session {
                 portions.len(),
                 order.len()
             )));
-        }
-        // Kana can stay on individual notes when doing so preserves the exact surface.
-        // Punctuation, spacing, kanji and other graphemes must survive pronunciation parsing.
-        let surface: String = portions
-            .iter()
-            .filter(|(text, _)| text != LYRIC_CONTINUATION)
-            .map(|(text, _)| text.as_str())
-            .collect();
-        if reading.is_some() || surface != text.trim() {
-            for (index, (lyric, _)) in portions.iter_mut().enumerate() {
-                *lyric = if index == 0 {
-                    text.trim().to_owned()
-                } else {
-                    LYRIC_CONTINUATION.to_owned()
-                };
-            }
         }
         let filled = portions.len();
         if filled == 0 {
@@ -480,7 +475,6 @@ impl Session {
                 }
             }
         }
-        self.sync_singer_clip_names();
         Ok(filled)
     }
 
@@ -525,12 +519,14 @@ impl Session {
                 Some(moras) => moras,
                 None => {
                     let phonemes = lyric_phonemes(text, self.japanese.as_ref())?;
+                    // Every note is labelled with the mora it sings; where no kana spells it,
+                    // its phonemes do.
                     phoneme_moras(&phonemes)
                         .into_iter()
-                        .enumerate()
-                        .map(|(at, mora)| match at {
-                            0 => (text.trim().to_string(), mora),
-                            _ => (LYRIC_CONTINUATION.to_string(), mora),
+                        .map(|mora| {
+                            let label = auris_vocal::kana::phonemes_to_kana(&mora)
+                                .unwrap_or_else(|| mora.concat());
+                            (label, mora)
                         })
                         .collect()
                 }
@@ -4358,8 +4354,9 @@ mod tests {
             .unwrap();
         assert_eq!(filled, 9);
         let notes = &session.midi_clip(clip).unwrap().notes;
-        // The spaces are part of the surface, so the phrase is kept whole on its first note.
-        assert_eq!(notes[0].lyric, "きみは そらへ はしる");
+        // One note, one mora: the particle keeps its spelling while it sings *wa*.
+        assert_eq!(notes[0].lyric, "き");
+        assert_eq!(notes[2].lyric, "は");
         assert_eq!(notes[2].phonemes, ["w", "a"]);
         assert_eq!(notes[5].phonemes, ["e"]);
         assert_eq!(notes[6].phonemes, ["h", "a"], "はしる starts a word");
@@ -4407,9 +4404,12 @@ mod tests {
             .unwrap();
         assert_eq!(filled, 4);
         let notes = &session.midi_clip(clip).unwrap().notes;
-        assert_eq!(notes[0].lyric, "さあ一緒に");
+        assert_eq!(
+            notes[0].lyric, "さあ",
+            "each note is labelled with the kana it sings"
+        );
         assert_eq!(notes[0].phonemes, ["s", "a", "a"]);
-        assert_eq!(notes[1].lyric, LYRIC_CONTINUATION);
+        assert_eq!(notes[1].lyric, "いっ");
         assert_eq!(
             notes[1].phonemes,
             ["i"],
@@ -4426,6 +4426,22 @@ mod tests {
     }
 
     #[test]
+    fn every_note_is_labelled_with_its_own_mora_in_the_script_it_was_typed_in() {
+        let (mut session, _, clip) = sung(3);
+        session.write_lyrics(clip, &[0, 1, 2], "サクラ").unwrap();
+        let labels = |session: &Session| -> Vec<String> {
+            let notes = &session.midi_clip(clip).unwrap().notes;
+            notes.iter().map(|n| n.lyric.clone()).collect()
+        };
+        assert_eq!(labels(&session), ["サ", "ク", "ラ"]);
+        // Kanji with a reading: every note sings, and shows, its own mora.
+        session
+            .write_lyrics_with_reading(clip, &[0, 1, 2], "桜", Some("さくら"))
+            .unwrap();
+        assert_eq!(labels(&session), ["さ", "く", "ら"]);
+    }
+
+    #[test]
     fn a_short_phrase_leaves_the_notes_past_it_alone() {
         let (mut session, _, clip) = sung(3);
         session.set_note_lyric(clip, 2, "ら").unwrap();
@@ -4436,20 +4452,15 @@ mod tests {
     }
 
     #[test]
-    fn singer_clip_names_keep_complete_written_lyrics_and_undo() {
-        let (mut session, _, clip) = sung(80);
-        let text = "さくらさいた".repeat(10);
-        session
-            .write_lyrics(clip, &(0..80).collect::<Vec<_>>(), &text)
-            .unwrap();
-        assert_eq!(session.midi_clip(clip).unwrap().name, text);
-        let before = session.project().clone();
-        session.set_note_lyric(clip, 79, "は").unwrap();
-        assert_eq!(session.midi_clip(clip).unwrap().name, format!("{text}は"));
+    fn a_singer_clip_keeps_the_name_it_is_given_through_lyric_edits() {
+        let (mut session, _, clip) = sung(3);
+        session.rename_clip(clip, "桜咲く").unwrap();
+        session.write_lyrics(clip, &[0, 1, 2], "さくら").unwrap();
+        session.set_note_lyric(clip, 2, "は").unwrap();
+        assert_eq!(session.midi_clip(clip).unwrap().name, "桜咲く");
         session.undo();
-        assert_eq!(session.project(), &before);
-        assert!(session.rename_clip(clip, "Verse…").is_err());
-        assert_eq!(session.midi_clip(clip).unwrap().name, text);
+        session.undo();
+        assert_eq!(session.midi_clip(clip).unwrap().name, "桜咲く");
     }
 
     #[test]

@@ -622,7 +622,9 @@ pub mod architecture {
     //! lyrics lane. Song composition writes each phrase there as it writes the vocal, and the
     //! agent's `write_lyrics` annotates the notes it fills in the same undo step, so neither
     //! door can produce a song with words and no lines. `edit_lyrics` writes explicit lines or
-    //! rebuilds them from a singer track ([`Session::annotate_lyrics_from_vocals`](crate::Session::annotate_lyrics_from_vocals));
+    //! rebuilds them from a singer track ([`Session::annotate_lyrics_from_vocals`](crate::Session::annotate_lyrics_from_vocals)),
+    //! which can only spell kana — the notes carry nothing else — and so keeps a line already
+    //! written over a sung line while it still reads to the moras sung there;
     //! nothing rewrites the annotation behind a person's back, and editing it never moves a note.
     //! Comments are the source-code habit brought to a score: text pinned to a place that
     //! nothing plays. A track holds them in song time along its lane and a note clip in its own
@@ -1986,8 +1988,9 @@ pub mod composition {
     //!
     //! [`Session::write_lyrics_with_reading`](crate::Session::write_lyrics_with_reading) accepts
     //! written lyrics and an independent kana pronunciation, including without a dictionary.
-    //! The written spelling stays on the first note with `+` continuations; phonemes carry
-    //! pronunciation. Workshop cards read that written score rather than the kana reading.
+    //! One note sings one mora, and its lyric is that mora in kana; the written spelling —
+    //! kanji, punctuation and all — is kept on the song's lyric lines, which workshop cards
+    //! read rather than the notes.
     //! Kana spells a long o as おう, which the table sings as spelt; where a dictionary reads
     //! the written text to the same moras and hears that vowel held, the held vowel is sung —
     //! 両手 read りょうて sings *ryo-o-te* — and any other difference keeps the reading as it is.
@@ -2038,8 +2041,7 @@ pub mod composition {
     //! [`Session::repair_lyrics`](crate::Session::repair_lyrics) checks up to three alternatives
     //! against an immutable note-slot/closure template, literal keywords and a document revision.
     //! A preview changes no history; application writes only a passing candidate's lyrics
-    //! and phonemes, retaining original non-kana text or explicitly read text on the first note
-    //! with `+` continuation labels. It clears obsolete timing pins on changed notes as one Undo step. Every other
+    //! and phonemes, labelling each note with the kana of the mora it sings. It clears obsolete timing pins on changed notes as one Undo step. Every other
     //! authored field is retained. A structural pass does not establish semantic or artistic
     //! quality; the agent reviews meaning and rechecks related phrases before synthesizing a take.
     //! The live agent's per-user-turn budget retains the template and keywords across previews
@@ -2457,13 +2459,12 @@ pub mod singing {
     //! writes both fields; [`Session::set_note_phonemes`](crate::Session::set_note_phonemes)
     //! writes the phonemes alone and leaves the word as spelt.
     //!
-    //! Singer clip names contain the complete written lyrics in note-onset order, excluding
-    //! `+` continuation markers. They are derived by the session without shortening or using
-    //! phonemes. Lyric writing retains the original text; when mora labels cannot retain
-    //! its exact spelling, the first note carries the original text and the rest carry `+`,
-    //! with pronunciation still pinned separately on every note. A split through a continuation
-    //! carries the written word into the new clip. Lyric writing rejects insufficient note slots
-    //! before recording an edit, so neither the score nor its name silently loses the tail.
+    //! One note sings one mora, and its lyric is that mora in kana; the written spelling of a
+    //! phrase, kanji and punctuation included, is kept on the song's lyric lines rather than on
+    //! any note. A singer clip's name is an ordinary name nothing overwrites. The agent's
+    //! `write_lyrics` names the clip after the lyric lines that start inside it, so a song
+    //! written by an agent reads in kanji in the arrangement. Lyric writing rejects insufficient
+    //! note slots before recording an edit, so the score never silently loses the tail.
     //!
     //! Which corrections reach the sound is a backend capability, exposed through
     //! [`Session::singer_capabilities`](crate::Session::singer_capabilities) and

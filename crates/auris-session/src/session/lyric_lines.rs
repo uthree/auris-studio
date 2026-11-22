@@ -13,7 +13,6 @@ use auris_core::{ClipId, TrackId};
 use crate::history::Edit;
 
 use super::Session;
-use super::singer::LYRIC_CONTINUATION;
 
 /// One sung line, as read back off the notes or written by a lyric command.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,7 +111,6 @@ impl Session {
                 let start = clip.start + note.start;
                 let end = start + note.length;
                 let word = note.lyric.trim();
-                let word = if word == LYRIC_CONTINUATION { "" } else { word };
                 let breaks = current
                     .as_ref()
                     .is_some_and(|line| start - line.end >= LINE_BREAK);
@@ -153,12 +151,47 @@ impl Session {
             return 0;
         };
         let (from, to) = (first.start, last.end);
+        // The notes carry kana, so a line rebuilt from them is kana too. A line already written
+        // over a sung line, in kanji or otherwise, is kept wherever it still reads to as many
+        // moras as are sung there — or cannot be read to check — so a rebuild after a note edit
+        // does not turn a verse written in kanji into its pronunciation.
+        let existing = self.project.lyrics.spans_in(from, to);
+        let dictionary = self.japanese.as_ref();
+        let moras = |text: &str| {
+            super::lyrics::read_lyrics(text, dictionary)
+                .ok()
+                .map(|phrases| phrases.iter().map(|p| p.moras.len()).sum::<usize>())
+        };
+        let kept: Vec<Vec<&auris_core::lyrics::LyricSpan>> = lines
+            .iter()
+            .map(|line| {
+                let written: Vec<_> = existing
+                    .iter()
+                    .filter(|span| span.change >= line.start && span.change < line.end)
+                    .collect();
+                let counted: Option<usize> = written.iter().map(|span| moras(&span.text)).sum();
+                let agrees = counted.is_none_or(|count| Some(count) == moras(&line.text));
+                if !written.is_empty() && agrees {
+                    written
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect();
         self.record(Edit::SetLyricLine);
         self.project.lyrics.clear_range(from, to);
-        for line in &lines {
-            self.project
-                .lyrics
-                .write_line(line.start, line.end, &line.text);
+        for (line, written) in lines.iter().zip(&kept) {
+            if written.is_empty() {
+                self.project
+                    .lyrics
+                    .write_line(line.start, line.end, &line.text);
+            } else {
+                for span in written {
+                    self.project
+                        .lyrics
+                        .write_line(span.change, span.end, &span.text);
+                }
+            }
         }
         lines.len()
     }
@@ -239,6 +272,30 @@ impl Session {
                 .lyrics
                 .write_line(line.start, line.end, &line.text);
         }
+    }
+
+    /// A singer clip's name in its written spelling: the song's lyric lines that start inside
+    /// the clip, joined by spaces, or `fallback` on one line where none do.
+    ///
+    /// The notes carry kana, one mora each, so the lyric lines are the only place the kanji a
+    /// phrase was written in survive; a name read from them is what a person reads the song by.
+    pub(crate) fn written_clip_name(&self, clip: ClipId, fallback: &str) -> Option<String> {
+        let (_, target) = self.project.midi_clip(clip)?;
+        let (from, to) = (target.start, target.start + target.length);
+        let lines: Vec<String> = self
+            .project
+            .lyrics
+            .spans_in(from, to)
+            .into_iter()
+            .filter(|span| span.change >= from)
+            .map(|span| span.text)
+            .collect();
+        let name = if lines.is_empty() {
+            lines_of(fallback).join(" ")
+        } else {
+            lines.join(" ")
+        };
+        (!name.is_empty()).then_some(name)
     }
 }
 
@@ -325,8 +382,41 @@ mod tests {
         assert!(session.project().lyrics.is_empty(), "one undo step");
     }
 
+    /// The notes say only kana; a rebuild keeps the written line over them unless it reads to
+    /// a different number of moras than are sung.
     #[test]
-    fn a_word_held_on_its_first_note_reads_back_whole_and_latin_words_are_spaced() {
+    fn rebuilding_from_the_notes_keeps_lines_written_in_kanji() {
+        let mut session = session();
+        let vocal = session
+            .project
+            .add_singer_track("Vocal", auris_synth::Vocal::ID);
+        let clip = session
+            .project
+            .add_midi_clip(vocal, "verse", bar(1), bar(2))
+            .unwrap();
+        session.project.midi_clip_mut(clip).unwrap().notes = ["さ", "く", "ら", "は", "る"]
+            .iter()
+            .enumerate()
+            .map(|(at, word)| {
+                let start = if at < 3 { at as i64 } else { at as i64 + 3 };
+                let mut note = Note::new(67, Ticks(start * 960), Ticks(960));
+                note.lyric = (*word).into();
+                note
+            })
+            .collect();
+        let lyrics = &mut session.project.lyrics;
+        lyrics.write_line(bar(1), bar(1) + Ticks(2880), "桜");
+        // Three moras over two sung ones: stale, so the notes' kana replace it.
+        lyrics.write_line(bar(2) + Ticks(960), bar(2) + Ticks(2880), "はるか");
+
+        assert_eq!(session.annotate_lyrics_from_vocals(None), 2);
+        let lyrics = &session.project().lyrics;
+        assert_eq!(lyrics.text_at(bar(1) + Ticks(10)), Some("桜"));
+        assert_eq!(lyrics.text_at(bar(2) + Ticks(2000)), Some("はる"));
+    }
+
+    #[test]
+    fn sung_notes_read_back_as_one_line_and_latin_words_are_spaced() {
         let mut line = String::new();
         for word in ["Hello", "world", "、", "君"] {
             join_word(&mut line, word);
@@ -344,11 +434,11 @@ mod tests {
         session.project.midi_clip_mut(clip).unwrap().notes = (0..3)
             .map(|at| {
                 let mut note = Note::new(67, Ticks(at * 480), Ticks(480));
-                note.lyric = if at == 0 { "桜".into() } else { "+".into() };
+                note.lyric = ["さ", "く", "ら"][at as usize].into();
                 note
             })
             .collect();
-        assert_eq!(session.sung_lyric_lines(None)[0].text, "桜");
+        assert_eq!(session.sung_lyric_lines(None)[0].text, "さくら");
     }
 
     #[test]

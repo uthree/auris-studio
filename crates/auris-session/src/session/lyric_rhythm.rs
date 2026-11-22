@@ -40,7 +40,6 @@
 
 use super::Session;
 use super::lyric_accent::{SungNote, sung_lines};
-use super::singer::LYRIC_CONTINUATION;
 use auris_core::time::{TICKS_PER_QUARTER, Ticks};
 use auris_core::{Project, TrackId};
 use auris_vocal::kana::phonemes_to_kana;
@@ -204,8 +203,9 @@ fn dependent(note: &SungNote, previous: Option<&SungNote>) -> Option<Dependent> 
     if note.phonemes == ["ɴ"] {
         return Some(Dependent::Nasal);
     }
-    // い on a note of its own begins a word when the note carries that word's text (今).
-    let inside_word = note.lyric == LYRIC_CONTINUATION || note.lyric == "い" || note.lyric == "イ";
+    // A note labelled い sings the second half of a diphthong; one labelled anything else (a
+    // hand-written 今) begins a word of its own.
+    let inside_word = note.lyric == "い" || note.lyric == "イ";
     let after = vowel(&previous.phonemes)?;
     (note.phonemes == ["i"] && inside_word && (after == "a" || after == "o"))
         .then_some(Dependent::Diphthong)
@@ -326,12 +326,7 @@ fn measure_line(project: &Project, notes: &[SungNote]) -> LineRhythm {
     let mut shortest = f64::INFINITY;
     let mut lengths = Vec::new();
     for (index, note) in notes.iter().enumerate() {
-        let word = if note.lyric == LYRIC_CONTINUATION {
-            ""
-        } else {
-            note.lyric.as_str()
-        };
-        super::lyric_lines::join_word(&mut text, word);
+        super::lyric_lines::join_word(&mut text, &note.lyric);
         let count = mora_count(note);
         moras += count;
         let duration = seconds(note.at + note.length) - seconds(note.at);
@@ -479,9 +474,7 @@ fn rests_in_words(
         let mut kana = String::new();
         let mut owner = Vec::new();
         for (index, (_, note)) in notes.iter().enumerate() {
-            if note.lyric != LYRIC_CONTINUATION {
-                super::lyric_lines::join_word(&mut text, &note.lyric);
-            }
+            super::lyric_lines::join_word(&mut text, &note.lyric);
             if let Some(spelled) = phonemes_to_kana(&note.phonemes) {
                 kana.push_str(&spelled);
             }

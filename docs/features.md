@@ -394,7 +394,8 @@ verse is typed word after word without touching the mouse; an empty field takes 
 The note's right-click menu offers **Edit Lyric…**, **Edit Phonemes…** (space-separated IPA,
 for correcting a reading by hand — the lyric stays as spelt) and **Write Lyrics…**, which lays
 a phrase across the selected notes one mora to a note: こんにちは across five notes reads
-こ・ん・に・ち・は. A kanji word carries itself on the first note with `+` on the rest.
+こ・ん・に・ち・は. A kanji word is read and each note is labelled with the kana it sings —
+桜 across three notes reads さ・く・ら — while the written word stays on the lyrics lane.
 
 Lyrics in **kana need nothing installed** — a built-in table reads them directly. **Kanji**
 goes through the Japanese dictionary, and **a release ships one**: the prebuilt `naist-jdic`

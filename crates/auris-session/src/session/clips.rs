@@ -316,25 +316,6 @@ impl Session {
         let Some(right) = self.project.split_clip(clip, at) else {
             return Err(SessionError::CannotSplit(clip.0));
         };
-        // A cut through a written word must carry its spelling into the continuation clip.
-        // Pronunciation remains pinned to each original note.
-        if self.singer_clip_name(right).is_some()
-            && let Some((_, source)) = before.midi_clip(clip)
-            && let Some(target) = self.project.midi_clip_mut(right)
-            && let Some(first) = target.notes.iter_mut().min_by_key(|note| note.start)
-            && first.lyric == super::singer::LYRIC_CONTINUATION
-            && let Some(word) = source
-                .notes
-                .iter()
-                .filter(|note| {
-                    source.start + note.start <= at + first.start
-                        && !note.lyric.is_empty()
-                        && note.lyric != super::singer::LYRIC_CONTINUATION
-                })
-                .max_by_key(|note| note.start)
-        {
-            first.lyric.clone_from(&word.lyric);
-        }
         if self.transaction.is_none() {
             self.history.push(Edit::SplitClip, &before);
         }
@@ -421,7 +402,7 @@ impl Session {
             .map(|(_, id)| id)
     }
 
-    /// Renames a clip. Singer names are derived from lyrics and cannot be overridden.
+    /// Renames a clip.
     pub fn rename_clip(
         &mut self,
         clip: ClipId,
@@ -429,15 +410,6 @@ impl Session {
     ) -> Result<(), SessionError> {
         self.require_clip(clip)?;
         let name = name.into();
-        if self
-            .singer_clip_name(clip)
-            .is_some_and(|lyrics| lyrics != name)
-        {
-            return Err(SessionError::SongLyrics(
-                "Singer clip names follow the complete written lyrics; edit the lyrics instead"
-                    .into(),
-            ));
-        }
         let unchanged = self
             .project
             .midi_clip(clip)

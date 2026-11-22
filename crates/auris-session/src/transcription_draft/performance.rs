@@ -92,7 +92,7 @@ pub struct DraftLyric {
     pub start_seconds: f64,
     /// Exclusive source-audio end of the final note.
     pub end_seconds: f64,
-    /// Complete written lyrics; continuation notes receive the explicit '+' marker.
+    /// Complete written lyrics, kept in provenance; each note is labelled with the kana it sings.
     pub written: String,
     /// Optional reading, retained in provenance without replacing written lyrics.
     pub reading: Option<String>,
@@ -347,13 +347,10 @@ impl DraftPartPerformance {
             .max()
             .unwrap_or(Ticks::ZERO);
         for lyric in &self.lyrics {
-            for (offset, (&index, phonemes)) in lyric.notes.iter().zip(&lyric.phonemes).enumerate()
-            {
-                notes[index].lyric = if offset == 0 {
-                    lyric.written.clone()
-                } else {
-                    "+".into()
-                };
+            for (&index, phonemes) in lyric.notes.iter().zip(&lyric.phonemes) {
+                // One note, one mora: each note is labelled with the kana it sings.
+                notes[index].lyric = auris_vocal::kana::phonemes_to_kana(phonemes)
+                    .unwrap_or_else(|| phonemes.concat());
                 notes[index].phonemes = phonemes.clone();
             }
         }

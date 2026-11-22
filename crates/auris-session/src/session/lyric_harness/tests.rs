@@ -258,7 +258,6 @@ fn repair_previews_then_changes_only_target_words_in_one_undo() {
         serde_json::from_str(&session.agent_command(command).unwrap()).unwrap();
     assert_eq!(result["applied"], true);
     let mut expected = before.clone();
-    expected.midi_clip_mut(ClipId(target.clip)).unwrap().name = "きっとあえる".into();
     let moras = split_kana_lyric("きっとあえる").unwrap();
     for (note, (text, phonemes)) in expected
         .midi_clip_mut(ClipId(target.clip))
@@ -343,12 +342,12 @@ fn explicit_readings_and_long_vowels_are_applied_without_losing_phonemes() {
         apply: true,
     };
     assert_eq!(session.repair_lyrics(&request).unwrap()["applied"], true);
-    assert_eq!(session.midi_clip(clip).unwrap().name, "珈琲");
+    // Each note is labelled with the mora it sings; the held vowels read as vowels.
     let notes = &session.midi_clip(clip).unwrap().notes;
     assert_eq!(notes[1].phonemes, ["o"]);
     assert_eq!(notes[3].phonemes, ["i"]);
-    assert_eq!(notes[0].lyric, "珈琲");
-    assert_eq!(notes[1].lyric, "+");
+    assert_eq!(notes[0].lyric, "こ");
+    assert_eq!(notes[1].lyric, "お");
     let span = request.target.clone();
     let report = session
         .diagnose_clip_lyrics(&[ClipComparison {
@@ -357,7 +356,7 @@ fn explicit_readings_and_long_vowels_are_applied_without_losing_phonemes() {
         }])
         .unwrap();
     assert_eq!(report.status, "pass");
-    assert_eq!(report.sections[0].analysis.phrases[0].text, "珈琲");
+    assert_eq!(report.sections[0].analysis.phrases[0].text, "こおひい");
     assert_eq!(
         report.sections[0].analysis.phrases[0].reading.as_deref(),
         Some("こおひい")
@@ -417,7 +416,7 @@ fn diagnosis_and_repair_do_not_hide_musical_or_alignment_mismatches() {
 }
 
 #[test]
-fn stored_one_mora_phonemes_establish_slots_for_original_text_and_plus_labels() {
+fn stored_one_mora_phonemes_establish_slots_for_labels_that_do_not_spell_them() {
     let mut session = session();
     let (reference, target) = singer_pair(&mut session);
     session
@@ -427,15 +426,14 @@ fn stored_one_mora_phonemes_establish_slots_for_original_text_and_plus_labels() 
         .project
         .midi_clip_mut(ClipId(reference.clip))
         .unwrap();
-    clip.notes[0].lyric = "ずっと君と".into();
-    for note in &mut clip.notes[1..] {
-        note.lyric = "+".into();
+    // Hand-written labels that spell nothing the note sings.
+    for note in &mut clip.notes {
+        note.lyric = "君".into();
     }
     let report = session
         .diagnose_clip_lyrics(&[ClipComparison { reference, target }])
         .unwrap();
     assert_eq!(report.status, "pass");
-    assert_eq!(report.sections[0].analysis.phrases[0].text, "ずっと君と");
     assert_eq!(report.sections[0].analysis.phrases[0].moras.len(), 6);
 }
 

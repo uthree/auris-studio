@@ -36,7 +36,6 @@ fn sections_with_budget(
         let mut notes = 0_u64;
         let mut lyric_notes = 0_u64;
         let mut phoneme_notes = 0_u64;
-        let mut continuation_notes = 0_u64;
         let mut unassigned_notes = 0_u64;
         let mut looped_notes = 0_u64;
         let mut complete = true;
@@ -78,9 +77,7 @@ fn sections_with_budget(
                 notes += count;
                 looped_notes += count - u64::from(first_pass == 0);
                 let lyric = note.lyric.trim();
-                let continuation = lyric == crate::session::LYRIC_CONTINUATION;
-                lyric_notes += u64::from(!lyric.is_empty() && !continuation) * count;
-                continuation_notes += u64::from(continuation) * count;
+                lyric_notes += u64::from(!lyric.is_empty()) * count;
                 phoneme_notes += u64::from(!note.phonemes.is_empty()) * count;
                 unassigned_notes += u64::from(lyric.is_empty() && note.phonemes.is_empty()) * count;
             }
@@ -90,7 +87,7 @@ fn sections_with_budget(
             "start_tick":span.start.0,"end_tick":span.end.0,
             "start_bar":project.signatures.bar_beat_at(span.start).0,
             "note_attacks":notes,"lyric_notes":lyric_notes,"phoneme_notes":phoneme_notes,
-            "continuation_notes":continuation_notes,"unassigned_notes":unassigned_notes,
+            "unassigned_notes":unassigned_notes,
             "looped_note_attacks":looped_notes,"analysis_complete":complete,
             "lyric_annotation_lines":project.lyrics.spans_in(span.start, span.end).len()
         }));
