@@ -258,7 +258,6 @@ fn repair_previews_then_changes_only_target_words_in_one_undo() {
         serde_json::from_str(&session.agent_command(command).unwrap()).unwrap();
     assert_eq!(result["applied"], true);
     let mut expected = before.clone();
-    expected.midi_clip_mut(ClipId(target.clip)).unwrap().name = "きっとあえる".into();
     let moras = split_kana_lyric("きっとあえる").unwrap();
     for (note, (text, phonemes)) in expected
         .midi_clip_mut(ClipId(target.clip))
@@ -344,7 +343,6 @@ fn explicit_readings_and_long_vowels_are_applied_without_losing_phonemes() {
     };
     assert_eq!(session.repair_lyrics(&request).unwrap()["applied"], true);
     // Each note is labelled with the mora it sings; the held vowels read as vowels.
-    assert_eq!(session.midi_clip(clip).unwrap().name, "こおひい");
     let notes = &session.midi_clip(clip).unwrap().notes;
     assert_eq!(notes[1].phonemes, ["o"]);
     assert_eq!(notes[3].phonemes, ["i"]);

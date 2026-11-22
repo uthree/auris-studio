@@ -2457,11 +2457,12 @@ pub mod singing {
     //! writes both fields; [`Session::set_note_phonemes`](crate::Session::set_note_phonemes)
     //! writes the phonemes alone and leaves the word as spelt.
     //!
-    //! One note sings one mora, and its lyric is that mora in kana. Singer clip names are the
-    //! notes' lyrics in note-onset order, derived by the session without shortening; the
-    //! written spelling of a phrase, kanji and punctuation included, is kept on the song's
-    //! lyric lines rather than on any note. Lyric writing rejects insufficient note slots
-    //! before recording an edit, so neither the score nor its name silently loses the tail.
+    //! One note sings one mora, and its lyric is that mora in kana; the written spelling of a
+    //! phrase, kanji and punctuation included, is kept on the song's lyric lines rather than on
+    //! any note. A singer clip's name is an ordinary name nothing overwrites. The agent's
+    //! `write_lyrics` names the clip after the lyric lines that start inside it, so a song
+    //! written by an agent reads in kanji in the arrangement. Lyric writing rejects insufficient
+    //! note slots before recording an edit, so the score never silently loses the tail.
     //!
     //! Which corrections reach the sound is a backend capability, exposed through
     //! [`Session::singer_capabilities`](crate::Session::singer_capabilities) and

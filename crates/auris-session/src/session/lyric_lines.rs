@@ -238,6 +238,30 @@ impl Session {
                 .write_line(line.start, line.end, &line.text);
         }
     }
+
+    /// A singer clip's name in its written spelling: the song's lyric lines that start inside
+    /// the clip, joined by spaces, or `fallback` on one line where none do.
+    ///
+    /// The notes carry kana, one mora each, so the lyric lines are the only place the kanji a
+    /// phrase was written in survive; a name read from them is what a person reads the song by.
+    pub(crate) fn written_clip_name(&self, clip: ClipId, fallback: &str) -> Option<String> {
+        let (_, target) = self.project.midi_clip(clip)?;
+        let (from, to) = (target.start, target.start + target.length);
+        let lines: Vec<String> = self
+            .project
+            .lyrics
+            .spans_in(from, to)
+            .into_iter()
+            .filter(|span| span.change >= from)
+            .map(|span| span.text)
+            .collect();
+        let name = if lines.is_empty() {
+            lines_of(fallback).join(" ")
+        } else {
+            lines.join(" ")
+        };
+        (!name.is_empty()).then_some(name)
+    }
 }
 
 fn lines_of(text: &str) -> Vec<&str> {

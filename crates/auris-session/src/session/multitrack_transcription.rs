@@ -185,7 +185,6 @@ mod tests {
         );
         let singer = &imported.tracks[1].kind.as_singer().unwrap().clips[0];
         // Each note is labelled with the kana it sings; the written text stays in provenance.
-        assert_eq!(singer.name, "さくらさく");
         assert_eq!(singer.notes[0].lyric, "さくら");
         assert_eq!(singer.notes[1].lyric, "さく");
         assert_eq!(singer.notes[1].phonemes, ["s", "a", "k", "ɯ"]);

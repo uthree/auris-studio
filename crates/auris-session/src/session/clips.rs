@@ -402,7 +402,7 @@ impl Session {
             .map(|(_, id)| id)
     }
 
-    /// Renames a clip. Singer names are derived from lyrics and cannot be overridden.
+    /// Renames a clip.
     pub fn rename_clip(
         &mut self,
         clip: ClipId,
@@ -410,15 +410,6 @@ impl Session {
     ) -> Result<(), SessionError> {
         self.require_clip(clip)?;
         let name = name.into();
-        if self
-            .singer_clip_name(clip)
-            .is_some_and(|lyrics| lyrics != name)
-        {
-            return Err(SessionError::SongLyrics(
-                "Singer clip names follow the complete written lyrics; edit the lyrics instead"
-                    .into(),
-            ));
-        }
         let unchanged = self
             .project
             .midi_clip(clip)

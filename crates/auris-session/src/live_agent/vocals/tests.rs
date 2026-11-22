@@ -75,7 +75,10 @@ fn written_lyrics_with_explicit_reading_survive_without_a_dictionary() {
         }),
     )
     .unwrap();
-    assert_eq!(response["clip_name"], "つきのよ");
+    assert_eq!(
+        response["clip_name"], "月の夜",
+        "named in the written spelling"
+    );
     assert_eq!(
         s.project().lyrics.text_at(Ticks::ZERO),
         Some("月の夜"),

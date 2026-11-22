@@ -434,7 +434,6 @@ impl Session {
                     }
                 }
             }
-            self.sync_singer_clip_names();
             applied = true;
         }
         Ok(serde_json::json!({

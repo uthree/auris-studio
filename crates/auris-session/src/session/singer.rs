@@ -317,7 +317,6 @@ impl Session {
             // A pin belongs to the phoneme it was placed on; the new word has new ones.
             note.phoneme_seconds.clear();
         }
-        self.sync_singer_clip_names();
         Ok(())
     }
 
@@ -476,7 +475,6 @@ impl Session {
                 }
             }
         }
-        self.sync_singer_clip_names();
         Ok(filled)
     }
 
@@ -4454,20 +4452,15 @@ mod tests {
     }
 
     #[test]
-    fn singer_clip_names_keep_complete_written_lyrics_and_undo() {
-        let (mut session, _, clip) = sung(80);
-        let text = "さくらさいた".repeat(10);
-        session
-            .write_lyrics(clip, &(0..80).collect::<Vec<_>>(), &text)
-            .unwrap();
-        assert_eq!(session.midi_clip(clip).unwrap().name, text);
-        let before = session.project().clone();
-        session.set_note_lyric(clip, 79, "は").unwrap();
-        assert_eq!(session.midi_clip(clip).unwrap().name, format!("{text}は"));
+    fn a_singer_clip_keeps_the_name_it_is_given_through_lyric_edits() {
+        let (mut session, _, clip) = sung(3);
+        session.rename_clip(clip, "桜咲く").unwrap();
+        session.write_lyrics(clip, &[0, 1, 2], "さくら").unwrap();
+        session.set_note_lyric(clip, 2, "は").unwrap();
+        assert_eq!(session.midi_clip(clip).unwrap().name, "桜咲く");
         session.undo();
-        assert_eq!(session.project(), &before);
-        assert!(session.rename_clip(clip, "Verse…").is_err());
-        assert_eq!(session.midi_clip(clip).unwrap().name, text);
+        session.undo();
+        assert_eq!(session.midi_clip(clip).unwrap().name, "桜咲く");
     }
 
     #[test]
