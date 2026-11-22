@@ -622,7 +622,9 @@ pub mod architecture {
     //! lyrics lane. Song composition writes each phrase there as it writes the vocal, and the
     //! agent's `write_lyrics` annotates the notes it fills in the same undo step, so neither
     //! door can produce a song with words and no lines. `edit_lyrics` writes explicit lines or
-    //! rebuilds them from a singer track ([`Session::annotate_lyrics_from_vocals`](crate::Session::annotate_lyrics_from_vocals));
+    //! rebuilds them from a singer track ([`Session::annotate_lyrics_from_vocals`](crate::Session::annotate_lyrics_from_vocals)),
+    //! which can only spell kana — the notes carry nothing else — and so keeps a line already
+    //! written over a sung line while it still reads to the moras sung there;
     //! nothing rewrites the annotation behind a person's back, and editing it never moves a note.
     //! Comments are the source-code habit brought to a score: text pinned to a place that
     //! nothing plays. A track holds them in song time along its lane and a note clip in its own

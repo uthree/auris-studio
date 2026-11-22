@@ -151,12 +151,47 @@ impl Session {
             return 0;
         };
         let (from, to) = (first.start, last.end);
+        // The notes carry kana, so a line rebuilt from them is kana too. A line already written
+        // over a sung line, in kanji or otherwise, is kept wherever it still reads to as many
+        // moras as are sung there — or cannot be read to check — so a rebuild after a note edit
+        // does not turn a verse written in kanji into its pronunciation.
+        let existing = self.project.lyrics.spans_in(from, to);
+        let dictionary = self.japanese.as_ref();
+        let moras = |text: &str| {
+            super::lyrics::read_lyrics(text, dictionary)
+                .ok()
+                .map(|phrases| phrases.iter().map(|p| p.moras.len()).sum::<usize>())
+        };
+        let kept: Vec<Vec<&auris_core::lyrics::LyricSpan>> = lines
+            .iter()
+            .map(|line| {
+                let written: Vec<_> = existing
+                    .iter()
+                    .filter(|span| span.change >= line.start && span.change < line.end)
+                    .collect();
+                let counted: Option<usize> = written.iter().map(|span| moras(&span.text)).sum();
+                let agrees = counted.is_none_or(|count| Some(count) == moras(&line.text));
+                if !written.is_empty() && agrees {
+                    written
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect();
         self.record(Edit::SetLyricLine);
         self.project.lyrics.clear_range(from, to);
-        for line in &lines {
-            self.project
-                .lyrics
-                .write_line(line.start, line.end, &line.text);
+        for (line, written) in lines.iter().zip(&kept) {
+            if written.is_empty() {
+                self.project
+                    .lyrics
+                    .write_line(line.start, line.end, &line.text);
+            } else {
+                for span in written {
+                    self.project
+                        .lyrics
+                        .write_line(span.change, span.end, &span.text);
+                }
+            }
         }
         lines.len()
     }
@@ -345,6 +380,39 @@ mod tests {
         );
         assert!(session.undo().is_some());
         assert!(session.project().lyrics.is_empty(), "one undo step");
+    }
+
+    /// The notes say only kana; a rebuild keeps the written line over them unless it reads to
+    /// a different number of moras than are sung.
+    #[test]
+    fn rebuilding_from_the_notes_keeps_lines_written_in_kanji() {
+        let mut session = session();
+        let vocal = session
+            .project
+            .add_singer_track("Vocal", auris_synth::Vocal::ID);
+        let clip = session
+            .project
+            .add_midi_clip(vocal, "verse", bar(1), bar(2))
+            .unwrap();
+        session.project.midi_clip_mut(clip).unwrap().notes = ["さ", "く", "ら", "は", "る"]
+            .iter()
+            .enumerate()
+            .map(|(at, word)| {
+                let start = if at < 3 { at as i64 } else { at as i64 + 3 };
+                let mut note = Note::new(67, Ticks(start * 960), Ticks(960));
+                note.lyric = (*word).into();
+                note
+            })
+            .collect();
+        let lyrics = &mut session.project.lyrics;
+        lyrics.write_line(bar(1), bar(1) + Ticks(2880), "桜");
+        // Three moras over two sung ones: stale, so the notes' kana replace it.
+        lyrics.write_line(bar(2) + Ticks(960), bar(2) + Ticks(2880), "はるか");
+
+        assert_eq!(session.annotate_lyrics_from_vocals(None), 2);
+        let lyrics = &session.project().lyrics;
+        assert_eq!(lyrics.text_at(bar(1) + Ticks(10)), Some("桜"));
+        assert_eq!(lyrics.text_at(bar(2) + Ticks(2000)), Some("はる"));
     }
 
     #[test]
