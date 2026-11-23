@@ -1904,7 +1904,8 @@ const MEASUREMENT_CACHE: &str = "sound-measurements";
 /// The disk cache kind holding why a sound could not be measured in the worker process.
 const MEASUREMENT_FAILURE_CACHE: &str = "sound-measurement-failures";
 /// Bumped whenever the measurement changes, so results measured by another rule are ignored.
-const MEASUREMENT_VERSION: u32 = 1;
+/// 2: a CLAP instrument is reactivated between notes rather than built again.
+const MEASUREMENT_VERSION: u32 = 2;
 
 /// Lists every installed instrument plugin and its presets through the worker process.
 ///

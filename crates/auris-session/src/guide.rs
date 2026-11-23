@@ -293,7 +293,10 @@
 //! A saved sound counts as third-party when its instrument, an insert or its SoundFont lives in a
 //! file; one made of built-in parts is measured in the caller's process. Each listing is kept on
 //! disk under the plugin file's stamp and each measurement under its files' stamps, so the cost
-//! of loading every preset is paid once per installed version. Adopting a sound — applying it to a
+//! of loading every preset is paid once per installed version. Building an instance is nearly
+//! all of a plugin sound's measuring cost, so a lone CLAP instrument is built once per sound and
+//! deactivated and activated again between its nine notes; see the worker's `native` module for
+//! why that measures as faithfully as a fresh instance per note does. Adopting a sound — applying it to a
 //! track — still loads the plugin in the document's process, because the track is going to play it.
 //!
 //! Acoustic indexing uses six reference triggers and the full standardized feature space. One
