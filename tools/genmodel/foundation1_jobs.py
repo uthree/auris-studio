@@ -60,12 +60,25 @@ def main() -> int:
         "jobs": [],
     }
     for job in jobs:
-        seconds_total = job["bars"] * 4 * 60.0 / job["bpm"]
+        # An init_audio job plays that recording again in the prompt's sound: its length is
+        # the recording's, and init_noise_level (a sigma; the schedule starts at 500) says how
+        # far the result may move from it.
+        init = None
+        if job.get("init_audio"):
+            recording, rate = sf.read(job["init_audio"], dtype="float32", always_2d=True)
+            init = (rate, torch.from_numpy(recording.T.copy()))
+            seconds_total = len(recording) / rate
+        else:
+            beats = job.get("beats_per_bar", 4)
+            seconds_total = job["bars"] * beats * 60.0 / job["bpm"]
         sample_size = round(seconds_total * sample_rate)
         # The DiT works in latents of 2048 samples; pad to a whole latent.
         padded = -(-sample_size // 2048) * 2048
         torch.cuda.reset_peak_memory_stats()
         t1 = time.perf_counter()
+        extra = {}
+        if init is not None:
+            extra = {"init_audio": init, "init_noise_level": job.get("init_noise_level", 10.0)}
         audio = generate_diffusion_cond(
             model,
             steps=job.get("steps", 100),
@@ -84,6 +97,7 @@ def main() -> int:
             sampler_type="dpmpp-3m-sde",
             sigma_min=0.03,
             sigma_max=500,
+            **extra,
         )
         seconds = time.perf_counter() - t1
         y = audio[0, :, :sample_size].float().cpu().numpy().T

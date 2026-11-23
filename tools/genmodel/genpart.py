@@ -9,7 +9,7 @@ The request names the operation, the rendered stems of the bar range (one WAV pe
 track, all the same length) and where to write the result:
 
     {
-      "operation": "stem" | "repaint" | "loop",
+      "operation": "stem" | "repaint" | "loop" | "restyle",
       "stems": {"Lead": "C:/.../Lead.wav", ...},
       "exclude": ["Drums"],            # stem: tracks left out of the context
       "target": "Piano",               # repaint: the stem to regenerate
@@ -28,6 +28,8 @@ track, all the same length) and where to write the result:
   is taken from the model; the rest is the stem as it was, joined by short crossfades,
   because the model also changes what lies outside the region.
 * `loop` asks Foundation-1 for a tempo-synced loop, tiled over the range.
+* `restyle` plays one stem again in another sound (Foundation-1 audio-to-audio from the
+  stem): `target`, `prompt`, and `strength` 0..1 for how far it may move from the stem.
 
 The models run in their own environments (see README.md), found under
 `AURIS_GENMODEL_HOME`. A constant lateness of the generated audio against the bar grid
@@ -225,17 +227,13 @@ def run_ace(job: dict, workdir: Path) -> tuple[np.ndarray, int, dict]:
     )
 
 
-def run_foundation(
-    prompt: str, bpm: int, bars: int, seed: int, workdir: Path
-) -> tuple[np.ndarray, int, dict]:
+def run_foundation_jobs(
+    jobs: list[dict], workdir: Path
+) -> tuple[list[tuple[np.ndarray, int]], dict]:
+    """Runs Foundation-1 jobs in one process, so the model loads once."""
     root = home() / "stable-audio-tools"
-    jobs = workdir / "f1-jobs.json"
-    jobs.write_text(
-        json.dumps(
-            [{"name": "loop", "prompt": prompt, "bpm": bpm, "bars": bars, "seed": seed}]
-        ),
-        encoding="utf-8",
-    )
+    jobs_path = workdir / "f1-jobs.json"
+    jobs_path.write_text(json.dumps(jobs), encoding="utf-8")
     out = workdir / "f1-out"
     env = {
         **os.environ,
@@ -246,7 +244,7 @@ def run_foundation(
         [
             *venv_command(root / "venv_rocm", HERE / "foundation1_jobs.py"),
             "--jobs",
-            str(jobs),
+            str(jobs_path),
             "--output",
             str(out),
         ],
@@ -260,17 +258,123 @@ def run_foundation(
     report_path = out / "report.json"
     if not report_path.is_file():
         raise RequestError("Foundation-1 failed: " + proc.stderr[-800:])
-    entry = json.loads(report_path.read_text(encoding="utf-8"))["jobs"][0]
-    audio, rate = read(entry["audio"])
-    return (
-        audio,
-        rate,
-        {
-            "model": "Foundation-1",
-            "seconds": entry["seconds"],
-            "peak_gib": entry["peak_gib"],
-        },
+    entries = json.loads(report_path.read_text(encoding="utf-8"))["jobs"]
+    if len(entries) != len(jobs):
+        raise RequestError("Foundation-1 stopped early: " + proc.stderr[-800:])
+    takes = [read(entry["audio"]) for entry in entries]
+    info = {
+        "model": "Foundation-1",
+        "seconds": round(sum(entry["seconds"] for entry in entries), 2),
+        "peak_gib": max(entry["peak_gib"] for entry in entries),
+    }
+    return takes, info
+
+
+def run_foundation(
+    prompt: str, bpm: int, bars: int, seed: int, workdir: Path
+) -> tuple[np.ndarray, int, dict]:
+    job = {"name": "loop", "prompt": prompt, "bpm": bpm, "bars": bars, "seed": seed}
+    [(audio, rate)], info = run_foundation_jobs([job], workdir)
+    return audio, rate, info
+
+
+RESTYLE_PAD_SECONDS = 0.1
+RESTYLE_MAX_SECONDS = 19.0
+
+
+def restyle(
+    request: dict,
+    stems: dict,
+    frames: int,
+    rate: int,
+    workdir: Path,
+    notes: list[str],
+) -> tuple[np.ndarray, dict]:
+    """Plays one stem again in the prompt's sound with Foundation-1 audio-to-audio.
+
+    The stem is the starting point and the noise level says how far the take may move
+    from it. Measured on a piano lead and a chord part (2026-11-23), a sigma of 1 to 2.5
+    keeps the notes (chroma correlation 0.7 to 0.97 with the input) while the tone colour
+    moves 4 to 15 dB per third-octave band; from 5 up the notes give way. `strength` 0..1
+    maps to sigma 1..5 logarithmically, so 0.4 is about 1.9.
+
+    Foundation-1 takes at most about 20 seconds, so the range is played in bar-aligned
+    chunks, each with a little of its neighbours, and joined by crossfades. A chunk that is
+    silent in the stem stays silent, and each take is set to its chunk's level.
+    """
+    target = request.get("target")
+    if target not in stems:
+        raise RequestError(f"target must be one of the rendered stems: {sorted(stems)}")
+    strength = min(1.0, max(0.0, float(request.get("strength", 0.4))))
+    sigma = 5.0**strength
+    original = fit(stems[target][0], frames)
+    seconds = frames / rate
+    bpm = float(request["bpm"])
+    bar = request.get("beats_per_bar", 4) * 60.0 / bpm
+    per = max(1, min(8, int(RESTYLE_MAX_SECONDS // bar)))
+    tags = [request.get("prompt", "")]
+    if per in (4, 8):
+        tags.append(f"{per} Bars")
+    if round(bpm) in FOUNDATION_BPMS and abs(bpm - round(bpm)) < 1e-6:
+        tags.append(f"{round(bpm)} BPM")
+    if request.get("key"):
+        tags.append(request["key"])
+    prompt = ", ".join(tag for tag in tags if tag)
+    pad = RESTYLE_PAD_SECONDS
+    chunks = []
+    start = 0.0
+    while start < seconds - 1e-6:
+        end = min(seconds, start + per * bar)
+        if seconds - end < 0.5 * bar:  # a sliver left over joins the last chunk
+            end = seconds
+        chunks.append((start, end))
+        start = end
+    jobs, spans = [], []
+    seed = int(request.get("seed", 0))
+    for index, (a, b) in enumerate(chunks):
+        lo, hi = int(max(0.0, a - pad) * rate), int(min(seconds, b + pad) * rate)
+        piece = original[lo:hi]
+        if float(np.sqrt(np.mean(piece**2))) < 1e-4:
+            continue  # silent here: nothing to play
+        path = workdir / f"restyle-in-{index}.wav"
+        sf.write(path, piece, rate, subtype="FLOAT")
+        jobs.append(
+            {
+                "name": f"restyle-{index}",
+                "prompt": prompt,
+                "init_audio": str(path),
+                "init_noise_level": sigma,
+                "seed": seed + index,
+            }
+        )
+        spans.append((lo, hi, a > 0, b < seconds))
+    if not jobs:
+        raise RequestError(f"the {target} stem is silent over the whole range")
+    takes, info = run_foundation_jobs(jobs, workdir)
+    total = np.zeros_like(original)
+    weight = np.zeros(frames, dtype=np.float32)
+    for (lo, hi, fade_in, fade_out), (take, take_rate) in zip(spans, takes):
+        take = fit(resample(take, take_rate, rate), hi - lo)
+        source_rms = float(np.sqrt(np.mean(original[lo:hi] ** 2)))
+        take_rms = float(np.sqrt(np.mean(take**2)))
+        if take_rms > 0:
+            take = take * (source_rms / take_rms)
+        window = np.ones(hi - lo, dtype=np.float32)
+        ramp = min(int(2 * pad * rate), (hi - lo) // 2)
+        if fade_in:
+            window[:ramp] = np.linspace(0, 1, ramp, dtype=np.float32)
+        if fade_out:
+            window[-ramp:] = np.linspace(1, 0, ramp, dtype=np.float32)
+        total[lo:hi] += take * window[:, None]
+        weight[lo:hi] += window
+    audio = np.where(
+        weight[:, None] > 1e-6, total / np.maximum(weight, 1e-6)[:, None], 0.0
     )
+    notes.append(
+        f"{len(jobs)} take(s) of up to {per} bars at sigma {sigma:.2f}, "
+        "joined by crossfades and set to the stem's level; the notes are the original part's"
+    )
+    return audio.astype(np.float32), {**info, "sigma": round(sigma, 3)}
 
 
 def resample(audio: np.ndarray, rate: int, target: int) -> np.ndarray:
@@ -389,12 +493,15 @@ def generate(request: dict, workdir: Path) -> dict:
         loop = fit(loop, loop_frames)
         audio = fit(np.tile(loop, (frames // loop_frames + 1, 1)), frames)
         notes.append("Foundation-1 is not told the chords; it only knows the key")
+    elif operation == "restyle":
+        audio, info = restyle(request, stems, frames, rate, workdir, notes)
     else:
         raise RequestError(f"unknown operation {operation!r}")
 
     offset, before, after = grid_offset(audio, rate, request["bpm"])
     applied = 0.0
-    if offset > 0.005 and after < 0.7 * before:
+    # A restyled take keeps its stem's timing, so only new parts are moved.
+    if operation != "restyle" and offset > 0.005 and after < 0.7 * before:
         audio = shift_earlier(audio, round(offset * rate))
         applied = offset
     peak = float(np.abs(audio).max())

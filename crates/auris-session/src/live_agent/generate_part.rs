@@ -36,62 +36,20 @@ fn configured() -> Option<(PathBuf, PathBuf)> {
     Some((python.into(), script.into()))
 }
 
-/// A track ACE-Step can add.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Instrument {
-    /// A drum kit.
-    Drums,
-    /// A bass line.
-    Bass,
-    /// Guitar.
-    Guitar,
-    /// Piano, organ or other keys.
-    Keyboard,
-    /// Percussion other than the kit.
-    Percussion,
-    /// Strings.
-    Strings,
-    /// Synthesiser.
-    Synth,
-    /// Brass.
-    Brass,
-    /// Woodwinds.
-    Woodwinds,
-    /// Effects and textures.
-    Fx,
-}
-
-impl Instrument {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Drums => "drums",
-            Self::Bass => "bass",
-            Self::Guitar => "guitar",
-            Self::Keyboard => "keyboard",
-            Self::Percussion => "percussion",
-            Self::Strings => "strings",
-            Self::Synth => "synth",
-            Self::Brass => "brass",
-            Self::Woodwinds => "woodwinds",
-            Self::Fx => "fx",
-        }
-    }
-}
-
 /// What the model is asked to make.
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PartRequest {
-    /// A new part played along with the other tracks of the range (ACE-Step 1.5 lego): the
-    /// model hears their stems and returns the new part alone. Give replace_track to leave the
-    /// part being replaced out of what the model hears; that track keeps playing until you
-    /// mute it.
-    Stem {
-        /// The kind of part to play.
-        instrument: Instrument,
-        /// Track ID left out of the context, usually the one this part replaces.
-        replace_track: Option<u64>,
+    /// Play one track's part again in another sound (Foundation-1 audio-to-audio from the
+    /// track's own stem): the notes and timing stay the track's, the prompt names the new
+    /// instrument and character. strength 0..1 (default 0.4) says how far the sound may move
+    /// from the original; above about 0.6 the notes start to change. Replace the original by
+    /// muting it.
+    Restyle {
+        /// Track ID to play again; defaults to the clip's track.
+        track: Option<u64>,
+        /// How far the take may move from the original, 0..1; default 0.4.
+        strength: Option<f32>,
     },
     /// Rewrite bars of one track's audio (ACE-Step 1.5 repaint). The model hears only that
     /// track; outside the repainted bars the result is the track as rendered, so the new
@@ -117,7 +75,6 @@ pub(super) struct Plan {
     pub(super) job: crate::RenderJob,
     pub(super) options: OfflineOptions,
     pub(super) request: serde_json::Value,
-    pub(super) exclude_tracks: Vec<TrackId>,
     pub(super) target_track: Option<TrackId>,
     pub(super) python: PathBuf,
     pub(super) script: PathBuf,
@@ -203,19 +160,26 @@ impl crate::Session {
             "beats_per_bar": signature.numerator,
             "seed": seed.unwrap_or(0),
         });
-        let mut exclude_tracks = Vec::new();
         let mut target_track = None;
         let name = match request {
-            PartRequest::Stem {
-                instrument,
-                replace_track,
-            } => {
-                body["operation"] = "stem".into();
-                body["instrument"] = instrument.name().into();
-                if let Some(id) = replace_track {
-                    exclude_tracks.push(track_exists(id)?);
+            PartRequest::Restyle { track, strength } => {
+                let track = match (track, clip_track) {
+                    (Some(id), _) => track_exists(id)?,
+                    (None, Some((id, _, _))) => id,
+                    (None, None) => return Err("Restyle needs track or clip".into()),
+                };
+                let strength = strength.unwrap_or(0.4);
+                if !(0.0..=1.0).contains(&strength) {
+                    return Err("strength must lie within 0..1".into());
                 }
-                format!("Generated {}", instrument.name())
+                body["operation"] = "restyle".into();
+                body["strength"] = strength.into();
+                target_track = Some(track);
+                let track_name = project
+                    .track(track)
+                    .map(|t| t.name.clone())
+                    .unwrap_or_default();
+                format!("{track_name} (restyled)")
             }
             PartRequest::Repaint {
                 track,
@@ -261,7 +225,6 @@ impl crate::Session {
                 job,
                 options,
                 request: body,
-                exclude_tracks,
                 target_track,
                 python,
                 script,
@@ -282,7 +245,6 @@ pub(super) fn run(
         mut job,
         options,
         mut request,
-        exclude_tracks,
         target_track,
         python,
         script,
@@ -313,14 +275,9 @@ pub(super) fn run(
     if let Some(track) = target_track {
         let name = names
             .get(&track)
-            .ok_or("The repainted track is muted or has no stem; unmute it first")?;
+            .ok_or("The track is muted or has no stem in the range; unmute it first")?;
         request["target"] = name.clone().into();
     }
-    request["exclude"] = exclude_tracks
-        .iter()
-        .filter_map(|t| names.get(t).cloned())
-        .collect::<Vec<_>>()
-        .into();
     request["stems"] = map.into();
     let output = work.path().join("generated.wav");
     request["output"] = output.display().to_string().into();
@@ -394,11 +351,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn requests_name_every_operation_and_instrument_the_script_knows() {
+    fn requests_name_every_operation_the_script_knows() {
         for (json, kind) in [
             (
-                serde_json::json!({"kind":"stem","instrument":"drums"}),
-                "stem",
+                serde_json::json!({"kind":"restyle","strength":0.4}),
+                "restyle",
             ),
             (
                 serde_json::json!({"kind":"repaint","start_bar":1,"bars":2}),
@@ -409,10 +366,10 @@ mod tests {
             let parsed: PartRequest = serde_json::from_value(json).unwrap();
             assert_eq!(serde_json::to_value(&parsed).unwrap()["kind"], kind);
         }
-        assert_eq!(Instrument::Woodwinds.name(), "woodwinds");
+        // ACE-Step's lego is not offered: its parts come out garbled on every device.
         assert!(
             serde_json::from_value::<PartRequest>(
-                serde_json::json!({"kind":"stem","instrument":"kazoo"})
+                serde_json::json!({"kind":"stem","instrument":"drums"})
             )
             .is_err()
         );

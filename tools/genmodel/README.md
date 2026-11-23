@@ -27,8 +27,8 @@ weights and their outputs stay on the machine that ran them.
 ## The agent's `generate_part` tool
 
 `genpart.py` is what Auris's experimental `generate_part` tool runs: the session renders the
-stems of a bar range, the script runs ACE-Step (`stem`, `repaint`) or Foundation-1 (`loop`)
-on them, and the WAV it writes comes back as a new audio track. The tool is offered only
+stems of a bar range, the script runs ACE-Step (`repaint`) or Foundation-1 (`restyle`,
+`loop`) on them, and the WAV it writes comes back as a new audio track. The tool is offered only
 when these are set in the environment Auris starts in:
 
 * `AURIS_GENMODEL_PYTHON`: a Python 3.11 interpreter. `genpart.py` takes numpy, scipy and
@@ -44,3 +44,7 @@ A Python that uv installs from inside the Claude desktop app goes into that app'
 of `%APPDATA%`, which Auris started from an ordinary terminal cannot see. The venvs here were
 made that way, so their `pyvenv.cfg` `home` points at a copy of the interpreter in
 `<genmodel home>\python\`.
+
+`stem` (ACE-Step's `lego`) stays in `genpart.py` but is not offered to the agent: its parts
+come out garbled on the CPU as on the GPU (ACE-Step issue #1375). `restyle` plays a stem again
+through Foundation-1 audio-to-audio instead; a sigma of about 2 keeps the notes.
