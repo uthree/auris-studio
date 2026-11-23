@@ -23,3 +23,15 @@ weights and their outputs stay on the machine that ran them.
   `ACESTEP_ROCM_DTYPE=bfloat16`.
 * yue2.cpp is built with its Vulkan backend (Vulkan SDK + MSVC) and runs with
   `--device Vulkan0`.
+
+## The agent's `generate_part` tool
+
+`genpart.py` is what Auris's experimental `generate_part` tool runs: the session renders the
+stems of a bar range, the script runs ACE-Step (`stem`, `repaint`) or Foundation-1 (`loop`)
+on them, and the WAV it writes comes back as a new audio track. The tool is offered only
+when these are set in the environment Auris starts in:
+
+* `AURIS_GENMODEL_PYTHON`: an interpreter with numpy, scipy and soundfile (the ACE-Step venv
+  has them);
+* `AURIS_GENMODEL_SCRIPT`: the path of `genpart.py`;
+* `AURIS_GENMODEL_HOME`: the folder holding the `ace-step` and `stable-audio-tools` checkouts.

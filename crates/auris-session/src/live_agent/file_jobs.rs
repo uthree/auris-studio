@@ -48,6 +48,14 @@ pub struct FileJob {
 }
 
 enum Work {
+    GeneratePart {
+        plan: Box<super::generate_part::Plan>,
+        folder: PathBuf,
+        name: String,
+        at: Ticks,
+        rate: f64,
+        render_rate: f64,
+    },
     ImportAudio {
         path: PathBuf,
         folder: PathBuf,
@@ -115,6 +123,13 @@ pub struct FileResult {
 }
 
 enum Outcome {
+    GeneratedPart {
+        staged: StagedSource,
+        folder: PathBuf,
+        name: String,
+        at: Ticks,
+        report: serde_json::Value,
+    },
     ImportedAudio {
         file: tempfile::NamedTempFile,
         prepared: crate::PreparedAudioSource,
@@ -291,6 +306,28 @@ impl FileJob {
                     at,
                 )
             }
+            Work::GeneratePart {
+                plan,
+                folder,
+                name,
+                at,
+                rate,
+                render_rate,
+            } => {
+                let (work, output, report) = super::generate_part::run(*plan, &folder, cancelled)?;
+                let mut staged = stage_audio(&output, &folder, rate, render_rate, &check)?;
+                drop(work);
+                staged
+                    .provenance
+                    .insert("generator".into(), report.to_string());
+                Outcome::GeneratedPart {
+                    staged,
+                    folder,
+                    name,
+                    at,
+                    report,
+                }
+            }
             Work::ImportAudio {
                 path,
                 folder,
@@ -454,6 +491,34 @@ impl Session {
     pub fn begin_agent_file_job(&mut self, command: Command) -> Result<FileJob, String> {
         let owner = Arc::clone(self.registry());
         let work = match command {
+            Command::GeneratePart {
+                request,
+                range,
+                clip,
+                prompt,
+                seed,
+                name,
+            } => {
+                if name
+                    .as_ref()
+                    .is_some_and(|n| n.trim().is_empty() || n.len() > 256)
+                {
+                    return Err("Use a nonempty name up to 256 bytes".into());
+                }
+                let (plan, at, default_name) =
+                    self.plan_generated_part(request, range, clip, prompt, seed)?;
+                Work::GeneratePart {
+                    plan: Box::new(plan),
+                    folder: self
+                        .project_folder()
+                        .ok_or("Missing project folder")?
+                        .to_owned(),
+                    name: name.unwrap_or(default_name),
+                    at,
+                    rate: self.project().sample_rate,
+                    render_rate: self.sample_rate(),
+                }
+            }
             Command::ImportAudio {
                 path,
                 at_tick,
@@ -747,7 +812,7 @@ impl Session {
         })
     }
 
-    fn agent_export_range(
+    pub(super) fn agent_export_range(
         &self,
         range: Option<BarRange>,
         include_tail: bool,
@@ -786,6 +851,30 @@ impl Session {
             );
         }
         match result.outcome {
+            Outcome::GeneratedPart {
+                staged,
+                folder,
+                name,
+                at,
+                report,
+            } => {
+                if self.project_folder() != Some(folder.as_path()) {
+                    return Err("Document folder changed during generation".into());
+                }
+                let imported = self.adopt_agent_audio(
+                    staged.file,
+                    staged.prepared,
+                    name,
+                    at,
+                    staged.bytes,
+                    staged.provenance,
+                )?;
+                let mut value: serde_json::Value =
+                    serde_json::from_str(&imported).map_err(|e| e.to_string())?;
+                value["generator"] = report;
+                value["note"] = "A new audio track; the tracks it was made from still play. Mute or remove what it replaces, set its level, and listen or measure before keeping it. Undo removes it.".into();
+                Ok(value.to_string())
+            }
             Outcome::ImportedMidi(result, at) => self.append_agent_midi(*result, at),
             Outcome::ImportedAudio {
                 file,

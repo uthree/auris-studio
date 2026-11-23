@@ -5,6 +5,7 @@ pub mod automation;
 pub mod comments;
 pub mod document_editing;
 pub mod file_jobs;
+pub mod generate_part;
 pub mod harmony_suggestions;
 mod jobs;
 pub mod layers;
@@ -250,6 +251,21 @@ pub enum Command {
     AudioAssets {
         /// Material operation, performed off the UI thread.
         operation: crate::session::audio_assets::Operation,
+    },
+    /// Experimental: have a local music generation model perform one part over a bar range, as audio on a new track starting at the range. Give range, or clip to take its bars (and, for repaint, its track). request.kind stem plays a new part along with the other unmuted tracks (they are its context; replace_track leaves one out); repaint rewrites bars of one track's audio and keeps the rest of the range as it was; loop tiles a tempo-synced loop that knows the key but not the chords. The result is a recording, not notes: the tracks it was made from keep playing, so mute or remove what it replaces and balance its level. prompt describes the sound (instrument, style, playing, mix). Each call renders the range, runs the model and takes about a minute. Existing music is not changed; one Undo removes the new track.
+    GeneratePart {
+        /// What the model makes.
+        request: generate_part::PartRequest,
+        /// Bars to cover; omit when clip gives them. At most 64 bars, one tempo.
+        range: Option<file_jobs::BarRange>,
+        /// Clip ID whose bars (rounded out to whole bars) set the range; for repaint, also the track.
+        clip: Option<u64>,
+        /// Description of the sound to make, up to 512 bytes, e.g. "tight funk drum kit, ghost notes on the snare".
+        prompt: String,
+        /// Generation seed; default 0. Another seed is another take.
+        seed: Option<u32>,
+        /// Name of the new audio track; defaults to what was generated.
+        name: Option<String>,
     },
     /// Import a local audio file as a new track at an absolute tick position. Existing music and tempo are preserved. Copy and decode run off the UI thread; cancellation or document changes discard the staged import. One Undo removes it.
     ImportAudio {
@@ -916,6 +932,7 @@ impl Command {
                 | Self::VerifyRender { .. }
                 | Self::LintProject { audio: true, .. }
                 | Self::ImportAudio { .. }
+                | Self::GeneratePart { .. }
                 | Self::LoadSample { .. }
                 | Self::ImportMidi { .. }
                 | Self::Checkpoints { .. }
@@ -1412,6 +1429,7 @@ impl Session {
             | Command::VerifyRender { .. }
             | Command::LintProject { audio: true, .. }
             | Command::ImportAudio { .. }
+            | Command::GeneratePart { .. }
             | Command::LoadSample { .. }
             | Command::ImportMidi { .. }
             | Command::Checkpoints { .. }

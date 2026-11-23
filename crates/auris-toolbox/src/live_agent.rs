@@ -175,6 +175,10 @@ fn definitions_with_arrangement(arrangement_enabled: bool) -> Vec<Definition> {
             if action == "arrangement" && !arrangement_enabled {
                 continue;
             }
+            // Experimental, and only where a model is installed: see generate_part's module.
+            if action == "generate_part" && !auris_session::live_agent::generate_part::enabled() {
+                continue;
+            }
             if action == transcription_import::NAME {
                 tools.push(Definition {
                     name: transcription_import::NAME.into(),
