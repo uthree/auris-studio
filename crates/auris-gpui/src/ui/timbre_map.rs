@@ -64,7 +64,6 @@ pub(crate) struct TimbreMapState {
     pub(crate) map: Option<Arc<TimbreMap>>,
     pub(crate) control: Option<TimbreMapControl>,
     generation: u64,
-    total: usize,
     selected: Option<usize>,
     preview: TimbrePreview,
     error: Option<String>,
@@ -246,6 +245,24 @@ impl AurisApp {
     }
 
     /// Manual corrections win over name hints, then cluster suggestions fill unknown families.
+    /// [`Self::library_sound_icon`] for a mapped sound of any kind, plugin presets and saved
+    /// sounds included.
+    pub(crate) fn timbre_sound_icon(&self, sound: &TimbreSound) -> SoundIcon {
+        if let Some(icon) = self
+            .session
+            .library_sound_key(sound)
+            .and_then(|key| self.settings.sound_icons.get(&key))
+        {
+            return *icon;
+        }
+        match &sound.source {
+            auris_session::TimbreSource::Builtin(_) | auris_session::TimbreSource::Font(_) => {
+                self.library_sound_icon(&sound.instrument_id(), sound.preset(), &sound.name)
+            }
+            _ => SoundIcon::infer(&sound.name),
+        }
+    }
+
     pub(crate) fn library_sound_icon(
         &self,
         instrument_id: &str,
@@ -254,7 +271,7 @@ impl AurisApp {
     ) -> SoundIcon {
         if let Some(icon) = self
             .session
-            .library_sound_key(instrument_id, preset)
+            .library_instrument_key(instrument_id, preset)
             .and_then(|key| self.settings.sound_icons.get(&key))
         {
             return *icon;
@@ -296,10 +313,7 @@ impl AurisApp {
         icon: Option<SoundIcon>,
         save: impl FnOnce(&auris_session::Settings) -> Result<(), E>,
     ) {
-        let Some(key) = self
-            .session
-            .library_sound_key(&sound.instrument_id, sound.preset)
-        else {
+        let Some(key) = self.session.library_sound_key(sound) else {
             return;
         };
         let previous = self.settings.sound_icons.clone();
@@ -331,10 +345,10 @@ impl AurisApp {
 
     fn render_sound_icon_picker(&self, sound: &TimbreSound, cx: &mut Context<Self>) -> AnyElement {
         let spacing = self.theme.atelier.spacing;
-        let selected = self.library_sound_icon(&sound.instrument_id, sound.preset, &sound.name);
+        let selected = self.timbre_sound_icon(sound);
         let manual = self
             .session
-            .library_sound_key(&sound.instrument_id, sound.preset)
+            .library_sound_key(sound)
             .is_some_and(|key| self.settings.sound_icons.contains_key(&key));
         let mut picker = div().flex().flex_col().gap(spacing.xs).child(
             Button::new(
@@ -496,7 +510,7 @@ impl AurisApp {
         }
         let summaries = map.cluster_summaries_with_icons(|sound| {
             self.session
-                .library_sound_key(&sound.instrument_id, sound.preset)
+                .library_sound_key(sound)
                 .and_then(|key| self.settings.sound_icons.get(&key))
                 .copied()
                 .unwrap_or_else(|| SoundIcon::infer(&sound.name))
@@ -548,7 +562,7 @@ impl AurisApp {
     pub(crate) fn open_timbre_map(&mut self, cx: &mut Context<Self>) {
         self.timbre_map.open = true;
         if self.timbre_map.map.is_none() && self.timbre_map.control.is_none() {
-            self.scan_timbre_map(cx);
+            self.scan_timbre_map(false, cx);
         }
     }
 
@@ -558,7 +572,9 @@ impl AurisApp {
         self.timbre_map.open = false;
     }
 
-    pub(crate) fn scan_timbre_map(&mut self, cx: &mut Context<Self>) {
+    /// Scans the library for the map. `rescan` lists it again — new and updated plugins
+    /// included — instead of reusing an index measured earlier in this run.
+    pub(crate) fn scan_timbre_map(&mut self, rescan: bool, cx: &mut Context<Self>) {
         self.timbre_map.search_focused = false;
         self.timbre_map.cancel();
         self.timbre_map.selected = None;
@@ -570,14 +586,8 @@ impl AurisApp {
         self.timbre_map.naming_error = None;
         self.timbre_map.preview.pitch = None;
         self.timbre_map.map = None;
-        let job = match self.session.timbre_map_job() {
-            Ok(job) => job,
-            Err(e) => {
-                self.timbre_map.error = Some(e.to_string());
-                return;
-            }
-        };
-        self.timbre_map.total = job.sound_count();
+        let job = self.session.timbre_map_job(&self.settings.plugin_paths);
+        let job = if rescan { job.refreshed() } else { job };
         let generation = self.timbre_map.generation;
         let control = TimbreMapControl::default();
         self.timbre_map.control = Some(control.clone());
@@ -1423,11 +1433,7 @@ impl AurisApp {
                                 )
                                 .selected(self.timbre_map.selected == Some(i))
                                 .icon(atelier::IconSource::svg(super::icons::sound_icon_path(
-                                    self.library_sound_icon(
-                                        &sound.instrument_id,
-                                        sound.preset,
-                                        &sound.name,
-                                    ),
+                                    self.timbre_sound_icon(sound),
                                 )))
                                 .icon_color(self.theme.atelier.categorical(map.clusters()[i]))
                                 .description(description)
@@ -1567,20 +1573,43 @@ impl AurisApp {
         // Everything the window reports, on the one line made for it: the scan's progress while
         // it runs, then what the map keeps and leaves out.
         let summary = match (&self.timbre_map.control, &self.timbre_map.map) {
+            (Some(control), _) if control.total() == 0 => self.t(Key::TimbreMapListing).to_owned(),
             (Some(control), _) => format!(
                 "{} {}/{}",
                 self.t(Key::AnalysisRunning),
                 control.completed(),
-                self.timbre_map.total
+                control.total()
+            ),
+            (None, Some(map)) if map.limited => format!(
+                "{}: {} · {}",
+                self.t(Key::TimbreMapSkipped),
+                map.skipped.len(),
+                self.t(Key::TimbreMapLimited)
             ),
             (None, Some(map)) => {
                 format!("{}: {}", self.t(Key::TimbreMapSkipped), map.skipped.len())
             }
             (None, None) => String::new(),
         };
+        // Measuring plugins costs seconds a sound the first time; say so for as long as it runs.
+        let plugin_notice = self
+            .timbre_map
+            .control
+            .as_ref()
+            .filter(|control| control.worker_sounds() > 0)
+            .map(|control| {
+                div().px(spacing.lg).pb(spacing.sm).child(
+                    Label::new(
+                        self.t(Key::TimbreMapPluginsSlow)
+                            .replace("{count}", &control.worker_sounds().to_string()),
+                    )
+                    .size(TextSize::XSmall)
+                    .color(TextColor::Muted),
+                )
+            });
         let progress = self.timbre_map.control.as_ref().map(|control| {
             div().w(gpui::rems(8.)).child(ProgressBar::new(
-                control.completed() as f32 / self.timbre_map.total.max(1) as f32,
+                control.completed() as f32 / control.total().max(1) as f32,
             ))
         });
         Some(
@@ -1615,7 +1644,7 @@ impl AurisApp {
                             Button::new("timbre-rescan", self.t(Key::TimbreMapRescan))
                                 .size(ControlSize::Small)
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.scan_timbre_map(cx);
+                                    this.scan_timbre_map(true, cx);
                                     cx.notify();
                                 }))
                         })
@@ -1638,6 +1667,7 @@ impl AurisApp {
                         .p(spacing.lg)
                         .child(content),
                 )
+                .children(plugin_notice)
                 .child(
                     StatusBar::new()
                         .message(summary)
@@ -1661,8 +1691,8 @@ mod tests {
         let before = app.update(cx, |this, _| {
             this.timbre_map.map = Some(Arc::new(
                 this.session
-                    .timbre_map_job()
-                    .unwrap()
+                    .timbre_map_job(&[])
+                    .without_plugins()
                     .run(&TimbreMapControl::default())
                     .unwrap(),
             ));
@@ -1711,8 +1741,8 @@ mod tests {
         let before = app.update(cx, |this, _| {
             this.timbre_map.map = Some(Arc::new(
                 this.session
-                    .timbre_map_job()
-                    .unwrap()
+                    .timbre_map_job(&[])
+                    .without_plugins()
                     .run(&TimbreMapControl::default())
                     .unwrap(),
             ));
@@ -1796,21 +1826,17 @@ mod tests {
         let (before, sound, automatic) = app.update(cx, |this, _| {
             let map = this
                 .session
-                .timbre_map_job()
-                .unwrap()
+                .timbre_map_job(&[])
+                .without_plugins()
                 .run(&TimbreMapControl::default())
                 .unwrap();
             let sound = map.sounds[0].clone();
-            let key = this
-                .session
-                .library_sound_key(&sound.instrument_id, sound.preset)
-                .unwrap();
+            let key = this.session.library_sound_key(&sound).unwrap();
             this.settings.sound_icons.remove(&key);
             this.timbre_map.map = Some(Arc::new(map));
             this.timbre_map.selected = Some(0);
             this.timbre_map.open = true;
-            let automatic =
-                this.library_sound_icon(&sound.instrument_id, sound.preset, &sound.name);
+            let automatic = this.timbre_sound_icon(&sound);
             (this.project().clone(), sound, automatic)
         });
         paint(&app, cx);
@@ -1821,10 +1847,7 @@ mod tests {
             keystroke: gpui::Keystroke::parse("space").unwrap(),
         });
         app.update(&mut utility, |this, _| {
-            let key = this
-                .session
-                .library_sound_key(&sound.instrument_id, sound.preset)
-                .unwrap();
+            let key = this.session.library_sound_key(&sound).unwrap();
             // Saved, read from what the save recorded rather than from the file: every test in
             // this binary shares one configuration directory, and another test's settings write
             // can replace the file between this click and a `Settings::load()`. The baseline
@@ -1847,19 +1870,13 @@ mod tests {
                 this.timbre_map
                     .finish_naming(this.timbre_map.naming_generation, Ok(names))
             );
-            assert_eq!(
-                this.library_sound_icon(&sound.instrument_id, sound.preset, &sound.name),
-                SoundIcon::Guitar
-            );
+            assert_eq!(this.timbre_sound_icon(&sound), SoundIcon::Guitar);
             this.timbre_map.clear();
-            assert_eq!(
-                this.library_sound_icon(&sound.instrument_id, sound.preset, &sound.name),
-                SoundIcon::Guitar
-            );
+            assert_eq!(this.timbre_sound_icon(&sound), SoundIcon::Guitar);
             this.timbre_map.map = Some(Arc::new(
                 this.session
-                    .timbre_map_job()
-                    .unwrap()
+                    .timbre_map_job(&[])
+                    .without_plugins()
                     .run(&TimbreMapControl::default())
                     .unwrap(),
             ));
@@ -1881,10 +1898,7 @@ mod tests {
         assert!(inspector.contains(&utility.debug_bounds("timbre-icon-auto").unwrap().center()));
         click("timbre-icon-auto", &mut utility);
         app.update(&mut utility, |this, _| {
-            let key = this
-                .session
-                .library_sound_key(&sound.instrument_id, sound.preset)
-                .unwrap();
+            let key = this.session.library_sound_key(&sound).unwrap();
             assert!(
                 !this
                     .settings_baseline
@@ -1892,10 +1906,7 @@ mod tests {
                     .sound_icons
                     .contains_key(&key)
             );
-            assert_eq!(
-                this.library_sound_icon(&sound.instrument_id, sound.preset, &sound.name),
-                automatic
-            );
+            assert_eq!(this.timbre_sound_icon(&sound), automatic);
             let previous = this.settings.clone();
             this.correct_sound_icon_with(&sound, Some(SoundIcon::Brass), |_| Err("disk full"));
             assert_eq!(this.settings, previous);
@@ -2049,8 +2060,8 @@ mod tests {
             assert!(this.project().tracks.is_empty());
             this.timbre_map.map = Some(Arc::new(
                 this.session
-                    .timbre_map_job()
-                    .unwrap()
+                    .timbre_map_job(&[])
+                    .without_plugins()
                     .run(&TimbreMapControl::default())
                     .unwrap(),
             ));
@@ -2102,8 +2113,8 @@ mod tests {
         let before = app.update(cx, |this, _| {
             let map = this
                 .session
-                .timbre_map_job()
-                .unwrap()
+                .timbre_map_job(&[])
+                .without_plugins()
                 .run(&TimbreMapControl::default())
                 .unwrap();
             assert!(!map.sounds.is_empty());
@@ -2133,8 +2144,8 @@ mod tests {
             this.select_track(track);
             let map = this
                 .session
-                .timbre_map_job()
-                .unwrap()
+                .timbre_map_job(&[])
+                .without_plugins()
                 .run(&TimbreMapControl::default())
                 .unwrap();
             // Use the first alternate sound: the visible rows remain clickable as the built-in
@@ -2142,7 +2153,7 @@ mod tests {
             let index = map
                 .sounds
                 .iter()
-                .position(|s| s.instrument_id != auris_session::DEFAULT_INSTRUMENT)
+                .position(|s| matches!(&s.source, auris_session::TimbreSource::Builtin(id) if id != auris_session::DEFAULT_INSTRUMENT))
                 .unwrap();
             this.timbre_map.map = Some(Arc::new(map));
             this.timbre_map.open = true;
@@ -2150,7 +2161,7 @@ mod tests {
             let cluster = map.clusters()[index];
             let sound = &map.sounds[index];
             let annotation = this
-                .library_timbre_cluster(&sound.instrument_id, sound.preset)
+                .library_timbre_cluster(&sound.instrument_id(), sound.preset())
                 .unwrap();
             assert_eq!(annotation.color, this.theme.atelier.categorical(cluster));
             assert!(!annotation.name.is_empty());
@@ -2324,7 +2335,7 @@ mod tests {
             let generation = this.timbre_map.naming_generation;
             assert!(this.timbre_map.finish_naming(generation, Ok(names)));
             let tag = this
-                .library_timbre_cluster(&sound.instrument_id, sound.preset)
+                .library_timbre_cluster(&sound.instrument_id(), sound.preset())
                 .unwrap();
             assert_eq!(tag.name, format!("Named cluster {cluster}"));
             assert!(tag.by_ai, "an AI name carries the agent's mark");
@@ -2360,7 +2371,7 @@ mod tests {
             let map = this.timbre_map.map.as_ref().unwrap();
             let sound = &map.sounds[index];
             assert!(
-                this.library_timbre_cluster(&sound.instrument_id, sound.preset)
+                this.library_timbre_cluster(&sound.instrument_id(), sound.preset())
                     .is_some()
             );
             this.reset_view();

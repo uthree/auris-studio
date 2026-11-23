@@ -191,14 +191,7 @@ impl Session {
         let Some((id, state)) = native_sound(bank, patch) else {
             return Ok(false);
         };
-        self.use_timbre_sound(
-            track,
-            &super::timbre::TimbreSound {
-                name: id.into(),
-                instrument_id: id.into(),
-                preset: None,
-            },
-        )?;
+        self.use_timbre_sound(track, &super::timbre::TimbreSound::builtin(id, id))?;
         // Re-selecting a musical hint restores its starting patch, just as choosing a preset.
         for (key, value) in state.params {
             if let Some(param) = self

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use auris_core::plugin::{PluginCategory, PluginKind};
 use serde::{Deserialize, Serialize};
 
+use crate::session::sound_search::native::{Measurement, PluginListing, WorkerSound};
 use crate::{ClapPluginInfo, InstalledPluginFiles, SessionError, Vst3PluginInfo};
 
 const WORKER_ARG: &str = "--plugin-discovery-worker";
@@ -144,6 +145,7 @@ impl PluginDiscoveryJob {
             },
             cancelled,
             timeout,
+            MAX_WORKER_DURATION,
         )?;
         match response {
             WorkerResponse::Discovery(files) => {
@@ -222,6 +224,7 @@ impl PluginProbeJob {
             },
             cancelled,
             timeout,
+            MAX_WORKER_DURATION,
         )?;
         match (expected, response) {
             (PluginFormat::Clap, WorkerResponse::Clap(plugins)) => {
@@ -252,8 +255,27 @@ pub enum PluginProbeResult {
 
 #[derive(Debug, Deserialize, Serialize)]
 enum WorkerRequest {
-    Discover { extra_paths: Vec<PathBuf> },
-    Probe { format: PluginFormat, path: PathBuf },
+    Discover {
+        extra_paths: Vec<PathBuf>,
+    },
+    Probe {
+        format: PluginFormat,
+        path: PathBuf,
+    },
+    List {
+        format: PluginFormat,
+        path: PathBuf,
+        sample_rate: f64,
+    },
+    Measure {
+        sound: WorkerSound,
+        sample_rate: f64,
+    },
+    Preview {
+        sound: WorkerSound,
+        sample_rate: f64,
+        pitch: u8,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -261,6 +283,79 @@ enum WorkerResponse {
     Discovery(InstalledPluginFiles),
     Clap(Vec<ClapPluginInfoWire>),
     Vst3(Vec<Vst3PluginInfoWire>),
+    Listing(PluginListing),
+    Measured(Measurement),
+    Preview(Vec<Vec<f32>>),
+}
+
+/// How long one plugin file may take to list its instruments and presets.
+const LIST_DURATION: Duration = Duration::from_secs(30);
+/// How long measuring one sound may take: nine fresh instances, up to eight seconds of audio
+/// each for the envelope notes, rendered offline.
+const MEASURE_DURATION: Duration = Duration::from_secs(180);
+
+/// Lists one plugin file's instruments and presets in a worker process.
+pub(crate) fn list_plugin_isolated(
+    format: PluginFormat,
+    path: PathBuf,
+    sample_rate: f64,
+    cancelled: &AtomicBool,
+) -> Result<PluginListing, SessionError> {
+    let _permit = ProbePermit::acquire(&ACTIVE_PLUGIN_PROBES, cancelled, LIST_DURATION)?;
+    match run_worker(
+        WorkerRequest::List {
+            format,
+            path,
+            sample_rate,
+        },
+        cancelled,
+        LIST_DURATION,
+        LIST_DURATION,
+    )? {
+        WorkerResponse::Listing(listing) => Ok(listing),
+        _ => Err(failure("plugin worker returned the wrong response kind")),
+    }
+}
+
+/// Measures one sound that needs third-party code or a file, in a worker process.
+pub(crate) fn measure_isolated(
+    sound: WorkerSound,
+    sample_rate: f64,
+    cancelled: &AtomicBool,
+) -> Result<Measurement, SessionError> {
+    let _permit = ProbePermit::acquire(&ACTIVE_PLUGIN_PROBES, cancelled, MEASURE_DURATION)?;
+    match run_worker(
+        WorkerRequest::Measure { sound, sample_rate },
+        cancelled,
+        MEASURE_DURATION,
+        MEASURE_DURATION,
+    )? {
+        WorkerResponse::Measured(measurement) => Ok(measurement),
+        _ => Err(failure("plugin worker returned the wrong response kind")),
+    }
+}
+
+/// Renders one audition note of such a sound in a worker process.
+pub(crate) fn preview_isolated(
+    sound: WorkerSound,
+    sample_rate: f64,
+    pitch: u8,
+    cancelled: &AtomicBool,
+) -> Result<Vec<Vec<f32>>, SessionError> {
+    let _permit = ProbePermit::acquire(&ACTIVE_PLUGIN_PROBES, cancelled, MAX_WORKER_DURATION)?;
+    match run_worker(
+        WorkerRequest::Preview {
+            sound,
+            sample_rate,
+            pitch,
+        },
+        cancelled,
+        MAX_WORKER_DURATION,
+        MAX_WORKER_DURATION,
+    )? {
+        WorkerResponse::Preview(channels) => Ok(channels),
+        _ => Err(failure("plugin worker returned the wrong response kind")),
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -439,6 +534,22 @@ fn execute_worker(request: WorkerRequest) -> Result<WorkerResponse, String> {
             validate_vst3_plugins(&plugins).map_err(|error| error.to_string())?;
             Ok(WorkerResponse::Vst3(plugins))
         }
+        WorkerRequest::List {
+            format,
+            path,
+            sample_rate,
+        } => crate::session::sound_search::native::list_plugin(format, &path, sample_rate)
+            .map(WorkerResponse::Listing),
+        WorkerRequest::Measure { sound, sample_rate } => {
+            crate::session::sound_search::native::measure_worker_sound(&sound, sample_rate)
+                .map(WorkerResponse::Measured)
+        }
+        WorkerRequest::Preview {
+            sound,
+            sample_rate,
+            pitch,
+        } => crate::session::sound_search::native::preview_worker_sound(&sound, sample_rate, pitch)
+            .map(WorkerResponse::Preview),
     }
 }
 
@@ -511,13 +622,12 @@ fn run_worker(
     request: WorkerRequest,
     cancelled: &AtomicBool,
     timeout: Duration,
+    longest: Duration,
 ) -> Result<WorkerResponse, SessionError> {
     if cancelled.load(Ordering::Relaxed) {
         return Err(failure("plugin discovery cancelled"));
     }
-    let timeout = timeout
-        .max(Duration::from_millis(100))
-        .min(MAX_WORKER_DURATION);
+    let timeout = timeout.max(Duration::from_millis(100)).min(longest);
     let directory = JobDirectory::new()?;
     let input = directory.0.join("request.json");
     let output = directory.0.join("response.json");

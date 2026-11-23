@@ -123,7 +123,8 @@ impl ArrangementJob {
                     layer,
                     stacks,
                 } => {
-                    let instrument = sound.run(&PrepareContext::new(self.render_rate, 512, 2))?;
+                    let prepared = sound.run(&PrepareContext::new(self.render_rate, 512, 2))?;
+                    let instrument = prepared.instrument;
                     sounds.push(*sound);
                     let source = self
                         .project
@@ -188,6 +189,38 @@ impl ArrangementJob {
                     } else {
                         auris_core::TrackKind::Instrument(new_instrument)
                     };
+                    if let Some(effects) = prepared.effects {
+                        // A saved sound is an instrument with its inserts: the copied track's own
+                        // inserts belong to the sound it no longer plays.
+                        let old: Vec<_> = self
+                            .project
+                            .track(track)
+                            .into_iter()
+                            .flat_map(|entry| &entry.mixer.effects)
+                            .map(|slot| slot.id)
+                            .collect();
+                        for slot in old {
+                            self.project.remove_effect(slot);
+                        }
+                        for effect in &effects {
+                            if let Some(slot) =
+                                self.project.add_effect(Some(track), &effect.effect_id)
+                                && let Some(entry) =
+                                    self.project.track_mut(track).and_then(|entry| {
+                                        entry
+                                            .mixer
+                                            .effects
+                                            .iter_mut()
+                                            .find(|entry| entry.id == slot)
+                                    })
+                            {
+                                entry.state.clone_from(&effect.state);
+                                entry.enabled = effect.enabled;
+                                entry.file =
+                                    effect.file.as_ref().map(auris_core::AssetPath::external);
+                            }
+                        }
+                    }
                     let destination = self
                         .project
                         .track(track)

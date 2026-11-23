@@ -4,7 +4,7 @@ use super::{Session, SoundEnvelope, TimbreMapControl, TimbreSound};
 use crate::prelude::*;
 use crate::{EnvelopeTargets, SoundAxes, TimbreCharacter, TimbreTargets};
 use auris_core::plugin::{Instrument, PluginState, PrepareContext};
-use auris_dsp::timbre::{standardize_timbres, timbre_character, timbre_features};
+use auris_dsp::timbre::standardize_timbres;
 use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::collections::{HashSet, VecDeque};
@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 mod arrangement_sound;
+pub(crate) mod native;
 pub(super) use arrangement_sound::SoundPreparation;
 
 /// One bounded sound search shared by saved-file and live-session frontends.
@@ -84,6 +85,10 @@ pub enum SoundSource {
     Clap,
     /// VST3 instruments and presets.
     Vst3,
+    /// Sounds the user saved: an instrument with its insert chain.
+    User,
+    /// Sounds shipped with the application: an instrument with its insert chain.
+    Factory,
 }
 /// Constraints applied before pagination or selecting nearest neighbors.
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
@@ -101,6 +106,20 @@ impl SoundFilter {
             Some(SoundSource::Soundfont) => matches!(sound.source, Source::Font(_)),
             Some(SoundSource::Clap) => matches!(sound.source, Source::Clap { .. }),
             Some(SoundSource::Vst3) => matches!(sound.source, Source::Vst3 { .. }),
+            Some(SoundSource::User) => matches!(
+                sound.source,
+                Source::Patch {
+                    origin: super::PatchOrigin::User,
+                    ..
+                }
+            ),
+            Some(SoundSource::Factory) => matches!(
+                sound.source,
+                Source::Patch {
+                    origin: super::PatchOrigin::Factory,
+                    ..
+                }
+            ),
         };
         source
             && self
@@ -113,25 +132,8 @@ fn default_limit() -> usize {
     10
 }
 
-#[derive(Clone, Debug)]
-enum Source {
-    Builtin(String),
-    Font(PresetRef),
-    Clap {
-        file: PathBuf,
-        id: String,
-        preset: Option<auris_clap::ClapPreset>,
-        discovery_stamp: String,
-        isolated_metadata: bool,
-    },
-    Vst3 {
-        file: PathBuf,
-        id: String,
-        preset: Option<auris_vst3::Vst3Preset>,
-        discovery_stamp: String,
-        isolated_metadata: bool,
-    },
-}
+use super::TimbreSource as Source;
+
 #[derive(Clone, Debug)]
 struct Sound {
     id: String,
@@ -139,26 +141,41 @@ struct Sound {
     library: String,
     tags: String,
     source: Source,
+    /// The plugin and preset files' metadata when the sound was listed; empty for a sound that
+    /// lives in no file. Selection compares it, so a plugin replaced since is refused.
+    stamp: String,
 }
 impl Sound {
     fn new(name: String, library: String, tags: String, source: Source) -> Self {
+        Self::stamped(name, library, tags, source, String::new())
+    }
+    fn stamped(name: String, library: String, tags: String, source: Source, stamp: String) -> Self {
         Self {
             id: format!(
                 "sound:{}",
-                hex::encode(Sha256::digest(format!("{source:?}")))
+                hex::encode(Sha256::digest(format!("{source:?}|{stamp}")))
             ),
             name,
             library,
             tags,
             source,
+            stamp,
         }
     }
     fn value(&self) -> serde_json::Value {
-        let source = match self.source {
+        let source = match &self.source {
             Source::Builtin(_) => "builtin",
             Source::Font(_) => "soundfont",
             Source::Clap { .. } => "clap",
             Source::Vst3 { .. } => "vst3",
+            Source::Patch {
+                origin: super::PatchOrigin::User,
+                ..
+            } => "user",
+            Source::Patch {
+                origin: super::PatchOrigin::Factory,
+                ..
+            } => "factory",
         };
         serde_json::json!({"id":self.id,"name":short_text(&self.name,160),"library":short_text(&self.library,160),"source":source})
     }
@@ -172,79 +189,60 @@ impl Sound {
             .saturating_add(self.id.len())
             .saturating_add(self.name.len())
             .saturating_add(self.library.len())
-            .saturating_add(self.tags.len());
+            .saturating_add(self.tags.len())
+            .saturating_add(self.stamp.len());
         let source_bytes = match &self.source {
             Source::Builtin(id) => id.len(),
             Source::Font(_) => 0,
-            Source::Clap {
-                file,
-                id,
-                preset,
-                discovery_stamp,
-                isolated_metadata: _,
-            } => {
-                let mut bytes = file
-                    .as_os_str()
-                    .len()
-                    .saturating_add(id.len())
-                    .saturating_add(discovery_stamp.len());
+            Source::Clap { file, id, preset } => {
+                let mut bytes = file.as_os_str().len().saturating_add(id.len());
                 if let Some(preset) = preset {
                     bytes = bytes
                         .saturating_add(preset.name.len())
-                        .saturating_add(
-                            preset
-                                .plugin_ids
-                                .len()
-                                .saturating_mul(std::mem::size_of::<String>()),
-                        )
-                        .saturating_add(
-                            preset
-                                .plugin_ids
-                                .iter()
-                                .map(String::len)
-                                .fold(0usize, usize::saturating_add),
-                        )
+                        .saturating_add(strings_bytes(&preset.plugin_ids))
                         .saturating_add(preset.location.as_ref().map_or(0, String::len))
                         .saturating_add(preset.load_key.as_ref().map_or(0, String::len))
-                        .saturating_add(
-                            preset
-                                .features
-                                .len()
-                                .saturating_mul(std::mem::size_of::<String>()),
-                        )
-                        .saturating_add(
-                            preset
-                                .features
-                                .iter()
-                                .map(String::len)
-                                .fold(0usize, usize::saturating_add),
-                        );
+                        .saturating_add(strings_bytes(&preset.features));
                 }
                 bytes
             }
-            Source::Vst3 {
-                file,
-                id,
-                preset,
-                discovery_stamp,
-                isolated_metadata: _,
-            } => file
+            Source::Vst3 { file, id, preset } => file
                 .as_os_str()
                 .len()
                 .saturating_add(id.len())
-                .saturating_add(discovery_stamp.len())
                 .saturating_add(match preset {
                     Some(auris_vst3::Vst3Preset::File(path)) => path.as_os_str().len(),
                     _ => 0,
                 }),
+            // A patch's opaque plugin state can be large; count it as stored.
+            Source::Patch { sound, .. } => {
+                serde_json::to_vec(sound.as_ref()).map_or(0, |v| v.len())
+            }
         };
         bytes.saturating_add(source_bytes)
     }
 }
 
-struct AcousticIndex {
+fn strings_bytes(strings: &[String]) -> usize {
+    strings
+        .len()
+        .saturating_mul(std::mem::size_of::<String>())
+        .saturating_add(
+            strings
+                .iter()
+                .map(String::len)
+                .fold(0usize, usize::saturating_add),
+        )
+}
+
+/// Every measured sound of one catalog, shared by the agent's acoustic search and the map.
+pub(crate) struct AcousticIndex {
+    /// Catalog positions, in row order.
     sounds: Vec<usize>,
+    /// Standardized full feature rows, for distances.
     rows: Vec<Vec<f64>>,
+    /// The rows as measured, for the map's clustering.
+    raw_rows: Vec<Vec<f64>>,
     characters: Vec<TimbreCharacter>,
     envelopes: Vec<Option<SoundEnvelope>>,
     skipped: Vec<String>,
@@ -264,10 +262,17 @@ impl AcousticIndex {
 struct IndexState {
     started: bool,
     reference: Option<usize>,
-    result: Option<Result<AcousticIndex, String>>,
+    /// Cancels this measuring run only; a later run gets a fresh one.
+    run: TimbreMapControl,
+    result: Option<Result<Arc<AcousticIndex>, String>>,
 }
 
 impl IndexState {
+    fn reset(&mut self) {
+        self.run.cancel();
+        *self = Self::default();
+    }
+
     fn reset_if_reference_missing(&mut self, reference: usize) -> bool {
         let reusable = match &self.result {
             Some(Ok(index)) => index.sounds.contains(&reference),
@@ -275,9 +280,7 @@ impl IndexState {
             None => true,
         };
         if self.result.is_some() && !reusable {
-            self.started = false;
-            self.reference = None;
-            self.result = None;
+            self.reset();
             true
         } else {
             false
@@ -296,8 +299,15 @@ struct Catalog {
     inventory: Vec<serde_json::Value>,
     index: Mutex<IndexState>,
     completed: AtomicUsize,
+    /// How many sounds the current measuring run will measure.
+    measuring_total: AtomicUsize,
     control: TimbreMapControl,
     native_status: Option<NativePluginStatus>,
+    /// The user library file's metadata when it was read; a change rebuilds the catalog.
+    user_sounds_stamp: Option<String>,
+    sample_rate: f64,
+    registry: Arc<PluginRegistry>,
+    font_paths: Vec<(SoundFontId, PathBuf)>,
 }
 static CATALOGS: OnceLock<Mutex<Vec<Arc<Catalog>>>> = OnceLock::new();
 static CATALOG_BUILD: Mutex<()> = Mutex::new(());
@@ -307,52 +317,49 @@ const CATALOG_SOUND_BYTE_LIMIT: usize = 32 * 1024 * 1024;
 const CATALOG_ERROR_LIMIT: usize = 1_024;
 const CATALOG_ERROR_CHARACTER_LIMIT: usize = 512;
 const ACOUSTIC_WORKER_LIMIT: usize = 4;
+/// Most sounds one index measures. Built-ins, saved patches and SoundFont presets come first,
+/// so a plugin with thousands of presets cannot push the application's own sounds out.
 const ACOUSTIC_SOUND_LIMIT: usize = 1_024;
-const ACOUSTIC_INDEX_BYTE_LIMIT: usize = 16 * 1024 * 1024;
+const ACOUSTIC_INDEX_BYTE_LIMIT: usize = 32 * 1024 * 1024;
+/// Threads measuring one index at once. Each sound that plays in the worker process holds one
+/// of the plugin worker's four slots while it is measured.
+const MEASURING_THREADS: usize = 3;
 const DISCOVERY_FILE_LIMIT: usize = 16_384;
 const DISCOVERY_PATH_BYTE_LIMIT: usize = 16 * 1024 * 1024;
 const DISCOVERY_ENTRY_LIMIT: usize = 65_536;
 const DISCOVERY_DEPTH_LIMIT: usize = 64;
-const ISOLATED_PLUGIN_FILE_LIMIT: usize = 256;
-const ISOLATED_PLUGIN_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
-const ISOLATED_PLUGIN_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-const ISOLATED_PLUGIN_CATALOG_TIMEOUT: Duration = Duration::from_secs(30);
+const PLUGIN_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 static ACOUSTIC_WORKERS: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Debug, Default)]
 struct NativePluginStatus {
     discovered_files: usize,
-    inspected_files: usize,
+    listed_files: usize,
+    cached_files: usize,
     failed_files: usize,
-    skipped_files: usize,
     truncated: bool,
 }
 
 impl NativePluginStatus {
     fn value(&self) -> serde_json::Value {
         serde_json::json!({
-            "mode": "isolated_metadata",
+            "mode": "worker_process",
             "discovered_files": self.discovered_files,
-            "inspected_files": self.inspected_files,
+            "listed_files": self.listed_files,
+            "cached_listings": self.cached_files,
             "failed_files": self.failed_files,
-            "skipped_files": self.skipped_files,
             "truncated": self.truncated,
-            "presets": "not_enumerated",
-            "acoustic_similarity": "not_supported"
         })
     }
 }
 
-#[derive(Clone, Debug)]
-struct IsolatedPluginEntry {
-    path: PathBuf,
-    metadata: crate::PluginProbeResult,
-}
-
+/// Native plugin sounds listed for one catalog, with what the listing found out on the way.
 #[derive(Clone, Debug, Default)]
-struct IsolatedPluginCatalog {
-    entries: Vec<IsolatedPluginEntry>,
+struct NativeCatalog {
+    sounds: Vec<Sound>,
     diagnostics: Vec<String>,
+    inventory: Vec<serde_json::Value>,
+    stamps: Vec<String>,
     status: NativePluginStatus,
 }
 
@@ -450,7 +457,7 @@ fn reserve_catalog_slot(entries: &mut Vec<Arc<Catalog>>) -> Result<(), String> {
     else {
         return Err("Sound discovery is busy; retry after another search finishes".into());
     };
-    entries.remove(index).control.cancel();
+    entries.remove(index).cancel();
     Ok(())
 }
 
@@ -501,16 +508,6 @@ impl CatalogBudget {
     }
 }
 
-#[derive(Default)]
-struct PluginFiles {
-    entries: Vec<(PathBuf, bool)>,
-    seen: HashSet<(PathBuf, bool)>,
-    bytes: usize,
-    truncated: bool,
-    full: bool,
-    errors: Vec<String>,
-}
-
 fn record_inventory(entries: &mut Vec<serde_json::Value>, entry: serde_json::Value) {
     if entries.len() < CATALOG_ERROR_LIMIT {
         entries.push(entry);
@@ -521,13 +518,11 @@ fn record_inventory(entries: &mut Vec<serde_json::Value>, entry: serde_json::Val
     }
 }
 
-#[derive(Clone, Copy)]
-enum RootInventoryMode {
-    Metadata,
-    Isolated,
-}
-
-fn root_inventory(extra_paths: &[PathBuf], mode: RootInventoryMode) -> Vec<serde_json::Value> {
+/// The plugin search roots, as this catalog will hand them to the discovery worker.
+///
+/// Nothing here touches the filesystem: a root on a disconnected network volume can block
+/// whoever asks about it, and the worker process is the one that should be blocked.
+fn root_inventory(extra_paths: &[PathBuf]) -> Vec<serde_json::Value> {
     let mut entries = Vec::new();
     let mut seen = HashSet::new();
     for (format, paths) in [
@@ -548,184 +543,16 @@ fn root_inventory(extra_paths: &[PathBuf], mode: RootInventoryMode) -> Vec<serde
                 record_inventory(&mut entries, serde_json::json!({}));
                 return entries;
             }
-            // Isolated discovery delegates filesystem access to its bounded child process too.
-            // A disconnected root must not block the parent while it is reporting that snapshot.
-            let metadata = match mode {
-                RootInventoryMode::Isolated => None,
-                RootInventoryMode::Metadata => Some(path.symlink_metadata()),
-            };
-            let matches_format = path
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case(format));
-            let (status, message) = match metadata {
-                None => ("isolated_scan", None),
-                Some(Ok(metadata))
-                    if matches_format
-                        || (metadata.is_dir() && !metadata.file_type().is_symlink()) =>
-                {
-                    ("available", None)
-                }
-                Some(Ok(metadata)) if metadata.file_type().is_symlink() => ("skipped_link", None),
-                Some(Ok(_)) => ("not_directory_or_matching_plugin", None),
-                Some(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-                    ("not_found", None)
-                }
-                Some(Err(error)) => ("unreadable", Some(error.to_string())),
-            };
             record_inventory(
                 &mut entries,
                 serde_json::json!({
                     "kind":"root", "format":format, "path":short_text(&path.to_string_lossy(),512),
-                    "status":status, "message":message.map(|text|short_text(&text,240))
+                    "status":"worker_scan"
                 }),
             );
         }
     }
     entries
-}
-
-impl PluginFiles {
-    fn push(&mut self, path: PathBuf, vst3: bool) -> bool {
-        if !self.seen.insert((path.clone(), vst3)) {
-            return true;
-        }
-        let bytes = path.as_os_str().len();
-        if self.entries.len() >= DISCOVERY_FILE_LIMIT
-            || self.bytes.saturating_add(bytes) > DISCOVERY_PATH_BYTE_LIMIT
-        {
-            self.seen.remove(&(path, vst3));
-            self.truncated = true;
-            self.full = true;
-            return false;
-        }
-        self.bytes += bytes;
-        self.entries.push((path, vst3));
-        true
-    }
-}
-
-fn scan_plugin_roots(
-    roots: impl IntoIterator<Item = PathBuf>,
-    extension: &str,
-    vst3: bool,
-    files: &mut PluginFiles,
-    visited: &mut usize,
-    traversal_bytes: &mut usize,
-) {
-    let mut pending = Vec::new();
-    for path in roots {
-        let bytes = path.as_os_str().len();
-        if *visited >= DISCOVERY_ENTRY_LIMIT
-            || traversal_bytes.saturating_add(bytes) > DISCOVERY_PATH_BYTE_LIMIT
-        {
-            files.truncated = true;
-            break;
-        }
-        *visited += 1;
-        *traversal_bytes += bytes;
-        pending.push((path, 0usize));
-    }
-    while let Some((path, depth)) = pending.pop() {
-        if path
-            .extension()
-            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(extension))
-        {
-            if !files.push(path, vst3) {
-                break;
-            }
-            continue;
-        }
-        if depth >= DISCOVERY_DEPTH_LIMIT {
-            files.truncated = true;
-            continue;
-        }
-        let metadata = match path.symlink_metadata() {
-            Ok(metadata) => metadata,
-            Err(error) => {
-                if error.kind() != std::io::ErrorKind::NotFound
-                    && files.errors.len() < CATALOG_ERROR_LIMIT
-                {
-                    files.errors.push(format!(
-                        "{}: {error}",
-                        short_text(&path.to_string_lossy(), 240)
-                    ));
-                }
-                continue;
-            }
-        };
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            continue;
-        }
-        let entries = match path.read_dir() {
-            Ok(entries) => entries,
-            Err(error) => {
-                if files.errors.len() < CATALOG_ERROR_LIMIT {
-                    files.errors.push(format!(
-                        "{}: {error}",
-                        short_text(&path.to_string_lossy(), 240)
-                    ));
-                }
-                continue;
-            }
-        };
-        for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(error) => {
-                    if files.errors.len() < CATALOG_ERROR_LIMIT {
-                        files.errors.push(format!(
-                            "{}: {error}",
-                            short_text(&path.to_string_lossy(), 240)
-                        ));
-                    }
-                    continue;
-                }
-            };
-            *visited += 1;
-            let path = entry.path();
-            let bytes = path.as_os_str().len();
-            if *visited > DISCOVERY_ENTRY_LIMIT
-                || traversal_bytes.saturating_add(bytes) > DISCOVERY_PATH_BYTE_LIMIT
-            {
-                files.truncated = true;
-                pending.clear();
-                break;
-            }
-            *traversal_bytes += bytes;
-            pending.push((path, depth + 1));
-        }
-    }
-}
-
-fn installed_plugin_files(extra_paths: &[PathBuf]) -> PluginFiles {
-    let mut files = PluginFiles::default();
-    let mut visited = 0usize;
-    let mut traversal_bytes = 0usize;
-    let clap_roots = super::hosted::clap_search_paths()
-        .into_iter()
-        .chain(extra_paths.iter().cloned());
-    scan_plugin_roots(
-        clap_roots,
-        "clap",
-        false,
-        &mut files,
-        &mut visited,
-        &mut traversal_bytes,
-    );
-    if !files.full {
-        let mut vst3_visited = 0usize;
-        let mut vst3_traversal_bytes = 0usize;
-        scan_plugin_roots(
-            auris_vst3::vst3_search_paths(extra_paths),
-            "vst3",
-            true,
-            &mut files,
-            &mut vst3_visited,
-            &mut vst3_traversal_bytes,
-        );
-    }
-    files.entries.sort();
-    files
 }
 
 /// Generations and issued handles outlive the four heavyweight catalogs so ordinary cache
@@ -993,7 +820,7 @@ fn reuse_cached_catalog(
     if !restore_catalog_generation(&entries[index])? {
         // A different token belongs to a newer snapshot. Preserve that registry entry and remove
         // this stale heavyweight catalog so the caller rebuilds it under the current generation.
-        entries.remove(index).control.cancel();
+        entries.remove(index).cancel();
         return Ok(None);
     }
     let catalog = entries.remove(index);
@@ -1007,13 +834,11 @@ fn resolve_sound(key: &str, id: &str) -> Result<Sound, String> {
     Ok(sound.as_ref().clone())
 }
 
-/// Resolves a handle under the first of `keys` that issued it, each with its isolated twin.
+/// Resolves a handle under the first of `keys` that issued it.
 fn resolve_library_sound(keys: &[String], id: &str) -> Result<Sound, String> {
     let mut error = String::from("No sound library scope to resolve in");
     for key in keys {
-        match resolve_sound(key, id)
-            .or_else(|_| resolve_sound(&isolated_sound_library_key(key), id))
-        {
+        match resolve_sound(key, id) {
             Ok(sound) => return Ok(sound),
             Err(failed) => error = failed,
         }
@@ -1047,8 +872,10 @@ pub struct SoundLibraryJob {
     font_errors: Vec<String>,
     extra_paths: Vec<PathBuf>,
     scan_plugins: bool,
-    isolated_plugin_discovery: bool,
-    isolated_plugin_snapshot: Option<IsolatedPluginCatalog>,
+    /// A listing to use instead of asking the worker process; tests only.
+    native_snapshot: Option<NativeCatalog>,
+    /// The user library file, read on the worker; `None` leaves user sounds out.
+    user_sounds: Option<PathBuf>,
     sample_rate: f64,
 }
 
@@ -1078,10 +905,6 @@ fn lexical_path_identity(path: &Path) -> String {
 fn hash_scope_part(digest: &mut Sha256, value: &str) {
     digest.update((value.len() as u64).to_le_bytes());
     digest.update(value.as_bytes());
-}
-
-fn isolated_sound_library_key(key: &str) -> String {
-    format!("{key}:isolated-native-metadata-v1")
 }
 
 /// What a sound library scope names the document by: its file when it has one, so sessions
@@ -1230,6 +1053,12 @@ impl Session {
                 }
             }
         }
+        for patch in crate::factory_sounds() {
+            if budget.sounds_truncated {
+                break;
+            }
+            let _ = budget.push_sound(&mut sounds, patch_sound(super::PatchOrigin::Factory, patch));
+        }
         SoundLibraryJob {
             key,
             registry: crate::default_registry(fonts),
@@ -1240,8 +1069,9 @@ impl Session {
             font_errors,
             extra_paths: extra_paths.to_vec(),
             scan_plugins: true,
-            isolated_plugin_discovery: false,
-            isolated_plugin_snapshot: None,
+            native_snapshot: None,
+            // A unit test must never read the developer's own library.
+            user_sounds: (!cfg!(test)).then(crate::SoundBook::path),
             sample_rate: self.sample_rate(),
         }
     }
@@ -1265,36 +1095,38 @@ impl Session {
         // Selection can run on the UI thread. Resolve only metadata previously issued by a worker;
         // rebuilding a heavy catalog here would synchronously invoke every native provider.
         let source = resolve_library_sound(&keys, id)?;
+        if !source.stamp.is_empty() && selection_stamp(&source.source) != source.stamp {
+            return Err(
+                "The selected plugin, preset or saved sound changed after discovery; refresh the sound search"
+                    .into(),
+            );
+        }
+        self.adopt_library_source(track, &source.name, &source.source)
+    }
+
+    /// Puts an exactly identified library sound on an instrument track, as one undo step.
+    ///
+    /// Shared by the agent's search handles and the map's sounds, so both adopt a sound the
+    /// same way. A hosted plugin is loaded here, in this process: the track is going to play
+    /// it, and from here on it is an ordinary hosted instrument.
+    pub(super) fn adopt_library_source(
+        &mut self,
+        track: TrackId,
+        name: &str,
+        source: &Source,
+    ) -> Result<(), String> {
         let prepare = PrepareContext::new(self.sample_rate(), 512, 2);
-        match source.source {
+        match source.clone() {
             Source::Builtin(instrument_id) => self
-                .use_timbre_sound(
-                    track,
-                    &TimbreSound {
-                        name: source.name,
-                        instrument_id,
-                        preset: None,
-                    },
-                )
+                .use_timbre_sound(track, &TimbreSound::builtin(name, instrument_id))
                 .map_err(|e| e.to_string()),
             Source::Font(preset) => self
                 .set_track_preset(track, preset)
                 .map_err(|e| e.to_string()),
-            Source::Clap {
-                file,
-                id,
-                preset,
-                discovery_stamp,
-                isolated_metadata,
-            } => {
-                if !isolated_metadata
-                    && clap_selection_stamp(&file, preset.as_ref()) != discovery_stamp
-                {
-                    return Err(
-                        "The selected CLAP plugin or preset changed after discovery; refresh the sound search"
-                            .into(),
-                    );
-                }
+            Source::Patch { sound, .. } => {
+                self.apply_sound(track, &sound).map_err(|e| e.to_string())
+            }
+            Source::Clap { file, id, preset } => {
                 // SAFETY: the selected ID was discovered from the user's configured plugin library.
                 let library =
                     unsafe { auris_clap::ClapLibrary::load(&file) }.map_err(|e| e.to_string())?;
@@ -1320,21 +1152,7 @@ impl Session {
                 self.invalidate_graph();
                 Ok(())
             }
-            Source::Vst3 {
-                file,
-                id,
-                preset,
-                discovery_stamp,
-                isolated_metadata,
-            } => {
-                if !isolated_metadata
-                    && vst3_selection_stamp(&file, preset.as_ref()) != discovery_stamp
-                {
-                    return Err(
-                        "The selected VST3 plugin or preset changed after discovery; refresh the sound search"
-                            .into(),
-                    );
-                }
+            Source::Vst3 { file, id, preset } => {
                 let plugin = auris_vst3::Vst3Plugin::load(&file, &id, &prepare)
                     .map_err(|e| e.to_string())?;
                 if let Some(preset) = preset {
@@ -1368,20 +1186,143 @@ impl Session {
     }
 }
 
+/// The measured sounds a map is drawn from: the same index the agent's acoustic search ranks.
+pub(super) struct MapIndex {
+    /// Measured sounds, in row order.
+    pub(super) sounds: Vec<TimbreSound>,
+    /// Their features as measured.
+    pub(super) rows: Vec<Vec<f64>>,
+    pub(super) characters: Vec<TimbreCharacter>,
+    pub(super) envelopes: Vec<Option<SoundEnvelope>>,
+    /// Sounds that could not be measured, each with why.
+    pub(super) skipped: Vec<String>,
+    /// Whether measurable sounds were left out to stay within the index's bounds.
+    pub(super) limited: bool,
+    /// How many measured sounds played in the plugin worker process.
+    pub(super) worker_sounds: usize,
+    pub(super) registry: Arc<PluginRegistry>,
+}
+
 impl SoundLibraryJob {
+    /// Whether this job will list installed CLAP and VST3 plugins; tests turn it off.
+    pub(super) fn without_plugins(mut self) -> Self {
+        self.scan_plugins = false;
+        self
+    }
+
+    /// The sample rate the job measures at.
+    pub(super) fn sample_rate(&self) -> f64 {
+        self.sample_rate
+    }
+
+    /// Builds or reuses the catalog and its acoustic index, waiting for the measurement, and
+    /// reports progress through `control`. Cancelling `control` stops the measuring run.
+    ///
+    /// `refresh` lists every plugin file again and measures afresh what changed — what a person
+    /// asking to rescan wants — instead of reusing a finished index.
+    pub(super) fn map_index(
+        self,
+        control: &TimbreMapControl,
+        refresh: bool,
+    ) -> Result<MapIndex, String> {
+        let started = Instant::now();
+        let catalog = loop {
+            match self.catalog_with_cancel(refresh, Some(control.flag())) {
+                // Every slot of the catalog cache is held by a scan still measuring, or the scan
+                // a rescan replaces still holds its catalog for a moment after it was cancelled:
+                // a person waiting for the map waits for a slot rather than reading "retry".
+                Err(error)
+                    if error.contains("retry")
+                        && started.elapsed() < DISCOVERY_WAIT
+                        && control.check().is_ok() =>
+                {
+                    std::thread::sleep(DISCOVERY_POLL);
+                }
+                result => break result?,
+            }
+        };
+        loop {
+            {
+                let mut state = catalog
+                    .index
+                    .lock()
+                    .map_err(|_| "Acoustic index lock failed")?;
+                if matches!(&state.result, Some(Err(error)) if error.contains("cancelled"))
+                    || (state.reference.is_some() && matches!(state.result, Some(Err(_))))
+                {
+                    state.reset();
+                }
+                if let Some(result) = &state.result {
+                    let index = Arc::clone(result.as_ref().map_err(Clone::clone)?);
+                    control.report(index.sounds.len(), index.sounds.len());
+                    let sounds: Vec<TimbreSound> = index
+                        .sounds
+                        .iter()
+                        .map(|&i| {
+                            let sound = &catalog.sounds[i];
+                            TimbreSound {
+                                name: match &sound.source {
+                                    Source::Builtin(_) | Source::Patch { .. } => sound.name.clone(),
+                                    _ => format!("{} / {}", sound.library, sound.name),
+                                },
+                                source: sound.source.clone(),
+                            }
+                        })
+                        .collect();
+                    return Ok(MapIndex {
+                        worker_sounds: sounds.iter().filter(|s| s.plays_in_worker()).count(),
+                        sounds,
+                        rows: index.raw_rows.clone(),
+                        characters: index.characters.clone(),
+                        envelopes: index.envelopes.clone(),
+                        skipped: index.skipped.clone(),
+                        limited: index.limited,
+                        registry: Arc::clone(&catalog.registry),
+                    });
+                }
+                if control.check().is_err() {
+                    state.run.cancel();
+                    return Err("cancelled".into());
+                }
+                if !state.started {
+                    // Only what the index will measure: in-process sounds go first.
+                    let (here, worker) = catalog.sounds.iter().filter(|s| measurable(s)).fold(
+                        (0usize, 0usize),
+                        |(here, worker), sound| match worker_sound(&sound.source) {
+                            Some(_) => (here, worker + 1),
+                            None => (here + 1, worker),
+                        },
+                    );
+                    control
+                        .set_worker_sounds(worker.min(ACOUSTIC_SOUND_LIMIT.saturating_sub(here)));
+                    match start_index(&catalog, &mut state, None) {
+                        Ok(()) => {}
+                        // Four indexes are already measuring; wait for a slot like a queue.
+                        Err(error) if error.contains("busy") => {}
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
+            control.report(
+                catalog.completed.load(Ordering::Relaxed),
+                catalog.measuring_total.load(Ordering::Relaxed),
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
     /// Reads bounded scan or measurement diagnostics from the existing snapshot only.
     pub fn diagnostics(&self, offset: usize, limit: usize) -> Result<String, String> {
         if !(1..=16).contains(&limit) {
             return Err("limit must be 1..16".into());
         }
-        let isolated_key = isolated_sound_library_key(&self.key);
         let catalog = CATALOGS
             .get_or_init(Default::default)
             .lock()
             .map_err(|_| "Sound catalog lock failed")?
             .iter()
             .rev()
-            .find(|c| c.key == self.key || c.key == isolated_key)
+            .find(|c| c.key == self.key)
             .cloned()
             .ok_or("No sound snapshot; search_instruments first")?;
         let state = catalog
@@ -1419,19 +1360,14 @@ impl SoundLibraryJob {
         self.run_inner(request, refresh, None)
     }
 
-    /// Runs live-window discovery through bounded child processes before searching metadata.
-    ///
-    /// Native presets and acoustic measurements are deliberately unavailable in this mode: both
-    /// require instantiating third-party code, while the returned default descriptors remain valid
-    /// handles for the ordinary explicit instrument-selection command.
-    pub fn run_isolated(
-        mut self,
+    /// [`Self::run`], stopping early once `cancelled` is set — for a frontend whose user can
+    /// close what asked.
+    pub fn run_cancellable(
+        self,
         request: SoundSearch,
         refresh: bool,
         cancelled: &AtomicBool,
     ) -> Result<String, String> {
-        self.key = isolated_sound_library_key(&self.key);
-        self.isolated_plugin_discovery = true;
         self.run_inner(request, refresh, Some(cancelled))
     }
 
@@ -1526,12 +1462,6 @@ impl SoundLibraryJob {
         if let Some(reference) = reference
             && !measurable(&catalog.sounds[reference])
         {
-            if isolated_native(&catalog.sounds[reference]) {
-                return Err(
-                    "Native plugins discovered by the live Agent use isolated metadata; acoustic similarity is unavailable because measuring them would load third-party code in the application process"
-                        .into(),
-                );
-            }
             return Err("Drum kits are searchable by name but are not comparable with the melodic timbre reference".into());
         }
         let mut state = catalog
@@ -1541,14 +1471,17 @@ impl SoundLibraryJob {
         if reference.is_none() && state.reference.is_some() && matches!(state.result, Some(Err(_)))
         {
             // A failed similarity reference must not prevent target discovery of other sounds.
-            *state = IndexState::default();
-            catalog.completed.store(0, Ordering::Relaxed);
+            state.reset();
         }
-        if reference.is_some_and(|i| state.reset_if_reference_missing(i)) {
-            catalog.completed.store(0, Ordering::Relaxed);
+        if matches!(&state.result, Some(Err(error)) if error.contains("cancelled")) {
+            // A run somebody stopped — the map closed — is not an answer; measure again.
+            state.reset();
+        }
+        if let Some(reference) = reference {
+            state.reset_if_reference_missing(reference);
         }
         if let Some(result) = &state.result {
-            let index = result.as_ref().map_err(Clone::clone)?;
+            let index = Arc::clone(result.as_ref().map_err(Clone::clone)?);
             let reference_row = reference
                 .map(|reference| {
                     index.sounds.iter().position(|i| *i == reference).ok_or(
@@ -1634,26 +1567,7 @@ impl SoundLibraryJob {
                 &catalog,
             )));
         }
-        if !state.started {
-            let permit = AcousticWorkerPermit::acquire()
-                .ok_or("Sound acoustic analysis is busy; retry after another index finishes")?;
-            let worker_catalog = catalog.clone();
-            std::thread::Builder::new()
-                .name("auris-sound-index".into())
-                .spawn(move || {
-                    let _permit = permit;
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        self.measure(&worker_catalog, reference)
-                    }))
-                    .unwrap_or_else(|_| Err("Sound index worker panicked".into()));
-                    if let Ok(mut state) = worker_catalog.index.lock() {
-                        state.result = Some(result);
-                    }
-                })
-                .map_err(|e| e.to_string())?;
-            state.started = true;
-            state.reference = reference;
-        }
+        start_index(&catalog, &mut state, reference)?;
         let measurable_count = catalog.sounds.iter().filter(|s| measurable(s)).count();
         Ok(with_native_status(serde_json::json!({"status":"indexing", "targets":targets,
             "completed":catalog.completed.load(Ordering::Relaxed),
@@ -1672,6 +1586,15 @@ impl SoundLibraryJob {
         cancelled: Option<&AtomicBool>,
     ) -> Result<Arc<Catalog>, String> {
         let cache = CATALOGS.get_or_init(Default::default);
+        // A sound saved, renamed or removed since the cached catalog was built makes it stale.
+        let refresh = refresh || {
+            let current = self.user_sounds.as_deref().map(stamp);
+            cache
+                .lock()
+                .map_err(|_| "Sound catalog lock failed")?
+                .iter()
+                .any(|catalog| catalog.key == self.key && catalog.user_sounds_stamp != current)
+        };
         if !refresh {
             let mut entries = cache.lock().map_err(|_| "Sound catalog lock failed")?;
             if let Some(catalog) = reuse_cached_catalog(&mut entries, &self.key)? {
@@ -1694,7 +1617,7 @@ impl SoundLibraryJob {
                     .iter()
                     .find(|catalog| catalog.key == self.key && Arc::strong_count(catalog) > 1)
             {
-                active.control.cancel();
+                active.cancel();
                 return Err(
                     "Sound discovery cancellation was requested; retry after the current search finishes"
                         .into(),
@@ -1719,7 +1642,7 @@ impl SoundLibraryJob {
             if refresh {
                 entries.retain(|c| {
                     if c.key == self.key {
-                        c.control.cancel();
+                        c.cancel();
                         false
                     } else {
                         true
@@ -1743,14 +1666,7 @@ impl SoundLibraryJob {
             budget.push_error(&mut errors, error);
         }
         let mut inventory = if self.scan_plugins {
-            root_inventory(
-                &self.extra_paths,
-                if self.isolated_plugin_discovery {
-                    RootInventoryMode::Isolated
-                } else {
-                    RootInventoryMode::Metadata
-                },
-            )
+            root_inventory(&self.extra_paths)
         } else {
             Vec::new()
         };
@@ -1759,92 +1675,44 @@ impl SoundLibraryJob {
             .iter()
             .map(|(_, path)| stamp(path))
             .collect::<Vec<_>>();
+        let user_sounds_stamp = self.user_sounds.as_deref().map(stamp);
+        if let Some(path) = &self.user_sounds {
+            match crate::SoundBook::read(path) {
+                Ok(book) => {
+                    for patch in book.entries() {
+                        if !budget.push_sound(
+                            &mut sounds,
+                            patch_sound(super::PatchOrigin::User, patch.clone()),
+                        ) {
+                            break;
+                        }
+                    }
+                }
+                Err(error) => budget.push_error(
+                    &mut errors,
+                    format!("The user sound library could not be read: {error}"),
+                ),
+            }
+        }
         let mut native_status = None;
-        if self.scan_plugins && self.isolated_plugin_discovery {
-            let snapshot = match &self.isolated_plugin_snapshot {
+        if self.scan_plugins {
+            let native = match &self.native_snapshot {
                 Some(snapshot) => snapshot.clone(),
-                None => isolated_plugin_catalog(&self.extra_paths, cancelled)?,
+                None => native_catalog(&self.extra_paths, self.sample_rate, refresh, cancelled)?,
             };
-            for diagnostic in &snapshot.diagnostics {
+            for diagnostic in &native.diagnostics {
                 budget.push_error(&mut errors, diagnostic);
             }
-            stamps.extend(
-                snapshot
-                    .entries
-                    .iter()
-                    .map(|entry| lexical_path_identity(&entry.path)),
-            );
-            for entry in &snapshot.entries {
-                if budget.sounds_truncated {
+            for entry in native.inventory {
+                record_inventory(&mut inventory, entry);
+            }
+            stamps.extend(native.stamps);
+            for sound in native.sounds {
+                if !budget.push_sound(&mut sounds, sound) {
                     break;
                 }
-                let before = sounds.len();
-                discover_isolated_plugin(entry, &mut sounds, &mut budget);
-                record_inventory(
-                    &mut inventory,
-                    serde_json::json!({
-                        "kind":"plugin", "path":short_text(&entry.path.to_string_lossy(),512),
-                    "status":if budget.sounds_truncated {"metadata_limit"} else if sounds.len() > before { "loaded" } else { "no_instrument" },
-                        "sounds_found":sounds.len()-before
-                    }),
-                );
             }
-            native_status = Some(snapshot.status);
-        } else if self.scan_plugins {
-            let plugin_files = installed_plugin_files(&self.extra_paths);
-            for error in &plugin_files.errors {
-                budget.push_error(&mut errors, error);
-            }
-            if plugin_files.truncated {
-                budget.push_error(
-                    &mut errors,
-                    "Plugin discovery reached its bounded path or traversal limit",
-                );
-            }
-            let plugins = plugin_files.entries;
-            stamps.extend(plugins.iter().map(|(path, _)| stamp(path)));
-            stamps.extend(vst_preset_roots().iter().map(|path| stamp(path)));
-            let (preset_files, presets_truncated) = if plugins.iter().any(|(_, vst3)| *vst3) {
-                vst_preset_files()
-            } else {
-                (Vec::new(), false)
-            };
-            if presets_truncated {
-                budget.push_error(
-                    &mut errors,
-                    "VST3 preset discovery reached its bounded path or traversal limit",
-                );
-            }
-            for (file, vst3) in &plugins {
-                if budget.sounds_truncated {
-                    break;
-                }
-                let before = sounds.len();
-                let result = if *vst3 {
-                    discover_vst3(
-                        file,
-                        &preset_files,
-                        self.sample_rate,
-                        &mut sounds,
-                        &mut errors,
-                        &mut budget,
-                    )
-                } else {
-                    discover_clap(file, &mut sounds, &mut errors, &mut budget)
-                };
-                record_inventory(
-                    &mut inventory,
-                    serde_json::json!({
-                        "kind":"plugin", "format":if *vst3 {"vst3"} else {"clap"},
-                        "path":short_text(&file.to_string_lossy(),512),
-                    "status":if result.is_err() {"load_failed"} else if budget.sounds_truncated {"metadata_limit"} else if sounds.len() > before {"loaded"} else {"no_instrument"},
-                        "sounds_found":sounds.len()-before
-                    }),
-                );
-                if let Err(error) = result {
-                    budget.push_error(&mut errors, format!("{}: {error}", file.display()));
-                }
-            }
+            native_status = Some(native.status);
         }
         budget.report_sound_limit(&mut errors);
         let fingerprint = hex::encode(Sha256::digest(format!(
@@ -1877,8 +1745,13 @@ impl SoundLibraryJob {
             inventory,
             index: Mutex::new(IndexState::default()),
             completed: AtomicUsize::new(0),
+            measuring_total: AtomicUsize::new(0),
             control: TimbreMapControl::default(),
             native_status,
+            user_sounds_stamp,
+            sample_rate: self.sample_rate,
+            registry: Arc::clone(&self.registry),
+            font_paths: self.font_paths.clone(),
         });
         let mut entries = cache.lock().map_err(|_| "Sound catalog lock failed")?;
         if let Some(existing) = reuse_cached_catalog(&mut entries, &self.key)? {
@@ -1890,100 +1763,6 @@ impl SoundLibraryJob {
         debug_assert!(entries.len() < CATALOG_LIMIT);
         entries.push(catalog.clone());
         Ok(catalog)
-    }
-
-    fn measure(
-        &self,
-        catalog: &Catalog,
-        reference: Option<usize>,
-    ) -> Result<AcousticIndex, String> {
-        let mut sounds = Vec::new();
-        let mut rows = Vec::new();
-        let mut characters = Vec::new();
-        let mut envelopes = Vec::new();
-        let mut skipped = Vec::new();
-        let mut skipped_truncated = false;
-        let measurable_count = catalog
-            .sounds
-            .iter()
-            .filter(|sound| measurable(sound))
-            .count();
-        let candidates =
-            reference
-                .into_iter()
-                .chain((0..catalog.sounds.len()).filter(|index| {
-                    Some(*index) != reference && measurable(&catalog.sounds[*index])
-                }))
-                .take(ACOUSTIC_SOUND_LIMIT)
-                .collect::<Vec<_>>();
-        let mut row_bytes = 0usize;
-        let mut index_bytes_limited = false;
-        for index in candidates {
-            let sound = &catalog.sounds[index];
-            let key = envelope_key(sound, &self.font_paths);
-            match measure_sound(
-                sound,
-                &self.registry,
-                self.sample_rate,
-                &catalog.control,
-                key.as_deref(),
-            ) {
-                Ok((row, character, envelope)) => {
-                    let bytes = row
-                        .len()
-                        .saturating_mul(std::mem::size_of::<f64>())
-                        .saturating_add(std::mem::size_of::<TimbreCharacter>());
-                    if row_bytes.saturating_add(bytes) > ACOUSTIC_INDEX_BYTE_LIMIT {
-                        if Some(index) == reference {
-                            return Err(
-                                "Reference acoustic features exceed the index budget".into()
-                            );
-                        }
-                        index_bytes_limited = true;
-                        break;
-                    }
-                    row_bytes += bytes;
-                    sounds.push(index);
-                    rows.push(row);
-                    characters.push(character);
-                    envelopes.push(envelope);
-                }
-                Err(error) => {
-                    if Some(index) == reference {
-                        return Err(format!(
-                            "Reference {} could not be measured: {}",
-                            short_text(&sound.name, 160),
-                            short_text(&error, 240)
-                        ));
-                    }
-                    if skipped.len() < CATALOG_ERROR_LIMIT {
-                        skipped.push(short_text(
-                            &format!("{}: {error}", sound.name),
-                            CATALOG_ERROR_CHARACTER_LIMIT,
-                        ));
-                    } else if !skipped_truncated {
-                        if let Some(last) = skipped.last_mut() {
-                            *last =
-                                "Additional acoustic measurement diagnostics were omitted".into();
-                        }
-                        skipped_truncated = true;
-                    }
-                }
-            }
-            catalog.completed.fetch_add(1, Ordering::Relaxed);
-            catalog.control.check().map_err(|e| e.to_string())?;
-        }
-        super::envelope::save();
-        Ok(AcousticIndex {
-            sounds,
-            rows: standardize_timbres(&rows).map_err(str::to_string)?,
-            characters,
-            envelopes,
-            skipped,
-            limited: measurable_count > ACOUSTIC_SOUND_LIMIT
-                || index_bytes_limited
-                || skipped_truncated,
-        })
     }
 }
 
@@ -2017,30 +1796,39 @@ fn with_native_status(mut value: serde_json::Value, catalog: &Catalog) -> serde_
     value
 }
 
+impl Catalog {
+    /// Stops whatever is still working for this catalog: its listing and its measuring run.
+    fn cancel(&self) {
+        self.control.cancel();
+        if let Ok(state) = self.index.lock() {
+            state.run.cancel();
+        }
+    }
+}
+
+/// Whether the acoustic index measures this sound. Drum kits are searchable by name but are
+/// not comparable with melodic timbres.
 fn measurable(sound: &Sound) -> bool {
     match &sound.source {
         Source::Font(p) => p.bank != 128,
         Source::Builtin(id) => !auris_synth::is_drum_kit(id),
-        Source::Clap {
-            isolated_metadata, ..
+        Source::Patch { sound, .. } => {
+            !auris_synth::is_drum_kit(&sound.instrument_id)
+                && sound.soundfont.as_ref().is_none_or(|font| font.bank != 128)
         }
-        | Source::Vst3 {
-            isolated_metadata, ..
-        } => !isolated_metadata,
+        Source::Clap { .. } | Source::Vst3 { .. } => true,
     }
 }
 
-fn isolated_native(sound: &Sound) -> bool {
-    matches!(
-        &sound.source,
-        Source::Clap {
-            isolated_metadata: true,
-            ..
-        } | Source::Vst3 {
-            isolated_metadata: true,
-            ..
-        }
-    )
+/// The order an index measures in: the application's own sounds, then SoundFont presets, then
+/// plugins — so a plugin with thousands of presets fills the index last, not first.
+fn measuring_rank(sound: &Sound) -> u8 {
+    match &sound.source {
+        Source::Builtin(_) => 0,
+        Source::Patch { .. } => 1,
+        Source::Font(_) => 2,
+        Source::Clap { .. } | Source::Vst3 { .. } => 3,
+    }
 }
 
 fn short_text(text: &str, limit: usize) -> String {
@@ -2052,30 +1840,96 @@ fn short_text(text: &str, limit: usize) -> String {
     result
 }
 
-fn isolated_plugin_catalog(
+/// A saved patch as a catalog sound.
+fn patch_sound(origin: super::PatchOrigin, patch: crate::SoundPreset) -> Sound {
+    let library = match origin {
+        super::PatchOrigin::User => "User sounds",
+        super::PatchOrigin::Factory => "Auris factory sounds",
+    };
+    let tags = std::iter::once(patch.instrument_id.as_str())
+        .chain(patch.effects.iter().map(|effect| effect.effect_id.as_str()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let stamp = patch_stamp(&patch);
+    Sound::stamped(
+        patch.name.clone(),
+        library.into(),
+        tags,
+        Source::Patch {
+            origin,
+            sound: Arc::new(patch),
+        },
+        stamp,
+    )
+}
+
+/// The metadata of every file a patch needs; empty for one made only of built-in parts, which
+/// therefore never touches the filesystem.
+fn patch_stamp(patch: &crate::SoundPreset) -> String {
+    let files: Vec<&Path> = patch
+        .file
+        .as_deref()
+        .into_iter()
+        .chain(patch.soundfont.as_ref().map(|font| font.path.as_path()))
+        .chain(
+            patch
+                .effects
+                .iter()
+                .filter_map(|effect| effect.file.as_deref()),
+        )
+        .collect();
+    files
+        .iter()
+        .map(|path| stamp(path))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+/// What a sound's files look like now, in the form [`Sound::stamp`] recorded at listing.
+fn selection_stamp(source: &Source) -> String {
+    match source {
+        Source::Clap { file, preset, .. } => clap_selection_stamp(file, preset.as_ref()),
+        Source::Vst3 { file, preset, .. } => vst3_selection_stamp(file, preset.as_ref()),
+        Source::Patch { sound, .. } => patch_stamp(sound),
+        Source::Builtin(_) | Source::Font(_) => String::new(),
+    }
+}
+
+/// The disk cache kind holding plugin listings.
+const LISTING_CACHE: &str = "sound-plugins";
+/// Bumped whenever a listing would come out differently from the same plugin file.
+const LISTING_VERSION: u32 = 1;
+/// The disk cache kind holding measured sounds.
+const MEASUREMENT_CACHE: &str = "sound-measurements";
+/// The disk cache kind holding why a sound could not be measured in the worker process.
+const MEASUREMENT_FAILURE_CACHE: &str = "sound-measurement-failures";
+/// Bumped whenever the measurement changes, so results measured by another rule are ignored.
+const MEASUREMENT_VERSION: u32 = 1;
+
+/// Lists every installed instrument plugin and its presets through the worker process.
+///
+/// A plugin file whose metadata is unchanged answers from the disk cache without being loaded
+/// at all; `refresh` lists every file again. A file that fails or times out is reported and
+/// left out — the rest of the catalog is unaffected.
+fn native_catalog(
     extra_paths: &[PathBuf],
+    sample_rate: f64,
+    refresh: bool,
     cancelled: Option<&AtomicBool>,
-) -> Result<IsolatedPluginCatalog, String> {
+) -> Result<NativeCatalog, String> {
     let never_cancelled = AtomicBool::new(false);
     let cancelled = cancelled.unwrap_or(&never_cancelled);
-    if cancelled.load(Ordering::Relaxed) {
-        return Err("Sound search cancelled".into());
-    }
-    let started = Instant::now();
-    let deadline = started + ISOLATED_PLUGIN_CATALOG_TIMEOUT;
-    let mut catalog = IsolatedPluginCatalog::default();
-    let inventory = match crate::PluginDiscoveryJob::new(extra_paths).run(
-        cancelled,
-        ISOLATED_PLUGIN_DISCOVERY_TIMEOUT.min(ISOLATED_PLUGIN_CATALOG_TIMEOUT),
-    ) {
+    let is_cancelled = || cancelled.load(Ordering::Relaxed);
+    let mut catalog = NativeCatalog::default();
+    let inventory = match crate::PluginDiscoveryJob::new(extra_paths)
+        .run(cancelled, PLUGIN_DISCOVERY_TIMEOUT)
+    {
         Ok(inventory) => inventory,
-        Err(_) if cancelled.load(Ordering::Relaxed) => {
-            return Err("Sound search cancelled".into());
-        }
+        Err(_) if is_cancelled() => return Err("Sound search cancelled".into()),
         Err(error) => {
             catalog.status.truncated = true;
             catalog.diagnostics.push(format!(
-                "Isolated native plugin inventory failed; built-in and SoundFont results remain available: {error}"
+                "Native plugin inventory failed; built-in, SoundFont and saved sounds remain available: {error}"
             ));
             return Ok(catalog);
         }
@@ -2084,529 +1938,447 @@ fn isolated_plugin_catalog(
     catalog.status.truncated = inventory.truncated;
     if inventory.truncated {
         catalog.diagnostics.push(
-            "Isolated native plugin inventory reached its shared count or path-byte limit; additional files were omitted"
+            "Native plugin inventory reached its path or traversal limit; additional files were omitted"
                 .into(),
         );
     }
-
-    let candidates = isolated_plugin_candidates(&inventory);
-    if catalog.status.discovered_files > candidates.len() {
-        catalog.status.truncated = true;
+    let (preset_files, presets_truncated) = if inventory.vst3.is_empty() {
+        (Vec::new(), false)
+    } else {
+        vst_preset_files()
+    };
+    if presets_truncated {
+        catalog
+            .diagnostics
+            .push("VST3 preset discovery reached its bounded path or traversal limit".into());
     }
-
-    let mut metadata_classes = 0usize;
-    let mut metadata_bytes = 0usize;
-    for (path, format) in candidates {
-        if cancelled.load(Ordering::Relaxed) {
+    catalog
+        .stamps
+        .extend(vst_preset_roots().iter().map(|path| stamp(path)));
+    let files = inventory
+        .clap
+        .into_iter()
+        .map(|path| (path, crate::PluginFormat::Clap))
+        .chain(
+            inventory
+                .vst3
+                .into_iter()
+                .map(|path| (path, crate::PluginFormat::Vst3)),
+        );
+    for (path, format) in files {
+        if is_cancelled() {
             return Err("Sound search cancelled".into());
         }
-        let now = Instant::now();
-        let Some(overall_remaining) = deadline.checked_duration_since(now) else {
-            catalog.status.truncated = true;
-            break;
+        let format_name = match format {
+            crate::PluginFormat::Clap => "clap",
+            crate::PluginFormat::Vst3 => "vst3",
         };
-        if overall_remaining < Duration::from_millis(100) {
-            catalog.status.truncated = true;
-            break;
-        }
-        let probe_deadline = now + overall_remaining.min(ISOLATED_PLUGIN_PROBE_TIMEOUT);
-        catalog.status.inspected_files += 1;
-        match crate::PluginProbeJob::new(format, path.clone()).run_until(cancelled, probe_deadline)
-        {
-            Ok(metadata) => {
-                let (classes, bytes) = plugin_probe_usage(&metadata);
-                if metadata_classes.saturating_add(classes) > CATALOG_SOUND_LIMIT
-                    || metadata_bytes.saturating_add(bytes) > CATALOG_SOUND_BYTE_LIMIT
-                {
-                    catalog.status.truncated = true;
-                    catalog.diagnostics.push(
-                        "Isolated native plugin descriptors reached the shared catalog count or byte limit; additional files were omitted"
-                            .into(),
-                    );
-                    break;
+        let file_stamp = stamp(&path);
+        catalog.stamps.push(file_stamp.clone());
+        let key = format!("v{LISTING_VERSION}|{format_name}|{file_stamp}");
+        let cached = if refresh {
+            None
+        } else {
+            super::disk_cache::read::<native::PluginListing>(LISTING_CACHE, &key)
+        };
+        let from_cache = cached.is_some();
+        let listing = match cached {
+            Some(listing) => {
+                catalog.status.cached_files += 1;
+                listing
+            }
+            None => match crate::plugin_worker::list_plugin_isolated(
+                format,
+                path.clone(),
+                sample_rate,
+                cancelled,
+            ) {
+                Ok(listing) => {
+                    catalog.status.listed_files += 1;
+                    super::disk_cache::write(LISTING_CACHE, &key, &listing);
+                    listing
                 }
-                metadata_classes += classes;
-                metadata_bytes += bytes;
-                catalog.entries.push(IsolatedPluginEntry { path, metadata });
-            }
-            Err(_) if cancelled.load(Ordering::Relaxed) => {
-                return Err("Sound search cancelled".into());
-            }
-            Err(error) => {
-                catalog.status.failed_files += 1;
-                catalog.diagnostics.push(format!(
-                    "{}: isolated metadata inspection failed: {error}",
-                    path.display()
+                Err(_) if is_cancelled() => return Err("Sound search cancelled".into()),
+                Err(error) => {
+                    catalog.status.failed_files += 1;
+                    catalog
+                        .diagnostics
+                        .push(format!("{}: {error}", path.display()));
+                    record_inventory(
+                        &mut catalog.inventory,
+                        serde_json::json!({
+                            "kind":"plugin", "format":format_name,
+                            "path":short_text(&path.to_string_lossy(),512), "status":"load_failed"
+                        }),
+                    );
+                    continue;
+                }
+            },
+        };
+        for error in &listing.errors {
+            catalog
+                .diagnostics
+                .push(format!("{}: {error}", path.display()));
+        }
+        if listing.truncated {
+            catalog.diagnostics.push(format!(
+                "{}: additional plugin sounds were omitted",
+                path.display()
+            ));
+        }
+        let before = catalog.sounds.len();
+        let mut found = Vec::new();
+        for listed in listing.sounds {
+            found.push(listed_sound(listed));
+        }
+        for (class, library) in &listing.vst3_classes {
+            for (preset_path, _) in preset_files
+                .iter()
+                .filter(|(_, preset_class)| preset_class.eq_ignore_ascii_case(class))
+            {
+                let preset = auris_vst3::Vst3Preset::File(preset_path.clone());
+                let stamp = vst3_selection_stamp(&path, Some(&preset));
+                found.push(Sound::stamped(
+                    preset_path
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                    library.clone(),
+                    String::new(),
+                    Source::Vst3 {
+                        file: path.clone(),
+                        id: class.clone(),
+                        preset: Some(preset),
+                    },
+                    stamp,
                 ));
             }
         }
-    }
-    catalog.status.skipped_files = catalog
-        .status
-        .discovered_files
-        .saturating_sub(catalog.entries.len());
-    if catalog.status.skipped_files > 0 {
-        catalog.status.truncated = true;
-        catalog.diagnostics.push(format!(
-            "Isolated native plugin search inspected {} of {} discovered files; {} were unavailable because of failed inspection or the 256-file, shared-metadata, or 30-second limit",
-            catalog.status.inspected_files,
-            catalog.status.discovered_files,
-            catalog.status.skipped_files
-        ));
-    }
-    if catalog.status.discovered_files > 0 {
-        catalog.diagnostics.push(
-            "Live Agent native plugins use isolated default descriptors; native preset enumeration and acoustic similarity are unavailable"
-                .into(),
+        for sound in found {
+            if catalog.sounds.len() < CATALOG_SOUND_LIMIT {
+                catalog.sounds.push(sound);
+            } else {
+                catalog.status.truncated = true;
+            }
+        }
+        let found = catalog.sounds.len() - before;
+        record_inventory(
+            &mut catalog.inventory,
+            serde_json::json!({
+                "kind":"plugin", "format":format_name,
+                "path":short_text(&path.to_string_lossy(),512),
+                "status":if found > 0 {"loaded"} else {"no_instrument"},
+                "sounds_found":found, "cached":from_cache
+            }),
         );
     }
     Ok(catalog)
 }
 
-fn isolated_plugin_candidates(
-    inventory: &crate::InstalledPluginFiles,
-) -> Vec<(PathBuf, crate::PluginFormat)> {
-    // Alternate formats so a machine with hundreds of CLAP files cannot use the whole live
-    // catalog allowance before the first VST3 descriptor (or vice versa).
-    let mut clap = inventory.clap.iter().cloned();
-    let mut vst3 = inventory.vst3.iter().cloned();
-    let mut candidates = Vec::with_capacity(
-        inventory
-            .clap
-            .len()
-            .saturating_add(inventory.vst3.len())
-            .min(ISOLATED_PLUGIN_FILE_LIMIT),
-    );
-    while candidates.len() < ISOLATED_PLUGIN_FILE_LIMIT {
-        let mut advanced = false;
-        if let Some(path) = clap.next() {
-            candidates.push((path, crate::PluginFormat::Clap));
-            advanced = true;
-        }
-        if candidates.len() < ISOLATED_PLUGIN_FILE_LIMIT
-            && let Some(path) = vst3.next()
-        {
-            candidates.push((path, crate::PluginFormat::Vst3));
-            advanced = true;
-        }
-        if !advanced {
-            break;
-        }
-    }
-    candidates
+/// A worker's listing entry as a catalog sound, stamped with its files as they are now.
+fn listed_sound(listed: native::ListedSound) -> Sound {
+    let source = match listed.sound {
+        native::WorkerSound::Clap { file, id, preset } => Source::Clap {
+            file,
+            id,
+            preset: preset.map(Into::into),
+        },
+        native::WorkerSound::Vst3 { file, id, preset } => Source::Vst3 {
+            file,
+            id,
+            preset: preset.map(Into::into),
+        },
+        native::WorkerSound::Patch(patch) => Source::Patch {
+            origin: super::PatchOrigin::User,
+            sound: Arc::new(patch),
+        },
+    };
+    let stamp = selection_stamp(&source);
+    Sound::stamped(listed.name, listed.library, listed.tags, source, stamp)
 }
 
-fn plugin_probe_usage(metadata: &crate::PluginProbeResult) -> (usize, usize) {
-    match metadata {
-        crate::PluginProbeResult::Clap(plugins) => (
-            plugins.len(),
-            plugins.iter().fold(0usize, |bytes, plugin| {
-                bytes
-                    .saturating_add(std::mem::size_of_val(plugin))
-                    .saturating_add(plugin.clap_id.len())
-                    .saturating_add(plugin.name.len())
-                    .saturating_add(plugin.vendor.len())
-                    .saturating_add(plugin.description.len())
-                    .saturating_add(plugin.version.len())
-            }),
-        ),
-        crate::PluginProbeResult::Vst3(plugins) => (
-            plugins.len(),
-            plugins.iter().fold(0usize, |bytes, plugin| {
-                bytes
-                    .saturating_add(std::mem::size_of_val(plugin))
-                    .saturating_add(plugin.class_id.len())
-                    .saturating_add(plugin.name.len())
-                    .saturating_add(plugin.vendor.len())
-                    .saturating_add(plugin.version.len())
-            }),
-        ),
+/// What the worker process is asked to play for `source`; `None` for a sound this process
+/// plays itself because nothing in it is a file or somebody else's code.
+pub(super) fn worker_sound(source: &Source) -> Option<native::WorkerSound> {
+    match source {
+        Source::Builtin(_) | Source::Font(_) => None,
+        Source::Patch { sound, .. } if native::patch_is_builtin(sound) => None,
+        Source::Patch { sound, .. } => Some(native::WorkerSound::Patch(sound.as_ref().clone())),
+        Source::Clap { file, id, preset } => Some(native::WorkerSound::Clap {
+            file: file.clone(),
+            id: id.clone(),
+            preset: preset.as_ref().map(Into::into),
+        }),
+        Source::Vst3 { file, id, preset } => Some(native::WorkerSound::Vst3 {
+            file: file.clone(),
+            id: id.clone(),
+            preset: preset.as_ref().map(Into::into),
+        }),
     }
 }
 
-fn discover_isolated_plugin(
-    entry: &IsolatedPluginEntry,
-    sounds: &mut Vec<Sound>,
-    budget: &mut CatalogBudget,
-) {
-    match &entry.metadata {
-        crate::PluginProbeResult::Clap(plugins) => {
-            for info in plugins
-                .iter()
-                .filter(|info| info.kind == PluginKind::Instrument)
-            {
-                let label = format!("{} / {}", info.vendor, info.name);
-                if !budget.push_sound(
-                    sounds,
-                    Sound::new(
-                        format!("{} (default)", info.name),
-                        label,
-                        info.description.clone(),
-                        Source::Clap {
-                            file: entry.path.clone(),
-                            id: info.clap_id.clone(),
-                            preset: None,
-                            discovery_stamp: String::new(),
-                            isolated_metadata: true,
-                        },
-                    ),
-                ) {
-                    break;
-                }
-            }
-        }
-        crate::PluginProbeResult::Vst3(plugins) => {
-            for info in plugins
-                .iter()
-                .filter(|info| info.kind == PluginKind::Instrument)
-            {
-                let label = format!("{} / {}", info.vendor, info.name);
-                if !budget.push_sound(
-                    sounds,
-                    Sound::new(
-                        format!("{} (default)", info.name),
-                        label,
-                        String::new(),
-                        Source::Vst3 {
-                            file: entry.path.clone(),
-                            id: info.class_id.clone(),
-                            preset: None,
-                            discovery_stamp: String::new(),
-                            isolated_metadata: true,
-                        },
-                    ),
-                ) {
-                    break;
-                }
-            }
-        }
-    }
-}
-
-/// Makes a fresh, prepared instance of `sound` and hands it to `play`, tearing it down after.
-fn with_instrument<T>(
-    sound: &Sound,
+/// A fresh, prepared instance of a sound this process plays itself.
+pub(super) fn in_process_instrument(
+    source: &Source,
     registry: &PluginRegistry,
     prepare: &PrepareContext,
-    play: impl FnOnce(&mut dyn Instrument) -> Result<T, String>,
-) -> Result<T, String> {
-    match &sound.source {
+) -> Result<Box<dyn Instrument>, String> {
+    match source {
         Source::Builtin(id) => {
-            let mut i = registry.create_instrument(id).map_err(|e| e.to_string())?;
-            i.prepare(prepare);
-            play(i.as_mut())
+            let mut instrument = registry.create_instrument(id).map_err(|e| e.to_string())?;
+            instrument.prepare(prepare);
+            Ok(instrument)
         }
         Source::Font(preset) => {
-            let mut i = registry
+            let mut instrument = registry
                 .create_instrument(SAMPLER_ID)
                 .map_err(|e| e.to_string())?;
             let mut state = PluginState::default();
             auris_sampler::store_preset(&mut state, *preset);
-            i.load_state(&state);
-            i.prepare(prepare);
-            play(i.as_mut())
+            instrument.load_state(&state);
+            instrument.prepare(prepare);
+            Ok(instrument)
         }
-        Source::Clap {
-            file, id, preset, ..
-        } => {
-            // SAFETY: file came from the user's configured plugin library.
-            let library =
-                unsafe { auris_clap::ClapLibrary::load(file) }.map_err(|e| e.to_string())?;
-            let mut plugin = library.instantiate(id).map_err(|e| e.to_string())?;
-            if let Some(preset) = preset {
-                plugin.load_preset(preset)?;
-            }
-            let mut instrument = plugin
-                .activate_instrument(prepare)
-                .map_err(|e| e.to_string())?;
-            let result = play(&mut instrument);
-            plugin.deactivate_instrument(instrument);
-            result
-        }
-        Source::Vst3 {
-            file, id, preset, ..
-        } => {
-            let plugin =
-                auris_vst3::Vst3Plugin::load(file, id, prepare).map_err(|e| e.to_string())?;
-            if let Some(preset) = preset {
-                plugin.load_preset(preset).map_err(|e| e.to_string())?;
-            }
-            let mut instrument = plugin.offline_instrument().map_err(|e| e.to_string())?;
-            play(&mut instrument)
-        }
+        Source::Patch { sound, .. } if native::patch_is_builtin(sound) => Ok(Box::new(
+            native::build_builtin_patch(sound, registry, prepare)?,
+        )),
+        _ => Err("this sound plays only in the plugin worker process".into()),
     }
 }
 
-/// Six reference notes for the timbre features, then the three envelope notes — the latter
-/// from the disk cache when `envelope_key` names an entry.
-fn measure_sound(
-    sound: &Sound,
-    registry: &PluginRegistry,
-    rate: f64,
-    control: &TimbreMapControl,
-    envelope_key: Option<&str>,
-) -> Result<(Vec<f64>, TimbreCharacter, Option<SoundEnvelope>), String> {
-    let prepare = PrepareContext::new(rate, 512, 2);
-    let mut features = Vec::new();
-    let mut characters = Vec::new();
-    for pitch in [48, 60, 72] {
-        for velocity in [0.45, 0.85] {
-            control.check().map_err(|e| e.to_string())?;
-            let audio = with_instrument(sound, registry, &prepare, |instrument| {
-                super::timbre::render_reference(instrument, rate, pitch, velocity, control)
-                    .map_err(|e| e.to_string())
-            })?;
-            let values = timbre_features(&audio, 0.6)
-                .map_err(str::to_string)?
-                .ok_or("Silent reference trigger")?;
-            characters.push(timbre_character(&audio, 0.6, &values));
-            features.extend(values);
-        }
-    }
-    let envelope = match envelope_key.and_then(super::envelope::cached) {
-        Some(cached) => Some(cached),
-        None => {
-            let measured = super::envelope::measure_sound(|pitch| {
-                with_instrument(sound, registry, &prepare, |instrument| {
-                    super::envelope::measure_note(instrument, rate, pitch, control)
-                        .map_err(|e| e.to_string())
-                })
-            })?;
-            if let (Some(key), Some(envelope)) = (envelope_key, &measured) {
-                super::envelope::remember(key.to_owned(), envelope.clone());
-            }
-            measured
-        }
-    };
-    Ok((features, TimbreCharacter::mean(&characters), envelope))
-}
-
-/// The envelope cache key for a sound that lives in a file; built-ins are code and are never
-/// cached. Reads file metadata, so call it from a worker.
-fn envelope_key(sound: &Sound, fonts: &[(SoundFontId, PathBuf)]) -> Option<String> {
-    let identity = match &sound.source {
+/// The cache key for a sound whose measurement is worth keeping: one that lives in a file.
+/// Built-in instruments and patches made of them are code, which improves between builds, and
+/// are cheap; they are measured every time. Reads file metadata, so call it from a worker.
+pub(super) fn measurement_key(
+    source: &Source,
+    sound_stamp: &str,
+    fonts: &[(SoundFontId, PathBuf)],
+) -> Option<String> {
+    let identity = match source {
         Source::Builtin(_) => return None,
+        Source::Patch { sound: patch, .. } if native::patch_is_builtin(patch) => return None,
         Source::Font(preset) => {
             let (_, path) = fonts.iter().find(|(id, _)| *id == preset.font)?;
-            return Some(font_envelope_key(path, preset.bank, preset.patch));
+            format!("font|{}|{}|{}", stamp(path), preset.bank, preset.patch)
         }
-        // Their discovery stamps already carry the plugin and preset files' metadata.
-        Source::Clap { .. } | Source::Vst3 { .. } => format!("{:?}", sound.source),
+        source => format!("{source:?}|{sound_stamp}"),
     };
-    Some(super::envelope::cache_key(&identity))
+    Some(format!("v{MEASUREMENT_VERSION}|{identity}"))
 }
 
-/// A SoundFont preset's envelope cache key, shared by the agent's index and the timbre map.
-pub(super) fn font_envelope_key(path: &Path, bank: i32, patch: i32) -> String {
-    super::envelope::cache_key(&format!("font|{}|{bank}|{patch}", stamp(path)))
-}
-
-fn discover_clap(
-    file: &Path,
-    sounds: &mut Vec<Sound>,
-    errors: &mut Vec<String>,
-    budget: &mut CatalogBudget,
-) -> Result<(), String> {
-    // SAFETY: discovered in the user's configured plugin library.
-    let library = unsafe { auris_clap::ClapLibrary::load(file) }.map_err(|e| e.to_string())?;
-    let plugin_stamp = stamp(file);
-    let mut plugins = library.plugins().map_err(|e| e.to_string())?;
-    plugins.retain(|info| info.kind == PluginKind::Instrument);
-    if plugins.len() > DISCOVERY_FILE_LIMIT {
-        plugins.truncate(DISCOVERY_FILE_LIMIT);
-        budget.push_error(
-            errors,
-            format!(
-                "{}: additional CLAP plugin descriptors were omitted",
-                file.display()
-            ),
-        );
+/// Measures one sound, from the disk cache when `key` names a stored result. A sound that loads
+/// a file or third-party code is measured in the worker process; anything else here.
+pub(super) fn measure_source(
+    source: &Source,
+    key: Option<&str>,
+    registry: &PluginRegistry,
+    sample_rate: f64,
+    control: &TimbreMapControl,
+) -> Result<native::Measurement, String> {
+    if let Some(measured) = key.and_then(|key| super::disk_cache::read(MEASUREMENT_CACHE, key)) {
+        return Ok(measured);
     }
-    if plugins.is_empty() {
+    if let Some(error) =
+        key.and_then(|key| super::disk_cache::read::<String>(MEASUREMENT_FAILURE_CACHE, key))
+    {
+        return Err(error);
+    }
+    let measured = match worker_sound(source) {
+        Some(sound) => {
+            match crate::plugin_worker::measure_isolated(sound, sample_rate, control.flag()) {
+                Ok(measured) => measured,
+                Err(error) => {
+                    let error = error.to_string();
+                    // A preset that crashes its worker or refuses to load does so every time:
+                    // remember it, so each scan does not wait on it again. A timeout or a
+                    // cancellation says nothing about the sound and is tried again next time.
+                    if let Some(key) = key
+                        && control.check().is_ok()
+                        && !error.contains("timed out")
+                        && !error.contains("cancelled")
+                    {
+                        super::disk_cache::write(MEASUREMENT_FAILURE_CACHE, key, &error);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        None => {
+            let prepare = PrepareContext::new(sample_rate, 512, 2);
+            native::measure(sample_rate, control, &mut |play| {
+                let mut instrument = in_process_instrument(source, registry, &prepare)?;
+                play(instrument.as_mut())
+            })?
+        }
+    };
+    if let Some(key) = key {
+        super::disk_cache::write(MEASUREMENT_CACHE, key, &measured);
+    }
+    Ok(measured)
+}
+
+/// Starts measuring `catalog` on a background thread unless a run is already under way.
+fn start_index(
+    catalog: &Arc<Catalog>,
+    state: &mut IndexState,
+    reference: Option<usize>,
+) -> Result<(), String> {
+    if state.started {
         return Ok(());
     }
-    let mut metadata = library.presets();
-    let metadata_errors_truncated = metadata.errors.len() > CATALOG_ERROR_LIMIT;
-    if metadata.errors.len() > CATALOG_ERROR_LIMIT {
-        metadata.errors.truncate(CATALOG_ERROR_LIMIT);
-    }
-    if metadata.presets.len() > CATALOG_SOUND_LIMIT {
-        metadata.presets.truncate(CATALOG_SOUND_LIMIT);
-        budget.sounds_truncated = true;
-    }
-    for error in metadata.errors {
-        budget.push_error(errors, format!("{}: {error}", file.display()));
-    }
-    if metadata_errors_truncated {
-        budget.push_error(
-            errors,
-            format!(
-                "{}: additional CLAP diagnostics were omitted",
-                file.display()
-            ),
-        );
-    }
-    for info in plugins {
-        let label = format!("{} / {}", info.vendor, info.name);
-        if !budget.push_sound(
-            sounds,
-            Sound::new(
-                format!("{} (default)", info.name),
-                label.clone(),
-                String::new(),
-                Source::Clap {
-                    file: file.into(),
-                    id: info.clap_id.clone(),
-                    preset: None,
-                    discovery_stamp: plugin_stamp.clone(),
-                    isolated_metadata: false,
-                },
-            ),
-        ) {
-            return Ok(());
-        }
-        match library.instantiate(&info.clap_id) {
-            Ok(plugin) if plugin.supports_preset_loading() => {}
-            Ok(_) => {
-                budget.push_error(
-                    errors,
-                    format!("{}: no CLAP preset-load extension", info.name),
-                );
-                continue;
+    let permit = AcousticWorkerPermit::acquire()
+        .ok_or("Sound acoustic analysis is busy; retry after another index finishes")?;
+    let run = TimbreMapControl::default();
+    let worker_catalog = Arc::clone(catalog);
+    let worker_run = run.clone();
+    catalog.completed.store(0, Ordering::Relaxed);
+    std::thread::Builder::new()
+        .name("auris-sound-index".into())
+        .spawn(move || {
+            let _permit = permit;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                build_index(&worker_catalog, &worker_run, reference)
+            }))
+            .unwrap_or_else(|_| Err("Sound index worker panicked".into()));
+            if let Ok(mut state) = worker_catalog.index.lock()
+                && state.started
+                && state.run.same_run(&worker_run)
+            {
+                state.result = Some(result.map(Arc::new));
             }
-            Err(error) => {
-                budget.push_error(errors, format!("{}: {error}", info.name));
-                continue;
-            }
-        }
-        for preset in metadata
-            .presets
-            .iter()
-            .filter(|p| p.plugin_ids.contains(&info.clap_id))
-        {
-            if !budget.push_sound(
-                sounds,
-                Sound::new(
-                    preset.name.clone(),
-                    label.clone(),
-                    preset.features.join(" "),
-                    Source::Clap {
-                        file: file.into(),
-                        id: info.clap_id.clone(),
-                        preset: Some(preset.clone()),
-                        discovery_stamp: clap_selection_stamp(file, Some(preset)),
-                        isolated_metadata: false,
-                    },
-                ),
-            ) {
-                return Ok(());
-            }
-        }
-    }
+        })
+        .map_err(|e| e.to_string())?;
+    state.started = true;
+    state.reference = reference;
+    state.run = run;
     Ok(())
 }
 
-fn discover_vst3(
-    file: &Path,
-    files: &[(PathBuf, String)],
-    rate: f64,
-    sounds: &mut Vec<Sound>,
-    errors: &mut Vec<String>,
-    budget: &mut CatalogBudget,
-) -> Result<(), String> {
-    let plugin_stamp = stamp(file);
-    let mut plugins = auris_vst3::plugins_in(file).map_err(|e| e.to_string())?;
-    plugins.retain(|info| info.kind == PluginKind::Instrument);
-    if plugins.len() > DISCOVERY_FILE_LIMIT {
-        plugins.truncate(DISCOVERY_FILE_LIMIT);
-        budget.push_error(
-            errors,
-            format!(
-                "{}: additional VST3 class descriptors were omitted",
-                file.display()
-            ),
-        );
-    }
-    for info in plugins {
-        let label = format!("{} / {}", info.vendor, info.name);
-        if !budget.push_sound(
-            sounds,
-            Sound::new(
-                format!("{} (default)", info.name),
-                label.clone(),
-                String::new(),
-                Source::Vst3 {
-                    file: file.into(),
-                    id: info.class_id.clone(),
-                    preset: None,
-                    discovery_stamp: plugin_stamp.clone(),
-                    isolated_metadata: false,
-                },
-            ),
-        ) {
-            return Ok(());
+/// Measures up to [`ACOUSTIC_SOUND_LIMIT`] of the catalog's sounds, a few at a time.
+fn build_index(
+    catalog: &Catalog,
+    run: &TimbreMapControl,
+    reference: Option<usize>,
+) -> Result<AcousticIndex, String> {
+    let check = || -> Result<(), String> {
+        catalog.control.check().map_err(|e| e.to_string())?;
+        run.check().map_err(|e| e.to_string())
+    };
+    let measurable_count = catalog
+        .sounds
+        .iter()
+        .filter(|sound| measurable(sound))
+        .count();
+    let mut ordered: Vec<usize> = (0..catalog.sounds.len())
+        .filter(|index| Some(*index) != reference && measurable(&catalog.sounds[*index]))
+        .collect();
+    ordered.sort_by_key(|index| measuring_rank(&catalog.sounds[*index]));
+    let candidates: Vec<usize> = reference
+        .into_iter()
+        .chain(ordered)
+        .take(ACOUSTIC_SOUND_LIMIT)
+        .collect();
+    catalog
+        .measuring_total
+        .store(candidates.len(), Ordering::Relaxed);
+    let results: Vec<Mutex<Option<Result<native::Measurement, String>>>> =
+        candidates.iter().map(|_| Mutex::new(None)).collect();
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..MEASURING_THREADS.min(candidates.len()).max(1) {
+            scope.spawn(|| {
+                loop {
+                    let slot = next.fetch_add(1, Ordering::Relaxed);
+                    if slot >= candidates.len() || check().is_err() {
+                        break;
+                    }
+                    let sound = &catalog.sounds[candidates[slot]];
+                    let key = measurement_key(&sound.source, &sound.stamp, &catalog.font_paths);
+                    let result = measure_source(
+                        &sound.source,
+                        key.as_deref(),
+                        &catalog.registry,
+                        catalog.sample_rate,
+                        run,
+                    );
+                    if let Ok(mut cell) = results[slot].lock() {
+                        *cell = Some(result);
+                    }
+                    catalog.completed.fetch_add(1, Ordering::Relaxed);
+                }
+            });
         }
-        let mut presets = match auris_vst3::Vst3Plugin::load(
-            file,
-            &info.class_id,
-            &PrepareContext::new(rate, 512, 2),
-        )
-        .and_then(|p| p.presets())
-        {
-            Ok(presets) => presets,
+    });
+    check()?;
+    let mut sounds = Vec::new();
+    let mut raw_rows = Vec::new();
+    let mut characters = Vec::new();
+    let mut envelopes = Vec::new();
+    let mut skipped = Vec::new();
+    let mut skipped_truncated = false;
+    let mut row_bytes = 0usize;
+    let mut index_bytes_limited = false;
+    for (index, result) in candidates.iter().zip(results) {
+        let sound = &catalog.sounds[*index];
+        let result = result
+            .into_inner()
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| Err("not measured".into()));
+        match result {
+            Ok(measured) => {
+                let bytes = measured
+                    .features
+                    .len()
+                    .saturating_mul(2 * std::mem::size_of::<f64>())
+                    .saturating_add(std::mem::size_of::<TimbreCharacter>());
+                if row_bytes.saturating_add(bytes) > ACOUSTIC_INDEX_BYTE_LIMIT {
+                    if Some(*index) == reference {
+                        return Err("Reference acoustic features exceed the index budget".into());
+                    }
+                    index_bytes_limited = true;
+                    break;
+                }
+                row_bytes += bytes;
+                sounds.push(*index);
+                raw_rows.push(measured.features);
+                characters.push(measured.character);
+                envelopes.push(measured.envelope);
+            }
             Err(error) => {
-                budget.push_error(errors, format!("{}: {error}", info.name));
-                Vec::new()
-            }
-        };
-        for (path, class) in files
-            .iter()
-            .filter(|(_, class)| class.eq_ignore_ascii_case(&info.class_id))
-        {
-            let _ = class;
-            presets.push((
-                path.file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned(),
-                auris_vst3::Vst3Preset::File(path.clone()),
-            ));
-        }
-        let remaining = CATALOG_SOUND_LIMIT.saturating_sub(sounds.len());
-        if presets.len() > remaining {
-            presets.truncate(remaining);
-            budget.sounds_truncated = true;
-        }
-        if presets.is_empty() {
-            budget.push_error(
-                errors,
-                format!(
-                    "{}: no advertised VST3 programs or standard preset files",
-                    info.name
-                ),
-            );
-        }
-        for (name, preset) in presets {
-            if !budget.push_sound(
-                sounds,
-                Sound::new(
-                    name,
-                    label.clone(),
-                    String::new(),
-                    Source::Vst3 {
-                        file: file.into(),
-                        id: info.class_id.clone(),
-                        discovery_stamp: vst3_selection_stamp(file, Some(&preset)),
-                        preset: Some(preset),
-                        isolated_metadata: false,
-                    },
-                ),
-            ) {
-                return Ok(());
+                if Some(*index) == reference {
+                    return Err(format!(
+                        "Reference {} could not be measured: {}",
+                        short_text(&sound.name, 160),
+                        short_text(&error, 240)
+                    ));
+                }
+                if skipped.len() < CATALOG_ERROR_LIMIT {
+                    skipped.push(short_text(
+                        &format!("{}: {error}", sound.name),
+                        CATALOG_ERROR_CHARACTER_LIMIT,
+                    ));
+                } else if !skipped_truncated {
+                    if let Some(last) = skipped.last_mut() {
+                        *last = "Additional acoustic measurement diagnostics were omitted".into();
+                    }
+                    skipped_truncated = true;
+                }
             }
         }
     }
-    Ok(())
+    Ok(AcousticIndex {
+        sounds,
+        rows: standardize_timbres(&raw_rows).map_err(str::to_string)?,
+        raw_rows,
+        characters,
+        envelopes,
+        skipped,
+        limited: measurable_count > ACOUSTIC_SOUND_LIMIT
+            || index_bytes_limited
+            || skipped_truncated,
+    })
 }
 
 fn stamp(path: &Path) -> String {
@@ -2762,36 +2534,53 @@ mod tests {
         job
     }
 
-    fn isolated_metadata_job(session: &Session) -> SoundLibraryJob {
+    /// A job whose plugin listing is supplied rather than asked of the worker process.
+    fn listed_plugin_job(session: &Session) -> SoundLibraryJob {
         let mut job = session.sound_library_job(&[]);
-        job.isolated_plugin_snapshot = Some(IsolatedPluginCatalog {
-            entries: vec![IsolatedPluginEntry {
-                // This path deliberately does not exist. A successful test therefore proves the
-                // live search consumes the supplied descriptor instead of loading the binary.
-                path: PathBuf::from("NeverLoad.clap"),
-                metadata: crate::PluginProbeResult::Clap(vec![crate::ClapPluginInfo {
-                    clap_id: "example.quarantine.synth".into(),
-                    name: "Quarantine Synth".into(),
-                    vendor: "Example Vendor".into(),
-                    description: "safe isolated descriptor".into(),
-                    version: "1.0".into(),
-                    kind: PluginKind::Instrument,
-                    category: PluginCategory::Synth,
-                }]),
-            }],
-            diagnostics: vec![
-                "Live Agent native plugins use isolated default descriptors; native preset enumeration and acoustic similarity are unavailable"
-                    .into(),
-            ],
+        job.native_snapshot = Some(NativeCatalog {
+            sounds: vec![Sound::stamped(
+                "Quarantine Synth (default)".into(),
+                "Example Vendor / Quarantine Synth".into(),
+                "safe listed descriptor".into(),
+                Source::Clap {
+                    // This path deliberately does not exist. A successful test therefore proves
+                    // the catalog consumes the listing instead of loading the binary.
+                    file: PathBuf::from("NeverLoad.clap"),
+                    id: "example.quarantine.synth".into(),
+                    preset: None,
+                },
+                "stamp when it was listed".into(),
+            )],
+            diagnostics: vec!["NeverLoad.clap: one preset provider failed".into()],
+            inventory: Vec::new(),
+            stamps: vec!["stamp when it was listed".into()],
             status: NativePluginStatus {
                 discovered_files: 3,
-                inspected_files: 2,
+                listed_files: 1,
+                cached_files: 1,
                 failed_files: 1,
-                skipped_files: 2,
-                truncated: true,
+                truncated: false,
             },
         });
         job
+    }
+
+    fn search(job: SoundLibraryJob, name: &str, source: Option<SoundSource>) -> serde_json::Value {
+        let response = job
+            .run(
+                SoundSearch {
+                    name: name.into(),
+                    limit: 10,
+                    filter: SoundFilter {
+                        source,
+                        library: None,
+                    },
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap();
+        serde_json::from_str(&response).unwrap()
     }
 
     fn pressure_catalog_cache() {
@@ -2865,65 +2654,56 @@ mod tests {
     }
 
     #[test]
-    fn isolated_live_search_issues_selectable_metadata_without_loading_native_code() {
+    fn listed_plugin_sounds_are_searchable_and_measurable_like_any_other() {
         let _serial = serial_test();
         let session = session();
-        let cancelled = AtomicBool::new(false);
-        let response = isolated_metadata_job(&session)
-            .run_isolated(
-                SoundSearch {
-                    name: "quarantine".into(),
-                    limit: 10,
-                    offset: 0,
-                    filter: SoundFilter::default(),
-                    ..Default::default()
-                },
-                false,
-                &cancelled,
-            )
-            .unwrap();
-        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        let response = search(listed_plugin_job(&session), "quarantine", None);
         let id = response["sounds"][0]["id"].as_str().unwrap();
 
-        assert_eq!(response["native_plugins"]["mode"], "isolated_metadata");
-        assert_eq!(response["native_plugins"]["skipped_files"], 2);
-        assert_eq!(response["native_plugins"]["truncated"], true);
-        assert_eq!(
-            response["native_plugins"]["acoustic_similarity"],
-            "not_supported"
+        assert_eq!(response["native_plugins"]["mode"], "worker_process");
+        assert_eq!(response["native_plugins"]["failed_files"], 1);
+        assert_eq!(response["native_plugins"]["cached_listings"], 1);
+        assert_eq!(response["libraries"][0]["source"], "clap");
+        let sound = resolve_library_sound(&session.sound_library_scopes(&[]), id).unwrap();
+        assert!(measurable(&sound), "plugin sounds join the acoustic index");
+        assert!(
+            worker_sound(&sound.source).is_some(),
+            "and are measured in the worker"
         );
-        let source = resolve_library_sound(&session.sound_library_scopes(&[]), id).unwrap();
-        assert!(isolated_native(&source));
-        assert!(!measurable(&source));
         let diagnostics = session.sound_library_job(&[]).diagnostics(0, 10).unwrap();
-        assert!(diagnostics.contains("isolated default descriptors"));
+        assert!(
+            diagnostics.contains("preset provider failed"),
+            "{diagnostics}"
+        );
     }
 
     #[test]
-    fn isolated_search_handles_still_drive_the_existing_selection_contract() {
+    fn a_plugin_replaced_since_it_was_listed_is_refused_without_loading_it() {
+        let _serial = serial_test();
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let response = search(listed_plugin_job(&session), "quarantine", None);
+        let id = response["sounds"][0]["id"].as_str().unwrap();
+        session.forget_history();
+
+        let error = session.use_library_sound(track, id, &[]).unwrap_err();
+
+        assert!(error.contains("changed after discovery"), "{error}");
+        assert!(!session.can_undo());
+    }
+
+    #[test]
+    fn listed_search_handles_still_drive_the_existing_selection_contract() {
         let _serial = serial_test();
         let mut session = session();
         let track = session
             .add_default_instrument_track("Safe selection")
             .unwrap();
-        let cancelled = AtomicBool::new(false);
-        let response = isolated_metadata_job(&session)
-            .run_isolated(
-                SoundSearch {
-                    name: "FM 2-Op".into(),
-                    limit: 1,
-                    offset: 0,
-                    filter: SoundFilter {
-                        source: Some(SoundSource::Builtin),
-                        library: None,
-                    },
-                    ..Default::default()
-                },
-                false,
-                &cancelled,
-            )
-            .unwrap();
-        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        let response = search(
+            listed_plugin_job(&session),
+            "FM 2-Op",
+            Some(SoundSource::Builtin),
+        );
         let id = response["sounds"][0]["id"].as_str().unwrap();
 
         session.forget_history();
@@ -2933,56 +2713,125 @@ mod tests {
     }
 
     #[test]
-    fn isolated_native_sound_explains_why_similarity_is_unavailable() {
+    fn saved_user_and_factory_sounds_are_found_and_applied_with_their_inserts() {
         let _serial = serial_test();
-        let session = session();
-        let cancelled = AtomicBool::new(false);
-        let response = isolated_metadata_job(&session)
-            .run_isolated(
-                SoundSearch {
-                    name: "quarantine".into(),
-                    limit: 1,
-                    offset: 0,
-                    filter: SoundFilter::default(),
-                    ..Default::default()
-                },
-                false,
-                &cancelled,
-            )
+        let scratch = Scratch::new("user-sounds-in-search");
+        let book = scratch.join("sounds.json");
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let reverb = session
+            .registry()
+            .effects()
+            .next()
+            .map(|descriptor| descriptor.id.to_string())
             .unwrap();
-        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
-        let id = response["sounds"][0]["id"].as_str().unwrap().to_string();
+        session.add_effect(Some(track), &reverb).unwrap();
+        session
+            .save_sound(track, "Quiet Glass Lead", &book)
+            .unwrap();
+        let mut job = isolated_job(&session);
+        job.user_sounds = Some(book.clone());
 
-        let error = isolated_metadata_job(&session)
-            .run_isolated(
-                SoundSearch {
-                    like: Some(id),
-                    limit: 10,
-                    filter: SoundFilter::default(),
-                    ..Default::default()
-                },
-                false,
-                &cancelled,
-            )
-            .unwrap_err();
+        let response = search(job, "glass", Some(SoundSource::User));
+        assert_eq!(response["total"], 1, "{response}");
+        assert_eq!(response["libraries"][0]["source"], "user");
+        let id = response["sounds"][0]["id"].as_str().unwrap().to_owned();
 
-        assert!(error.contains("isolated metadata"));
-        assert!(error.contains("third-party code"));
+        let other = session.add_default_instrument_track("Bare").unwrap();
+        session.forget_history();
+        session.use_library_sound(other, &id, &[]).unwrap();
+        let inserts = |session: &Session, track| {
+            session
+                .project()
+                .track(track)
+                .unwrap()
+                .mixer
+                .effects
+                .iter()
+                .map(|slot| slot.effect_id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(inserts(&session, other), vec![reverb]);
+        assert_eq!(session.undo(), Some(crate::Edit::ApplySoundPreset));
+
+        let factory = search(isolated_job(&session), "", Some(SoundSource::Factory));
+        assert!(factory["total"].as_u64().unwrap() > 0, "{factory}");
+        assert_eq!(factory["libraries"][0]["source"], "factory");
     }
 
     #[test]
-    fn isolated_live_search_honors_cancellation_before_discovery() {
+    fn a_sound_saved_after_the_catalog_was_built_is_found_next_time() {
+        let _serial = serial_test();
+        let scratch = Scratch::new("user-sounds-stale-catalog");
+        let book = scratch.join("sounds.json");
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let job = |session: &Session| {
+            let mut job = isolated_job(session);
+            job.user_sounds = Some(book.clone());
+            job
+        };
+        assert_eq!(
+            search(job(&session), "amber", Some(SoundSource::User))["total"],
+            0
+        );
+
+        session.save_sound(track, "Amber Keys", &book).unwrap();
+
+        assert_eq!(
+            search(job(&session), "amber", Some(SoundSource::User))["total"],
+            1
+        );
+    }
+
+    #[test]
+    fn a_saved_sound_made_of_built_in_parts_is_measured_here_and_one_with_a_file_is_not() {
+        let builtin = crate::SoundPreset {
+            name: "Plain".into(),
+            instrument_id: crate::DEFAULT_INSTRUMENT.into(),
+            state: PluginState::default(),
+            file: None,
+            soundfont: None,
+            effects: Vec::new(),
+        };
+        let hosted = crate::SoundPreset {
+            file: Some(PathBuf::from("Somebody.clap")),
+            instrument_id: "clap:example.synth".into(),
+            ..builtin.clone()
+        };
+        let patch = |sound| Source::Patch {
+            origin: super::super::PatchOrigin::User,
+            sound: Arc::new(sound),
+        };
+
+        assert!(worker_sound(&patch(builtin.clone())).is_none());
+        assert!(worker_sound(&patch(hosted.clone())).is_some());
+        assert_eq!(measurement_key(&patch(builtin.clone()), "", &[]), None);
+        assert!(measurement_key(&patch(hosted), "stamp", &[]).is_some());
+        let registry = crate::default_registry(auris_sampler::SoundFontBank::shared());
+        let measured = measure_source(
+            &patch(builtin),
+            None,
+            &registry,
+            48_000.,
+            &TimbreMapControl::default(),
+        )
+        .unwrap();
+        assert!(measured.features.iter().all(|v| v.is_finite()));
+        assert!(measured.envelope.is_some());
+    }
+
+    #[test]
+    fn a_cancelled_search_stops_before_discovery() {
         let _serial = serial_test();
         let session = session();
         let cancelled = AtomicBool::new(true);
 
-        let error = isolated_metadata_job(&session)
-            .run_isolated(
+        let error = listed_plugin_job(&session)
+            .run_cancellable(
                 SoundSearch {
                     name: "quarantine".into(),
                     limit: 1,
-                    offset: 0,
-                    filter: SoundFilter::default(),
                     ..Default::default()
                 },
                 false,
@@ -2991,23 +2840,6 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error, "Sound search cancelled");
-    }
-
-    #[test]
-    fn isolated_native_candidates_are_bounded_without_starving_a_format() {
-        let inventory = crate::InstalledPluginFiles {
-            clap: (0..300)
-                .map(|index| PathBuf::from(format!("Clap-{index:03}.clap")))
-                .collect(),
-            vst3: vec![PathBuf::from("First.vst3"), PathBuf::from("Second.vst3")],
-            truncated: false,
-        };
-
-        let candidates = isolated_plugin_candidates(&inventory);
-
-        assert_eq!(candidates.len(), ISOLATED_PLUGIN_FILE_LIMIT);
-        assert!(candidates.contains(&(PathBuf::from("First.vst3"), crate::PluginFormat::Vst3)));
-        assert!(candidates.contains(&(PathBuf::from("Second.vst3"), crate::PluginFormat::Vst3)));
     }
 
     fn catalog_is_cached(key: &str) -> bool {
@@ -3247,8 +3079,13 @@ mod tests {
             inventory: Vec::new(),
             index: Mutex::new(IndexState::default()),
             completed: AtomicUsize::new(0),
+            measuring_total: AtomicUsize::new(0),
             control: TimbreMapControl::default(),
             native_status: None,
+            user_sounds_stamp: None,
+            sample_rate: 48_000.,
+            registry: crate::default_registry(auris_sampler::SoundFontBank::shared()),
+            font_paths: Vec::new(),
         })
     }
 
@@ -3257,18 +3094,13 @@ mod tests {
         let _serial = serial_test();
         let scratch = Scratch::new("inventory-roots");
         let missing = scratch.join("Missing");
-        let roots = root_inventory(std::slice::from_ref(&missing), RootInventoryMode::Metadata);
-        let isolated = root_inventory(std::slice::from_ref(&missing), RootInventoryMode::Isolated);
-        assert!(
-            isolated
-                .iter()
-                .all(|entry| entry["status"] == "isolated_scan")
-        );
+        let roots = root_inventory(std::slice::from_ref(&missing));
+        // The roots are the worker's to look at: a disconnected volume must not block here.
+        assert!(roots.iter().all(|entry| entry["status"] == "worker_scan"));
         assert!(
             roots
                 .iter()
-                .any(|entry| entry["path"] == missing.to_string_lossy().as_ref()
-                    && entry["status"] == "not_found")
+                .any(|entry| entry["path"] == missing.to_string_lossy().as_ref())
         );
         let session = session();
         let job = isolated_job(&session);
@@ -3403,14 +3235,16 @@ mod tests {
         let mut state = IndexState {
             started: true,
             reference: Some(0),
-            result: Some(Ok(AcousticIndex {
+            run: TimbreMapControl::default(),
+            result: Some(Ok(Arc::new(AcousticIndex {
                 characters: Vec::new(),
                 envelopes: Vec::new(),
                 sounds: (0..ACOUSTIC_SOUND_LIMIT).collect(),
                 rows: Vec::new(),
+                raw_rows: Vec::new(),
                 skipped: Vec::new(),
                 limited: true,
-            })),
+            }))),
         };
         assert!(state.reset_if_reference_missing(ACOUSTIC_SOUND_LIMIT));
         assert!(!state.started);
@@ -3489,28 +3323,6 @@ mod tests {
         ));
         assert_eq!(unique_sounds.len(), 2);
         assert!(!deduplicating.sounds_truncated);
-    }
-
-    #[test]
-    fn bounded_plugin_walk_treats_vst3_bundles_as_atomic_entries() {
-        let _serial = serial_test();
-        let scratch = Scratch::new("bounded-plugin-walk");
-        let bundle = scratch.join("Outer.vst3");
-        std::fs::create_dir_all(bundle.join("Contents")).unwrap();
-        std::fs::write(bundle.join("Contents").join("Nested.vst3"), b"not a plugin").unwrap();
-        let mut files = PluginFiles::default();
-        let mut visited = 0;
-        let mut bytes = 0;
-        scan_plugin_roots(
-            [bundle.clone()],
-            "vst3",
-            true,
-            &mut files,
-            &mut visited,
-            &mut bytes,
-        );
-        assert_eq!(files.entries, vec![(bundle, true)]);
-        assert!(!files.truncated);
     }
 
     #[test]
@@ -3721,7 +3533,12 @@ mod tests {
         // Selection resolves the lightweight issued handle; it must not rebuild the provider
         // catalog on this caller thread.
         assert!(!catalog_is_cached(&key));
-        assert_eq!(session.undo(), Some(crate::Edit::ChangeInstrument));
+        // "auris" finds the built-in instruments and the factory sounds alike; either is one
+        // edit.
+        assert!(matches!(
+            session.undo(),
+            Some(crate::Edit::ChangeInstrument | crate::Edit::ApplySoundPreset)
+        ));
         assert_eq!(&before, session.project());
         query(&session, "auris", 1, 0, true).unwrap();
         assert!(
@@ -3768,7 +3585,7 @@ mod tests {
                 .unwrap_err()
                 .contains("expired")
         );
-        catalog.index.lock().unwrap().result = Some(Ok(AcousticIndex {
+        catalog.index.lock().unwrap().result = Some(Ok(Arc::new(AcousticIndex {
             characters: vec![TimbreCharacter::default(); 3],
             envelopes: vec![None; 3],
             sounds: indices.clone(),
@@ -3777,9 +3594,10 @@ mod tests {
                 vec![0.0, 0.0, 9.0],
                 vec![1.0, 0.0, 0.0],
             ],
+            raw_rows: Vec::new(),
             skipped: Vec::new(),
             limited: false,
-        }));
+        })));
         let response = job
             .run(
                 SoundSearch {
@@ -3814,15 +3632,31 @@ mod tests {
         let job = isolated_job(&session);
         let source = job.sounds.iter().find(|s| measurable(s)).unwrap();
         let control = TimbreMapControl::default();
-        let (row, _, envelope) =
-            measure_sound(source, &job.registry, job.sample_rate, &control, None).unwrap();
-        assert!(!row.is_empty() && row.iter().all(|v| v.is_finite()));
-        assert!(envelope.is_some_and(|e| e.summary.attack_ms.is_finite()));
+        let measured = measure_source(
+            &source.source,
+            None,
+            &job.registry,
+            job.sample_rate,
+            &control,
+        )
+        .unwrap();
+        assert!(!measured.features.is_empty() && measured.features.iter().all(|v| v.is_finite()));
+        assert!(
+            measured
+                .envelope
+                .is_some_and(|e| e.summary.attack_ms.is_finite())
+        );
         control.cancel();
         assert!(
-            measure_sound(source, &job.registry, job.sample_rate, &control, None)
-                .unwrap_err()
-                .contains("cancelled")
+            measure_source(
+                &source.source,
+                None,
+                &job.registry,
+                job.sample_rate,
+                &control
+            )
+            .unwrap_err()
+            .contains("cancelled")
         );
         assert_eq!(&before, session.project());
     }
@@ -4014,60 +3848,5 @@ mod tests {
             .add_default_instrument_track("Character search result")
             .unwrap();
         session.use_library_sound(track, id, &[]).unwrap();
-    }
-
-    #[test]
-    #[ignore = "Requires installed Surge XT and executes third-party preset code"]
-    fn installed_surge_presets_produce_distinct_acoustic_features() {
-        let _serial = serial_test();
-        let scratch = Scratch::new("surge-preset-probe");
-        let mut session = session();
-        session.save_as(&scratch.join("Native.auris")).unwrap();
-        let job = session.sound_library_job(&[]);
-        let catalog = job.catalog(false).unwrap();
-        let sources = catalog
-            .sounds
-            .iter()
-            .filter(|s| {
-                s.library.contains("Surge XT")
-                    && matches!(
-                        &s.source,
-                        Source::Clap {
-                            preset: Some(_),
-                            ..
-                        }
-                    )
-            })
-            .take(2)
-            .collect::<Vec<_>>();
-        assert_eq!(sources.len(), 2, "Surge preset discovery was unavailable");
-        let rows = sources
-            .iter()
-            .map(|sound| {
-                measure_sound(
-                    sound,
-                    &job.registry,
-                    job.sample_rate,
-                    &catalog.control,
-                    None,
-                )
-                .unwrap()
-                .0
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(rows[0].len(), rows[1].len());
-        assert!(rows.iter().flatten().all(|v| v.is_finite()));
-        assert!(
-            rows[0]
-                .iter()
-                .zip(&rows[1])
-                .any(|(a, b)| (a - b).abs() > 1e-6)
-        );
-        eprintln!(
-            "Measured {} and {}: {} features each",
-            sources[0].name,
-            sources[1].name,
-            rows[0].len()
-        );
     }
 }

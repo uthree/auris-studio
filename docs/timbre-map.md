@@ -2,11 +2,22 @@
 
 [日本語](timbre-map.ja.md)
 
-Open **Find Sounds** at the top of the library. Auris measures the built-in melodic
-instruments and melodic presets of loaded SoundFonts in the background; the status bar counts
-completed sounds, and Cancel, Close and Escape stop a running scan. Use **Rescan Library** after
-loading another font. The prototype accepts up to 512 sounds per scan and keeps the results in
-memory until the document is replaced or a new scan starts.
+Open **Find Sounds** at the top of the library. Auris measures every melodic sound the library
+offers in the background: the built-in instruments, the melodic presets of loaded SoundFonts,
+saved user and factory sounds (with their inserts), and the CLAP and VST3 instruments and presets
+under the configured plugin folders. The status bar counts completed sounds, and Cancel, Close and
+Escape stop a running scan. Use **Rescan Library** after loading another font or installing or
+updating a plugin: opening the map again reuses the sounds already measured in this run.
+
+Plugin sounds, and saved sounds that need a plugin or a SoundFont file, are measured in a separate
+process, so a plugin that crashes takes only that process with it. The first time takes a few
+seconds a sound, and the window says so while it lasts; each result is kept on disk under the
+plugin's file and comes back at once on the next scan. One map holds up to 1,024 sounds: the
+built-in and saved sounds first, then SoundFont presets, then plugin presets. When a library is
+larger, the status bar says some plugin sounds were left out.
+
+The agent's `search_instruments` reads the same catalog and the same measurements, so a scan in
+either place makes the other one fast.
 
 The window has three columns with one job each, stacked in the same order in a narrow window:
 

@@ -3225,7 +3225,7 @@ impl AurisApp {
             .name("auris-sound-search".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    job.run_isolated(request, refresh, &worker_cancel)
+                    job.run_cancellable(request, refresh, &worker_cancel)
                 }))
                 .unwrap_or_else(|_| Err("Sound search worker panicked".into()));
                 let _ = sender.send(result);

@@ -2481,8 +2481,8 @@ mod tests {
                 this.open_song_workshop(window, cx);
                 this.timbre_map.map = Some(Arc::new(
                     this.session
-                        .timbre_map_job()
-                        .unwrap()
+                        .timbre_map_job(&[])
+                        .without_plugins()
                         .run(&auris_session::TimbreMapControl::default())
                         .unwrap(),
                 ));
