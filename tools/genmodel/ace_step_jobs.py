@@ -43,6 +43,12 @@ def main() -> int:
         help="restrict PyTorch's SDPA kernels; `math` avoids fused kernels",
     )
     parser.add_argument("--only", nargs="*", help="run only the jobs with these names")
+    parser.add_argument("--device", default="cuda", help="cuda (ROCm) or cpu")
+    parser.add_argument(
+        "--cpu-noise",
+        action="store_true",
+        help="draw the initial noise from a CPU generator, so devices can be compared",
+    )
     args = parser.parse_args()
 
     # ROCm on Windows: the settings ACE-Step's own ROCm launcher makes.
@@ -76,7 +82,7 @@ def main() -> int:
     status, ok = dit.initialize_service(
         project_root=str(root),
         config_path=args.model,
-        device="cuda",
+        device=args.device,
         offload_to_cpu=args.offload,
     )
     load_seconds = time.perf_counter() - started
@@ -84,6 +90,24 @@ def main() -> int:
         print(f"initialisation failed: {status}", file=sys.stderr)
         return 1
     print(f"loaded {args.model} in {load_seconds:.1f} s", flush=True)
+    if args.cpu_noise:
+        # The model draws its noise with a generator on its own device, so the same seed is
+        # different noise on CPU and GPU. Drawing it on the CPU makes the (ODE) sampler's
+        # output comparable across devices.
+        model_class = type(dit.model)
+
+        def cpu_noise(self, context_latents, seed=None):
+            shape = (
+                context_latents.shape[0],
+                context_latents.shape[1],
+                context_latents.shape[-1] // 2,
+            )
+            first = seed[0] if isinstance(seed, list) else seed
+            generator = torch.Generator("cpu").manual_seed(int(first or 0))
+            noise = torch.randn(shape, generator=generator, dtype=torch.float32)
+            return noise.to(context_latents.device, context_latents.dtype)
+
+        model_class.prepare_noise = cpu_noise
     llm = LLMHandler()  # never initialised: DiT only, no language-model planning
 
     report = {
