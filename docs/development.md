@@ -110,8 +110,10 @@ release build with the same audio backends, use `cargo build --release --locked 
 `--release` alone changes optimization settings and does not enable ASIO.
 
 The setup script uses an existing LLVM installation or installs it with Chocolatey or WinGet.
-It sets `LIBCLANG_PATH` for the current PowerShell session; run it again when opening a new
-terminal. For a custom installation, use `-LlvmBin 'D:\LLVM\bin'`. CI's ASIO checks and
+It also downloads the ASIO SDK to `%TEMP%sio_sdk`, unless `CPAL_ASIO_DIR` already names one,
+because asio-sys's own download fails to extract when Cargo runs under PowerShell 7. It sets
+`LIBCLANG_PATH` and `CPAL_ASIO_DIR` for the current PowerShell session; run it again when
+opening a new terminal. For a custom installation, use `-LlvmBin 'D:\LLVM\bin'`. CI's ASIO checks and
 Windows release builds use the same script. CI tests both the default and ASIO configurations.
 
 An `asio-sys` build failure reporting `Unable to find libclang` means this build dependency
