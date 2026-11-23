@@ -293,6 +293,10 @@ pub(super) fn run(
     command
         .arg(&script)
         .arg(&request_path)
+        // Python writes its pipes in the ANSI code page on Windows, which cannot hold a
+        // Japanese track name; the stems are named after their tracks.
+        .env("PYTHONUTF8", "1")
+        .env("PYTHONIOENCODING", "utf-8")
         .stdin(std::process::Stdio::null())
         .stdout(std::fs::File::create(&stdout_path).map_err(|e| e.to_string())?)
         .stderr(std::fs::File::create(&stderr_path).map_err(|e| e.to_string())?);

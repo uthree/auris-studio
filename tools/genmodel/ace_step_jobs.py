@@ -26,6 +26,9 @@ from pathlib import Path
 
 
 def main() -> int:
+    # Paths and names may be Japanese; Windows pipes default to the ANSI code page.
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--ace-step", type=Path, required=True, help="ACE-Step checkout"

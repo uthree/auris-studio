@@ -102,6 +102,9 @@ import soundfile as sf
 from scipy.signal import find_peaks, resample_poly, stft
 
 HERE = Path(__file__).resolve().parent
+# Python writes pipes in the ANSI code page on Windows, which cannot hold the Japanese track
+# names the stems are named after; every child is told to use UTF-8.
+UTF8_ENV = {"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
 LEGO_TRACKS = {
     "vocals",
     "backing_vocals",
@@ -186,6 +189,7 @@ def run_ace(job: dict, workdir: Path) -> tuple[np.ndarray, int, dict]:
     out = workdir / "ace-out"
     env = {
         **os.environ,
+        **UTF8_ENV,
         "ACESTEP_ROCM_DTYPE": os.environ.get("ACESTEP_ROCM_DTYPE", "bfloat16"),
     }
     proc = subprocess.run(  # noqa: PLW1510 - the report file, not the exit code, says what happened
@@ -237,6 +241,7 @@ def run_foundation_jobs(
     out = workdir / "f1-out"
     env = {
         **os.environ,
+        **UTF8_ENV,
         "MIOPEN_FIND_MODE": "FAST",
         "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
     }
@@ -523,6 +528,8 @@ def generate(request: dict, workdir: Path) -> dict:
 
 
 def main() -> int:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     if len(sys.argv) != 2:
         print(json.dumps({"error": "usage: genpart.py request.json"}))
         return 2

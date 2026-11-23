@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -20,6 +21,9 @@ REPO = "RoyalCities/Foundation-1"
 
 
 def main() -> int:
+    # Paths and names may be Japanese; Windows pipes default to the ANSI code page.
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--jobs", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -65,7 +69,9 @@ def main() -> int:
         # far the result may move from it.
         init = None
         if job.get("init_audio"):
-            recording, rate = sf.read(job["init_audio"], dtype="float32", always_2d=True)
+            recording, rate = sf.read(
+                job["init_audio"], dtype="float32", always_2d=True
+            )
             init = (rate, torch.from_numpy(recording.T.copy()))
             seconds_total = len(recording) / rate
         else:
@@ -78,7 +84,10 @@ def main() -> int:
         t1 = time.perf_counter()
         extra = {}
         if init is not None:
-            extra = {"init_audio": init, "init_noise_level": job.get("init_noise_level", 10.0)}
+            extra = {
+                "init_audio": init,
+                "init_noise_level": job.get("init_noise_level", 10.0),
+            }
         audio = generate_diffusion_cond(
             model,
             steps=job.get("steps", 100),
