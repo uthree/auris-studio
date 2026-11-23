@@ -1905,7 +1905,8 @@ const MEASUREMENT_CACHE: &str = "sound-measurements";
 const MEASUREMENT_FAILURE_CACHE: &str = "sound-measurement-failures";
 /// Bumped whenever the measurement changes, so results measured by another rule are ignored.
 /// 2: a CLAP instrument is reactivated between notes rather than built again.
-const MEASUREMENT_VERSION: u32 = 2;
+/// 3: so is a VST3 instrument's render half.
+const MEASUREMENT_VERSION: u32 = 3;
 
 /// Lists every installed instrument plugin and its presets through the worker process.
 ///

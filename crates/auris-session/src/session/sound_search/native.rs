@@ -295,14 +295,15 @@ pub(crate) fn measure_worker_sound(
 /// instrument.
 ///
 /// Building a plugin instance is nearly all of what measuring one costs — Surge XT takes about
-/// 0.3 s to build and 4 ms to render a reference note — so a lone CLAP instrument is built once
-/// and deactivated and activated again before every note, which starts its processing afresh.
-/// That is not the same as a new instance: many presets advance random or free-running state
-/// from note to note. Neither is a fresh instance a reference, though: it is the plugin's first
-/// note, and a fresh instance that has played one note first differs from it as often as a
-/// reactivated one does (13 and 16 of 27 Surge presets past 0.1 on an axis). Anything else — a
-/// VST3 instrument, whose render half is a new instance anyway, or a saved sound with inserts —
-/// gets a fresh instance per note.
+/// 0.3 s to build and 4 ms to render a reference note, and dropping a VST3 plugin waits out a
+/// 200 ms release grace besides — so a lone instrument is built once and started afresh before
+/// every note: a CLAP instrument is deactivated and activated again, and a VST3 instrument's
+/// render half is dropped and taken again, which reloads the plugin's state into the same
+/// instance. That is not the same as a new instance: many presets advance random or
+/// free-running state from note to note. Neither is a fresh instance a reference, though: it is
+/// the plugin's first note, and a fresh instance that has played one note first differs from it
+/// as often as a reactivated one does (12 and 10 of 27 Surge presets past 0.1 on an axis; none
+/// of 27 Dexed presets either way). A saved sound with inserts gets a fresh instance per note.
 fn measure_worker_sound_with(
     sound: &WorkerSound,
     sample_rate: f64,
@@ -337,7 +338,7 @@ enum Reuse {
     /// A fresh instance for every note.
     #[cfg_attr(not(test), allow(dead_code))]
     Fresh,
-    /// One instance, deactivated and activated again, where the plugin allows it.
+    /// One instance, started afresh before each note, where the plugin allows it.
     Reactivate,
     /// A fresh instance that has already played one note and fallen silent.
     #[cfg(test)]
@@ -469,8 +470,7 @@ struct Played {
 
 enum Host {
     Clap(auris_clap::ClapPlugin),
-    /// Never read: it is held so the plugin outlives the halves rendering for it.
-    Vst3(#[allow(dead_code)] auris_vst3::Vst3Plugin),
+    Vst3(auris_vst3::Vst3Plugin),
 }
 
 impl Drop for Played {
@@ -488,9 +488,6 @@ impl Played {
     /// Deactivates and activates a lone CLAP instrument again, which starts its processing
     /// afresh without building a new instance. `false` for anything else.
     fn reactivate(&mut self, prepare: &PrepareContext) -> Result<bool, String> {
-        let [Host::Clap(plugin)] = self.hosts.as_mut_slice() else {
-            return Ok(false);
-        };
         if self
             .chain
             .as_ref()
@@ -498,15 +495,28 @@ impl Played {
         {
             return Ok(false);
         }
-        self.chain = None;
-        if !plugin.release() {
-            return Err("the plugin stayed active after its instrument was dropped".into());
-        }
-        let instrument = plugin
-            .activate_instrument(prepare)
-            .map_err(|e| e.to_string())?;
+        let instrument: Box<dyn Instrument> = match self.hosts.as_mut_slice() {
+            [Host::Clap(plugin)] => {
+                self.chain = None;
+                if !plugin.release() {
+                    return Err("the plugin stayed active after its instrument was dropped".into());
+                }
+                Box::new(
+                    plugin
+                        .activate_instrument(prepare)
+                        .map_err(|e| e.to_string())?,
+                )
+            }
+            // The dropped render half goes back to the plugin as its spare, deactivated, and
+            // the next one is that spare with the plugin's state loaded into it again.
+            [Host::Vst3(plugin)] => {
+                self.chain = None;
+                Box::new(plugin.offline_instrument().map_err(|e| e.to_string())?)
+            }
+            _ => return Ok(false),
+        };
         let mut chain = Chain {
-            instrument: Box::new(instrument),
+            instrument,
             effects: Vec::new(),
         };
         chain.prepare(prepare);
@@ -769,12 +779,23 @@ mod tests {
     /// Splits a plugin measurement's cost, and compares one reused instance with nine fresh
     /// ones over real presets. Run on demand: it loads an installed third-party plugin into the
     /// test process.
+    /// Splits a plugin measurement's cost, and compares one reactivated instance with fresh
+    /// ones over real presets. Run on demand: it loads installed third-party plugins into the
+    /// test process.
     #[test]
-    #[ignore = "Requires installed Surge XT and executes third-party code"]
+    #[ignore = "Requires installed Surge XT and Dexed and executes third-party code"]
     fn reusing_one_instance_matches_fresh_instances_on_installed_presets() {
+        compare_reuse(crate::PluginFormat::Clap, SURGE, 27);
+        let dexed = std::env::var_os("LOCALAPPDATA")
+            .map(|dir| PathBuf::from(dir).join(r"Programs\Common\VST3\Dexed.vst3"))
+            .unwrap();
+        compare_reuse(crate::PluginFormat::Vst3, &dexed.to_string_lossy(), 27);
+    }
+
+    fn compare_reuse(format: crate::PluginFormat, path: &str, sample: usize) {
         let rate = 48_000.;
         let prepare = PrepareContext::new(rate, BLOCK, 2);
-        let listing = list_plugin(crate::PluginFormat::Clap, Path::new(SURGE), rate).unwrap();
+        let listing = list_plugin(format, Path::new(path), rate).unwrap();
         let control = TimbreMapControl::default();
         let first = &listing.sounds[0].sound;
         let started = Instant::now();
@@ -784,9 +805,8 @@ mod tests {
         render_reference(played.chain(), rate, 60, 0.85, &control).unwrap();
         let rendered = started.elapsed();
         drop(played);
-        eprintln!("build {built:?}, render one reference note {rendered:?}");
+        eprintln!("{path}: build {built:?}, render one reference note {rendered:?}");
 
-        let sample = 27;
         let step = (listing.sounds.len() / sample).max(1);
         let axes = |m: &Measurement| {
             crate::SoundAxes::new(m.character, m.envelope.as_ref().map(|e| &e.summary)).position()
