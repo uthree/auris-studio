@@ -135,7 +135,7 @@ def run_ace(job: dict, workdir: Path) -> tuple[np.ndarray, int, dict]:
         **os.environ,
         "ACESTEP_ROCM_DTYPE": os.environ.get("ACESTEP_ROCM_DTYPE", "bfloat16"),
     }
-    proc = subprocess.run(
+    proc = subprocess.run(  # noqa: PLW1510 - the report file, not the exit code, says what happened
         [
             str(root / "venv_rocm" / "Scripts" / "python.exe"),
             str(HERE / "ace_step_jobs.py"),
@@ -192,7 +192,7 @@ def run_foundation(
         "MIOPEN_FIND_MODE": "FAST",
         "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
     }
-    proc = subprocess.run(
+    proc = subprocess.run(  # noqa: PLW1510 - the report file, not the exit code, says what happened
         [
             str(root / "venv_rocm" / "Scripts" / "python.exe"),
             str(HERE / "foundation1_jobs.py"),
@@ -233,7 +233,7 @@ def resample(audio: np.ndarray, rate: int, target: int) -> np.ndarray:
 
 def metas(request: dict) -> dict:
     return {
-        "bpm": int(round(request["bpm"])),
+        "bpm": round(request["bpm"]),
         "keyscale": request.get("key", ""),
         "timesignature": str(request.get("beats_per_bar", 4)),
         "seed": int(request.get("seed", 0)),
@@ -321,7 +321,7 @@ def generate(request: dict, workdir: Path) -> dict:
             "outside the region the stem is the original, joined by 30 ms crossfades"
         )
     elif operation == "loop":
-        bpm = int(round(request["bpm"]))
+        bpm = round(request["bpm"])
         if bpm not in FOUNDATION_BPMS or abs(request["bpm"] - bpm) > 1e-6:
             raise RequestError(
                 f"Foundation-1 only knows {sorted(FOUNDATION_BPMS)} BPM; the song is at {request['bpm']}"
@@ -336,9 +336,7 @@ def generate(request: dict, workdir: Path) -> dict:
             full_prompt, bpm, bars, int(request.get("seed", 0)), workdir
         )
         loop = resample(loop, out_rate, rate)
-        loop_frames = int(
-            round(bars * request.get("beats_per_bar", 4) * 60.0 / bpm * rate)
-        )
+        loop_frames = round(bars * request.get("beats_per_bar", 4) * 60.0 / bpm * rate)
         loop = fit(loop, loop_frames)
         audio = fit(np.tile(loop, (frames // loop_frames + 1, 1)), frames)
         notes.append("Foundation-1 is not told the chords; it only knows the key")
@@ -348,7 +346,7 @@ def generate(request: dict, workdir: Path) -> dict:
     offset, before, after = grid_offset(audio, rate, request["bpm"])
     applied = 0.0
     if offset > 0.005 and after < 0.7 * before:
-        audio = shift_earlier(audio, int(round(offset * rate)))
+        audio = shift_earlier(audio, round(offset * rate))
         applied = offset
     peak = float(np.abs(audio).max())
     if peak > 0.98:
