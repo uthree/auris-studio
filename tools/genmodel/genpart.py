@@ -48,9 +48,9 @@ from pathlib import Path
 def base_python(venv: Path) -> Path:
     """The interpreter a venv was made from, by its real path.
 
-    A uv venv's own `python.exe` is a trampoline that starts this one. Started from the
-    desktop application, the trampoline has failed with "entity not found", so the base
-    interpreter is run directly and the venv's packages are added with `site.addsitedir`.
+    A uv venv's own `python.exe` is a trampoline with its base interpreter's path built in,
+    and that path can be one only some processes see (README.md), so the interpreter
+    pyvenv.cfg names is run directly and the venv's packages are added with `site.addsitedir`.
     """
     for line in (venv / "pyvenv.cfg").read_text(encoding="utf-8").splitlines():
         key, _, value = line.partition("=")

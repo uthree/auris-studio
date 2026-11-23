@@ -33,9 +33,14 @@ when these are set in the environment Auris starts in:
 
 * `AURIS_GENMODEL_PYTHON`: a Python 3.11 interpreter. `genpart.py` takes numpy, scipy and
   soundfile from the ACE-Step venv when the interpreter has none, and starts both model
-  environments through their base interpreters rather than the venvs' `python.exe`, which
-  are uv trampolines and failed to start Python from inside the desktop application;
+  environments through the interpreters their `pyvenv.cfg` names rather than the venvs'
+  `python.exe`, which are uv trampolines with a base interpreter's path built in;
 * `AURIS_GENMODEL_SCRIPT`: the path of `genpart.py`;
 * `AURIS_GENMODEL_HOME`: the folder holding the `ace-step` and `stable-audio-tools` checkouts.
 
 `run-auris.ps1` sets all three and starts the desktop application from this checkout.
+
+A Python that uv installs from inside the Claude desktop app goes into that app's private copy
+of `%APPDATA%`, which Auris started from an ordinary terminal cannot see. The venvs here were
+made that way, so their `pyvenv.cfg` `home` points at a copy of the interpreter in
+`<genmodel home>\python\`.

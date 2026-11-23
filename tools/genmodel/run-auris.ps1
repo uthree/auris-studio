@@ -22,9 +22,11 @@ $script = Join-Path $PSScriptRoot "genpart.py"
 foreach ($path in @((Join-Path $venv "pyvenv.cfg"), $script, (Join-Path $GenmodelHome "stable-audio-tools"))) {
     if (-not (Test-Path $path)) { throw "Not found: $path (set up the models as README.md describes)" }
 }
-# The interpreter the venv was made from, by its real path: the venv's own python.exe is a uv
-# trampoline, which has failed to start Python from inside the desktop application. genpart.py
-# adds the venv's packages itself.
+# The interpreter the venv names in pyvenv.cfg, started directly; genpart.py adds the venv's
+# packages itself. The venv's own python.exe is a uv trampoline with its base interpreter's path
+# built in, and a Python that uv installed from inside the Claude desktop app lives in that app's
+# private copy of AppData, which nothing started outside the app can see. Point pyvenv.cfg's home
+# at an interpreter outside AppData (README.md).
 $homeLine = Get-Content (Join-Path $venv "pyvenv.cfg") | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1
 $baseDir = ($homeLine -split '=', 2)[1].Trim()
 $item = Get-Item $baseDir
