@@ -35,3 +35,5 @@ when these are set in the environment Auris starts in:
   has them);
 * `AURIS_GENMODEL_SCRIPT`: the path of `genpart.py`;
 * `AURIS_GENMODEL_HOME`: the folder holding the `ace-step` and `stable-audio-tools` checkouts.
+
+`run-auris.ps1` sets all three and starts the desktop application from this checkout.
