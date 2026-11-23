@@ -7,6 +7,50 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## 0.24.0 — 2026-11-23
+
+**Play a drum kit from your own audio files, and re-sing only what an edit touched.** The audio
+analyses nobody used — tempo and chords from audio, and instrument estimation — are removed.
+
+### Instruments and sounds
+
+* **Add a drum sampler** that plays a drum track from the project's audio files, one pad per
+  lane. Pads take a level, tune, one-shot and choke group (hi-hats start in one), round-robin
+  takes, and are built by **Add Pads…** or by dropping files; `load_sample` uses it on drum tracks.
+* **The sound map and `search_instruments` read one catalog**: built-in instruments, SoundFont
+  presets, saved user and factory sounds, and every CLAP and VST3 instrument with its presets.
+  Plugins are listed and measured in the plugin worker process for every frontend, and much
+  faster; **Rescan Library** lists them again.
+
+### Singing
+
+* **VOICEVOX re-sings only the phrases an edit touched.** On a 93-second song, changing one lyric
+  takes about 1 second instead of 8, and rendering the same score again is immediate.
+* **Every sung note carries its own mora.** A kanji phrase written across notes labels each note
+  with the kana it sings rather than putting the whole word on the first note and `+` on the rest.
+  The written spelling lives on the song's lyric lines.
+
+### Composing with the agent
+
+* The pictures `inspect_audio` and `modulation_spectrum` return have labelled axes: frequencies,
+  note names, bar numbers and band centres.
+* An attached audio file reaches Claude Code and Codex as a reference, without tempo or chord
+  measurements; `export_audio_attachment` gives the file when it is needed.
+
+### Removed
+
+* *Analyze BPM & chords* and *Estimate instruments* on audio clips, the `analyze_audio` and
+  `analyze_instruments` tools, and `auris analyze-audio` / `auris analyze-instruments`. Chords are
+  still recognised from written notes, and humming still converts to notes.
+
+### Building from source
+
+* `tools/setup-windows.ps1` fetches the ASIO SDK itself, so an ASIO build no longer fails while
+  extracting it under PowerShell 7.
+
+Lyrics written with `+` continuation notes in earlier builds are not converted; run *Write Lyrics*
+on those phrases again.
+
 ## 0.23.0 — 2026-11-19
 
 **Hum a melody into the piano roll, and play the physical instruments' techniques with standard
