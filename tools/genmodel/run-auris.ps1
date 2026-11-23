@@ -17,11 +17,20 @@ if (-not $GenmodelHome) {
     $common = (git -C $repo rev-parse --path-format=absolute --git-common-dir).Trim()
     $GenmodelHome = Join-Path (Split-Path $common -Parent) ".local-evaluations\genmodel"
 }
-$python = Join-Path $GenmodelHome "ace-step\venv_rocm\Scripts\python.exe"
+$venv = Join-Path $GenmodelHome "ace-step\venv_rocm"
 $script = Join-Path $PSScriptRoot "genpart.py"
-foreach ($path in @($python, $script, (Join-Path $GenmodelHome "stable-audio-tools"))) {
+foreach ($path in @((Join-Path $venv "pyvenv.cfg"), $script, (Join-Path $GenmodelHome "stable-audio-tools"))) {
     if (-not (Test-Path $path)) { throw "Not found: $path (set up the models as README.md describes)" }
 }
+# The interpreter the venv was made from, by its real path: the venv's own python.exe is a uv
+# trampoline, which has failed to start Python from inside the desktop application. genpart.py
+# adds the venv's packages itself.
+$homeLine = Get-Content (Join-Path $venv "pyvenv.cfg") | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1
+$baseDir = ($homeLine -split '=', 2)[1].Trim()
+$item = Get-Item $baseDir
+if ($item.LinkType) { $baseDir = @($item.Target)[0] }
+$python = Join-Path $baseDir "python.exe"
+if (-not (Test-Path $python)) { throw "Not found: $python" }
 
 $env:AURIS_GENMODEL_PYTHON = $python
 $env:AURIS_GENMODEL_SCRIPT = $script
@@ -31,5 +40,9 @@ Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
 
 Write-Host "generate_part: models in $GenmodelHome"
 Set-Location $repo
-$profileArgs = if ($DebugBuild) { @() } else { @("--release") }
-cargo run @profileArgs @CargoArgs
+# Built as an array explicitly: an `if` expression yielding one string would splat its characters.
+$cargoArgs = @("run")
+if (-not $DebugBuild) { $cargoArgs += "--release" }
+if ($CargoArgs) { $cargoArgs += $CargoArgs }
+Write-Host "cargo $($cargoArgs -join ' ')"
+cargo @cargoArgs

@@ -31,8 +31,10 @@ stems of a bar range, the script runs ACE-Step (`stem`, `repaint`) or Foundation
 on them, and the WAV it writes comes back as a new audio track. The tool is offered only
 when these are set in the environment Auris starts in:
 
-* `AURIS_GENMODEL_PYTHON`: an interpreter with numpy, scipy and soundfile (the ACE-Step venv
-  has them);
+* `AURIS_GENMODEL_PYTHON`: a Python 3.11 interpreter. `genpart.py` takes numpy, scipy and
+  soundfile from the ACE-Step venv when the interpreter has none, and starts both model
+  environments through their base interpreters rather than the venvs' `python.exe`, which
+  are uv trampolines and failed to start Python from inside the desktop application;
 * `AURIS_GENMODEL_SCRIPT`: the path of `genpart.py`;
 * `AURIS_GENMODEL_HOME`: the folder holding the `ace-step` and `stable-audio-tools` checkouts.
 

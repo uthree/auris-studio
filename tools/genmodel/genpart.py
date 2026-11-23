@@ -44,7 +44,58 @@ import tempfile
 import time
 from pathlib import Path
 
-import numpy as np
+
+def base_python(venv: Path) -> Path:
+    """The interpreter a venv was made from, by its real path.
+
+    A uv venv's own `python.exe` is a trampoline that starts this one. Started from the
+    desktop application, the trampoline has failed with "entity not found", so the base
+    interpreter is run directly and the venv's packages are added with `site.addsitedir`.
+    """
+    for line in (venv / "pyvenv.cfg").read_text(encoding="utf-8").splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() == "home":
+            return Path(os.path.realpath(value.strip())) / "python.exe"
+    raise RuntimeError(f"{venv} has no home in pyvenv.cfg")
+
+
+def site_packages(venv: Path) -> Path:
+    return venv / "Lib" / "site-packages"
+
+
+# Runs a script under a base interpreter with a venv's packages: argv is the site-packages
+# folder, then the script and its arguments.
+BOOTSTRAP = (
+    "import runpy, site, sys; site.addsitedir(sys.argv[1]); "
+    "sys.argv = sys.argv[2:]; runpy.run_path(sys.argv[0], run_name='__main__')"
+)
+
+
+def venv_command(venv: Path, script: Path, *args: str) -> list[str]:
+    return [
+        str(base_python(venv)),
+        "-c",
+        BOOTSTRAP,
+        str(site_packages(venv)),
+        str(script),
+        *args,
+    ]
+
+
+try:
+    import numpy as np
+except ImportError:  # started by a base interpreter: take ACE-Step's packages
+    import site
+
+    site.addsitedir(
+        str(
+            site_packages(
+                Path(os.environ["AURIS_GENMODEL_HOME"]) / "ace-step" / "venv_rocm"
+            )
+        )
+    )
+    import numpy as np
+
 import soundfile as sf
 from scipy.signal import find_peaks, resample_poly, stft
 
@@ -137,8 +188,7 @@ def run_ace(job: dict, workdir: Path) -> tuple[np.ndarray, int, dict]:
     }
     proc = subprocess.run(  # noqa: PLW1510 - the report file, not the exit code, says what happened
         [
-            str(root / "venv_rocm" / "Scripts" / "python.exe"),
-            str(HERE / "ace_step_jobs.py"),
+            *venv_command(root / "venv_rocm", HERE / "ace_step_jobs.py"),
             "--ace-step",
             str(root),
             "--model",
@@ -194,8 +244,7 @@ def run_foundation(
     }
     proc = subprocess.run(  # noqa: PLW1510 - the report file, not the exit code, says what happened
         [
-            str(root / "venv_rocm" / "Scripts" / "python.exe"),
-            str(HERE / "foundation1_jobs.py"),
+            *venv_command(root / "venv_rocm", HERE / "foundation1_jobs.py"),
             "--jobs",
             str(jobs),
             "--output",
