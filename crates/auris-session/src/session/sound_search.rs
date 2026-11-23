@@ -319,7 +319,10 @@ const CATALOG_ERROR_CHARACTER_LIMIT: usize = 512;
 const ACOUSTIC_WORKER_LIMIT: usize = 4;
 /// Most sounds one index measures. Built-ins, saved patches and SoundFont presets come first,
 /// so a plugin with thousands of presets cannot push the application's own sounds out.
-const ACOUSTIC_SOUND_LIMIT: usize = 1_024;
+///
+/// The map groups the same index, so this is the grouping's own limit: two numbers that must agree
+/// once disagreed, and every map with more than 512 sounds failed to draw.
+const ACOUSTIC_SOUND_LIMIT: usize = auris_dsp::timbre::MAX_GROUPED_TIMBRES;
 const ACOUSTIC_INDEX_BYTE_LIMIT: usize = 32 * 1024 * 1024;
 /// Threads measuring one index at once. Each sound that plays in the worker process holds one
 /// of the plugin worker's four slots while it is measured.
@@ -2328,6 +2331,24 @@ fn build_index(
             .ok()
             .flatten()
             .unwrap_or_else(|| Err("not measured".into()));
+        // One sound whose measurement is not finite must not take the whole index with it.
+        let result = result.and_then(|measured| {
+            let finite = measured.features.iter().all(|v| v.is_finite())
+                && [
+                    measured.character.brightness,
+                    measured.character.attack,
+                    measured.character.sustain,
+                    measured.character.release,
+                    measured.character.noise,
+                ]
+                .iter()
+                .all(|v| v.is_finite());
+            if finite {
+                Ok(measured)
+            } else {
+                Err("the measurement was not finite".into())
+            }
+        });
         match result {
             Ok(measured) => {
                 let bytes = measured
