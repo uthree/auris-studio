@@ -1093,6 +1093,13 @@ mod tests {
     use crate::tests::{completion, mock_server};
     use std::time::Duration;
 
+    /// How long a test waits for something that is going to happen: a worker event, a background
+    /// load or clear, a connection. It guards against a hang, not against a slow machine. A
+    /// loaded CI runner can starve the worker's threads for seconds at a time — a three-second
+    /// wait once failed while a pure-function test in the same run took as long to be scheduled —
+    /// so no wait for an expected event may double as a speed check.
+    const HANG_GUARD: Duration = Duration::from_secs(60);
+
     fn prefs(url: String) -> auris_session::AgentPreferences {
         auris_session::AgentPreferences {
             provider: "openai".into(),
@@ -1106,7 +1113,7 @@ mod tests {
         loop {
             let value = worker
                 .events
-                .recv_timeout(Duration::from_secs(3))
+                .recv_timeout(HANG_GUARD)
                 .expect("worker event");
             assert_ne!(value["event"], "error", "{value}");
             if value["event"] == event {
@@ -1176,10 +1183,7 @@ mod tests {
         assert_eq!(early, Err(mpsc::TryRecvError::Empty));
         late_write.unwrap();
 
-        assert_eq!(
-            cleared.recv_timeout(Duration::from_secs(2)).unwrap(),
-            Ok(())
-        );
+        assert_eq!(cleared.recv_timeout(HANG_GUARD).unwrap(), Ok(()));
         assert!(
             !history.exists(),
             "a cancelled worker's final write resurrected cleared history"
@@ -1199,7 +1203,7 @@ mod tests {
         memory.save(&history).unwrap();
 
         let snapshot = load_history_background(history, false)
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(HANG_GUARD)
             .unwrap()
             .unwrap();
 
@@ -1230,10 +1234,10 @@ mod tests {
             acquired_tx.send(()).unwrap();
         });
 
-        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        started_rx.recv_timeout(HANG_GUARD).unwrap();
         assert_eq!(acquired_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
         drop(first);
-        acquired_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        acquired_rx.recv_timeout(HANG_GUARD).unwrap();
         waiter.join().unwrap();
         assert!(
             history.with_extension("lock").exists(),
@@ -1286,7 +1290,7 @@ mod tests {
         visible.push("visible request", "visible answer");
         visible.save(&history).unwrap();
         let snapshot = load_history_background(history.clone(), false)
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(HANG_GUARD)
             .unwrap()
             .unwrap();
 
@@ -1305,7 +1309,7 @@ mod tests {
         .unwrap();
         let first = worker
             .events
-            .recv_timeout(Duration::from_secs(3))
+            .recv_timeout(HANG_GUARD)
             .expect("worker ready");
         assert_eq!(
             first["event"], "ready",
@@ -1320,7 +1324,7 @@ mod tests {
         loop {
             let event = worker
                 .events
-                .recv_timeout(Duration::from_secs(3))
+                .recv_timeout(HANG_GUARD)
                 .expect("worker event");
             match event["event"].as_str().unwrap_or_default() {
                 "notice" => notice = event["message"].as_str().map(str::to_string),
@@ -1932,7 +1936,7 @@ mod tests {
         loop {
             let event = worker
                 .events
-                .recv_timeout(Duration::from_secs(10))
+                .recv_timeout(HANG_GUARD)
                 .expect("worker event");
             match event["event"].as_str().unwrap_or_default() {
                 "permission" => {
@@ -2072,7 +2076,7 @@ mod tests {
         worker.cancel();
         assert!(worker.send(r#"{"say":"too late"}"#).is_err());
         assert_eq!(
-            worker.events.recv_timeout(Duration::from_secs(2)).unwrap()["event"],
+            worker.events.recv_timeout(HANG_GUARD).unwrap()["event"],
             "ended"
         );
     }
@@ -2086,11 +2090,11 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (_connection, _) = listener.accept().unwrap();
             accepted.send(()).unwrap();
-            let _ = wait.recv_timeout(Duration::from_secs(5));
+            let _ = wait.recv_timeout(HANG_GUARD);
         });
         let mut worker = Worker::spawn(prefs(url), None, false, None).unwrap();
         worker.send(r#"{"say":"hello"}"#).unwrap();
-        connected.recv_timeout(Duration::from_secs(3)).unwrap();
+        connected.recv_timeout(HANG_GUARD).unwrap();
         worker.cancel();
         until(&worker, "ended");
         let _ = release.send(());
