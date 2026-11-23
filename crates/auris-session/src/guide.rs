@@ -270,7 +270,11 @@
 //! # Live instrument discovery
 //!
 //! [`crate::Session::sound_library_job`] snapshots loaded fonts and configured plugin search roots for a
-//! worker-owned search catalog. `search_instruments` takes one [`crate::SoundSearch`]: name
+//! worker-owned search catalog: built-in instruments, loaded SoundFont presets, the saved user and
+//! factory sounds of [`crate::SoundBook`] and [`crate::factory_sounds`], and every CLAP and VST3
+//! instrument with its presets. The desktop map ([`crate::Session::timbre_map_job`]) is drawn from
+//! the same catalog and the same acoustic index, so a sound the agent can find is a point on the
+//! map and the other way round. `search_instruments` takes one [`crate::SoundSearch`]: name
 //! words alone page through the catalogue, and `like`, `targets` or `envelope` rank measured
 //! sounds through a reusable background acoustic index instead. Each page holds at most 50
 //! exact, process-local preset IDs. Both MCP and Rig use the same session implementation. MCP
@@ -281,9 +285,24 @@
 //! and standard preset files. Only published preset interfaces are searchable; a private plugin
 //! browser is not a preset API. Applying a native preset prepares a separate instance first,
 //! snapshots its state, then records one undoable edit. No preset path is supplied by the model.
-//! Acoustic indexing uses the timbre map's six reference triggers and full standardized feature
-//! space, without the map's 512-sound limit or cached audition buffers. Each failed/silent source is
-//! reported within fixed metadata and index budgets. Explicit refresh, library-identity changes,
+//!
+//! Third-party code runs in the plugin worker process for every frontend alike
+//! ([`crate::handle_plugin_discovery_worker`]): listing a plugin file's instruments and presets,
+//! measuring one of its sounds, and rendering an audition note. A plugin that crashes or hangs
+//! ends its own child, and the window, the command line and the MCP server see the same catalog.
+//! A saved sound counts as third-party when its instrument, an insert or its SoundFont lives in a
+//! file; one made of built-in parts is measured in the caller's process. Each listing is kept on
+//! disk under the plugin file's stamp and each measurement under its files' stamps, so the cost
+//! of loading every preset is paid once per installed version. Building an instance is nearly
+//! all of a plugin sound's measuring cost, so a lone CLAP or VST3 instrument is built once per
+//! sound and started afresh between its nine notes; see the worker's `native` module for why that
+//! measures as faithfully as a fresh instance per note does. Adopting a sound — applying it to a
+//! track — still loads the plugin in the document's process, because the track is going to play it.
+//!
+//! Acoustic indexing uses six reference triggers and the full standardized feature space. One
+//! index measures at most 1,024 sounds: built-ins first, then saved sounds, SoundFont presets and
+//! plugin presets last, so a plugin with thousands of presets cannot crowd out the application's
+//! own sounds. Each failed/silent source is reported within fixed metadata and index budgets. Explicit refresh, library-identity changes,
 //! bounded handle eviction and process restart invalidate IDs; heavyweight catalog eviction does
 //! not redirect an issued handle. Neither discovery nor measurement edits the document.
 //!
@@ -295,15 +314,15 @@
 //! Responses expose the axes, measured envelopes and relative mismatch, never a probability or
 //! listening judgment. `like` alone orders by full-feature distance; with targets it blends that
 //! resemblance with the target distance. Name, source and library constraints always apply.
-//! Isolated native plugins remain metadata-only.
 //!
 //! The measured envelope ([`crate::SoundEnvelope`]) is a separate render: C2, C4 and C6 at velocity
 //! 100, held until the level settles or dies and recorded until the tail falls 60 dB, each phase
 //! capped at four seconds. It reports attack, decay and release in milliseconds and sustain in dB
 //! below the peak, so [`crate::EnvelopeTargets`] can be ranges a person or a model states in those
 //! units. Both the map and the agent's index rank with the same distance. Those renders dominate a
-//! scan, so results for sounds that live in files are cached under the configuration directory,
-//! keyed by file stamp and measurement version; built-ins are code and are always measured.
+//! scan, so whole measurements of sounds that live in files are cached under the configuration
+//! directory, one file per sound, keyed by file stamp and measurement version; built-ins and saved
+//! sounds made of them are code and are always measured.
 //!
 //! The live agent queries the owning session for built-in instruments, loaded SoundFont
 //! presets and installed CLAP/VST3 instruments. The frontend supplies its configured plugin
@@ -401,18 +420,19 @@
 //!
 //! `auris-analysis` recognizes written chords and sung melodies
 //! on the CPU. Library timbre exploration uses [`crate::Session::timbre_map_job`]: a read-only
-//! snapshot shares immutable SoundFonts with independent background instruments, measures matched
-//! reference notes through [`auris_dsp::timbre`], and retains previews and a feature-space index.
+//! snapshot of the sound catalog shares immutable SoundFonts with independent background
+//! instruments, measures matched reference notes through [`auris_dsp::timbre`] (in the plugin worker
+//! for anything third-party), and retains a feature-space index.
 //! The desktop places each sound on fixed [`crate::SoundAxes`] and colours it by feature-space
 //! cluster, while similarity queries use the complete standardized features. Only adopting a sound edits a track. Map audition uses independent
-//! output previews, including in an empty project. [`crate::Session::timbre_preview_job`] reuses
-//! the cached middle-C one-shot or renders an actual note from the same immutable library snapshot
-//! on a worker. The desktop cancels obsolete requests before replacing or closing the preview.
+//! output previews, including in an empty project. [`crate::Session::timbre_preview_job`] renders
+//! an actual note from the same immutable library snapshot on a worker thread, and a plugin's
+//! note in the plugin worker process. The desktop cancels obsolete requests before replacing or closing the preview.
 //! Library family icons are separate metadata: `SoundIcon` interprets each preset's own name,
 //! cluster summaries count every member's family, and an isolated agent completion can suggest
 //! a name and an icon from that fixed vocabulary. Manual corrections live in application
-//! settings, keyed by instrument ID or resolved font path/bank/patch, rather than scan-local
-//! cluster IDs. The desktop applies these corrections before automatic hints.
+//! settings, keyed by instrument ID, resolved font path/bank/patch, plugin file/id/preset or
+//! saved sound name, rather than scan-local cluster IDs. The desktop applies these corrections before automatic hints.
 //! The session collects written notes or shares source audio with
 //! a worker job. Analysis returns a draft; applying harmony or a transcription is an
 //! explicit, undoable session command. Source audio times stay in seconds until placement maps

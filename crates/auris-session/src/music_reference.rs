@@ -56,7 +56,7 @@ pub fn chord_reference(text: &str, key: Key, meter: TimeSignature) -> Result<Val
 /// Capture the selected map sound's stable instrument and preset addresses.
 /// SoundFont metadata helps resolve a project-local font ID in another project.
 pub fn sound_reference(session: &Session, sound: &TimbreSound) -> Value {
-    let font = sound.preset.as_ref().and_then(|preset| {
+    let font = sound.preset().and_then(|preset| {
         session
             .soundfonts()
             .find(|font| font.id == preset.font)
@@ -66,8 +66,8 @@ pub fn sound_reference(session: &Session, sound: &TimbreSound) -> Value {
             })
     });
     json!({"reference_type": "instrument_choice", "version": 1,
-        "name": sound.name, "instrument_id": sound.instrument_id,
-        "preset": sound.preset, "soundfont": font})
+        "name": sound.name, "instrument_id": sound.instrument_id(),
+        "preset": sound.preset(), "soundfont": font})
 }
 
 /// Save an immutable, bounded JSON attachment. No source project is modified.

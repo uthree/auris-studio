@@ -7,7 +7,15 @@ use auris_core::project::InstrumentTrack;
 #[derive(Clone)]
 pub(crate) struct SoundPreparation {
     source: Source,
-    stamp: Option<String>,
+    /// The sound's files as they were when the plan was validated; empty for one in no file.
+    stamp: String,
+}
+
+/// A prepared sound: the instrument a track will hold and, for a saved sound, the inserts that
+/// replace the track's own.
+pub(crate) struct PreparedSound {
+    pub(crate) instrument: InstrumentTrack,
+    pub(crate) effects: Option<Vec<crate::SoundPresetEffect>>,
 }
 
 impl Session {
@@ -44,60 +52,47 @@ impl Session {
         {
             return Err("The selected SoundFont or patch is unavailable; search again".into());
         }
-        let stamp = match &sound.source {
-            Source::Clap { file, preset, .. } => Some(clap_selection_stamp(file, preset.as_ref())),
-            Source::Vst3 { file, preset, .. } => Some(vst3_selection_stamp(file, preset.as_ref())),
-            _ => None,
-        };
+        if let Source::Patch { sound: patch, .. } = &sound.source
+            && patch.soundfont.is_some()
+        {
+            return Err(
+                "A saved sound that plays a SoundFont cannot revoice a part; apply it to a track with use_library_sound instead"
+                    .into(),
+            );
+        }
         Ok(SoundPreparation {
+            stamp: selection_stamp(&sound.source),
             source: sound.source,
-            stamp,
         })
     }
 }
 
 impl SoundPreparation {
     pub(crate) fn still_current(&self) -> Result<(), String> {
-        let unchanged = match &self.source {
-            Source::Clap {
-                file,
-                preset,
-                discovery_stamp,
-                isolated_metadata,
-                ..
-            } => {
-                let current = clap_selection_stamp(file, preset.as_ref());
-                (*isolated_metadata || current == *discovery_stamp)
-                    && self.stamp.as_ref() == Some(&current)
-            }
-            Source::Vst3 {
-                file,
-                preset,
-                discovery_stamp,
-                isolated_metadata,
-                ..
-            } => {
-                let current = vst3_selection_stamp(file, preset.as_ref());
-                (*isolated_metadata || current == *discovery_stamp)
-                    && self.stamp.as_ref() == Some(&current)
-            }
-            _ => true,
-        };
-        if unchanged {
+        if selection_stamp(&self.source) == self.stamp {
             Ok(())
         } else {
             Err("The discovered plugin/preset changed; search and validate a fresh plan".into())
         }
     }
 
-    pub(crate) fn run(&self, prepare: &PrepareContext) -> Result<InstrumentTrack, String> {
+    pub(crate) fn run(&self, prepare: &PrepareContext) -> Result<PreparedSound, String> {
         self.still_current()?;
         let mut state = PluginState::empty();
+        let mut effects = None;
         let (instrument_id, file) = match &self.source {
             Source::Builtin(id) => (id.clone(), None),
             Source::Font(preset) => {
                 auris_sampler::store_preset(&mut state, *preset);
                 (SAMPLER_ID.to_owned(), None)
+            }
+            Source::Patch { sound, .. } => {
+                state = sound.state.clone();
+                effects = Some(sound.effects.clone());
+                (
+                    sound.instrument_id.clone(),
+                    sound.file.as_deref().map(AssetPath::external),
+                )
             }
             Source::Clap {
                 file, id, preset, ..
@@ -129,12 +124,15 @@ impl SoundPreparation {
                 (format!("vst3:{id}"), Some(AssetPath::external(file)))
             }
         };
-        Ok(InstrumentTrack {
-            instrument_id,
-            instrument_state: state,
-            clips: Vec::new(),
-            file,
-            follows: None,
+        Ok(PreparedSound {
+            instrument: InstrumentTrack {
+                instrument_id,
+                instrument_state: state,
+                clips: Vec::new(),
+                file,
+                follows: None,
+            },
+            effects,
         })
     }
 }

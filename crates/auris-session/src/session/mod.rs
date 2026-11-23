@@ -43,7 +43,7 @@ pub use song_candidates::{
 mod batch_editing;
 pub use batch_editing::{InstrumentParamChange, InstrumentParamEdit};
 mod setup_tracks;
-mod sound_search;
+pub(crate) mod sound_search;
 mod soundfont_removal;
 mod sounds;
 pub use setup_tracks::{SetupClip, SetupTrack, SetupTrackKind};
@@ -61,6 +61,7 @@ mod clips;
 mod comments;
 pub use comments::CommentHost;
 mod convert;
+mod disk_cache;
 mod drum_analysis;
 mod envelope;
 mod event_list;
@@ -192,7 +193,8 @@ pub use record::{
 };
 pub use step_input::StepInputState;
 pub use timbre::{
-    TimbreCluster, TimbreMap, TimbreMapControl, TimbreMapJob, TimbrePreviewJob, TimbreSound,
+    PatchOrigin, TimbreCluster, TimbreMap, TimbreMapControl, TimbreMapJob, TimbrePreviewJob,
+    TimbreSound, TimbreSource,
 };
 pub use tracks::{MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT};
 pub use typing::{

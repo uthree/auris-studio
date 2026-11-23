@@ -149,6 +149,9 @@ mod clustering;
 /// Maximum number of groups in a refined library timbre map.
 pub const MAX_TIMBRE_CLUSTERS: usize = 24;
 
+/// Most sounds [`group_timbres`] accepts: one library map, plugin presets included.
+pub const MAX_GROUPED_TIMBRES: usize = 1024;
+
 /// Groups a library catalogue and refines populous groups.
 ///
 /// Starts with up to twelve coarse groups, then bisects groups larger than twice the average
@@ -196,7 +199,7 @@ pub fn standardize_timbres(rows: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, &'static 
 /// Constant features become zero. k-means starts from farthest-first seeds with stable ties,
 /// so the same catalogue always gives the same groups.
 pub fn group_timbres(rows: &[Vec<f64>], clusters: usize) -> Result<TimbreGroups, &'static str> {
-    if rows.len() > 512 {
+    if rows.len() > MAX_GROUPED_TIMBRES {
         return Err("invalid or excessive timbre matrix");
     }
     let data = standardize_timbres(rows)?;
@@ -280,12 +283,12 @@ mod tests {
     use super::*;
     #[test]
     fn acoustic_standardization_scales_beyond_the_grouping_limit_and_zeroes_constants() {
-        let rows = (0..1024)
+        let rows = (0..2048)
             .map(|i| vec![f64::from(i), 7.0])
             .collect::<Vec<_>>();
         let normalized = standardize_timbres(&rows).unwrap();
-        let mean = normalized.iter().map(|r| r[0]).sum::<f64>() / 1024.0;
-        let variance = normalized.iter().map(|r| r[0] * r[0]).sum::<f64>() / 1024.0;
+        let mean = normalized.iter().map(|r| r[0]).sum::<f64>() / 2048.0;
+        let variance = normalized.iter().map(|r| r[0] * r[0]).sum::<f64>() / 2048.0;
         assert!(mean.abs() < 1e-12 && (variance - 1.0).abs() < 1e-12);
         assert!(normalized.iter().all(|r| r[1] == 0.0));
         assert!(group_timbres(&rows, 2).is_err());
@@ -317,6 +320,24 @@ mod tests {
         let mut invalid = tone(0.5, false);
         invalid.channel_mut(0)[2] = f32::NAN;
         assert!(timbre_features(&invalid, 0.6).is_err());
+    }
+
+    /// A full library map — every sound the index measures, at the real feature width — is
+    /// grouped, and one more sound is refused.
+    #[test]
+    fn a_full_library_map_is_grouped() {
+        let row = |i: usize| -> Vec<f64> {
+            (0..6 * 93)
+                .map(|d| ((i * 7919 + d * 104_729) % 1000) as f64 / 1000.0 + (i % 5) as f64)
+                .collect()
+        };
+        let rows: Vec<_> = (0..MAX_GROUPED_TIMBRES).map(row).collect();
+        let grouped = group_timbres_refined(&rows, 12).unwrap();
+        assert_eq!(grouped.clusters.len(), MAX_GROUPED_TIMBRES);
+        assert!(grouped.clusters.iter().all(|c| *c < MAX_TIMBRE_CLUSTERS));
+        let mut more = rows;
+        more.push(row(MAX_GROUPED_TIMBRES));
+        assert!(group_timbres_refined(&more, 12).is_err());
     }
 
     #[test]

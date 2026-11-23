@@ -52,7 +52,7 @@ pub fn decode_audio(path: &Path, sample_rate: f64) -> Result<AudioBuffer, Sessio
 /// Opaque on purpose. It exists to be carried from the thread that read it to the thread that owns
 /// the session, and a frontend has no other use for one; what is inside belongs to the sampler,
 /// and naming it here would put a sampler type in the signatures of every frontend.
-pub struct LoadedFont(Arc<SoundFont>);
+pub struct LoadedFont(pub(crate) Arc<SoundFont>);
 
 /// Reads a SoundFont into memory, without a session and without touching a document.
 ///

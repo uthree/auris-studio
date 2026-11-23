@@ -207,15 +207,14 @@ mod tests {
         let (app, cx) = open(cx);
         app.update(cx, |this, _| {
             let before = this.project().clone();
-            let sound = auris_session::TimbreSound {
-                name: "Warm piano".into(),
-                instrument_id: "sampler".into(),
-                preset: Some(auris_session::prelude::PresetRef {
+            let sound = auris_session::TimbreSound::font(
+                "Warm piano",
+                auris_session::prelude::PresetRef {
                     font: auris_session::prelude::SoundFontId(17),
                     bank: 3,
                     patch: 8,
-                }),
-            };
+                },
+            );
             let value = auris_session::music_reference::sound_reference(&this.session, &sound);
             this.attach_agent_music_reference(&value, "sound-piano")
                 .unwrap();

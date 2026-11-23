@@ -190,14 +190,15 @@ pub use session::{
 };
 pub use session::{InstrumentParamChange, InstrumentParamEdit};
 pub use session::{MusicalClipAnalysis, RenderedSpectrogramJob, SpectrogramJob};
+pub use session::{
+    PatchOrigin, TimbreCluster, TimbreMap, TimbreMapControl, TimbreMapJob, TimbrePreviewJob,
+    TimbreSound, TimbreSource,
+};
 pub use session::{PreparedAudioSource, prepare_audio_source};
 pub use session::{
     SongCandidate, SongIdea, SongRequest, SongSinger, SongSinging, SongSourceChoice,
 };
 pub use session::{SoundFilter, SoundLibraryJob, SoundSearch, SoundSource};
-pub use session::{
-    TimbreCluster, TimbreMap, TimbreMapControl, TimbreMapJob, TimbrePreviewJob, TimbreSound,
-};
 mod sound_character;
 mod sound_icons;
 pub use session::{TrackConversion, TrackConversionJob};
