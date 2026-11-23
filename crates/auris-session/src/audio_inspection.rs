@@ -18,6 +18,15 @@ pub struct ScoreNote {
     pub end_seconds: f64,
 }
 
+/// Where one bar starts inside the inspected range.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BarStart {
+    /// Bar number, from 1.
+    pub bar: u32,
+    /// Seconds relative to the inspected range.
+    pub seconds: f64,
+}
+
 /// The longest stretch one inspection renders; the picture has 512 columns whatever the length.
 pub const MAX_SECONDS: f64 = 60.0;
 /// The most bars an explicit `start_bar`/`bars` range may span.
@@ -88,6 +97,10 @@ pub struct Inspection {
     /// Highest MIDI pitch of the piano roll panel.
     #[serde(default = "top_pitch")]
     pub high_pitch: u8,
+    /// Every bar line inside the range, the left edge included when it falls on one, in time
+    /// order; the picture labels its time axis with these.
+    #[serde(default)]
+    pub bar_starts: Vec<BarStart>,
 }
 
 /// Independent render and score snapshot. Run on a worker, never on the UI/audio thread.
@@ -324,6 +337,14 @@ impl InspectionJob {
             serde_json::json!({"bar":bar, "key":project.harmony.key_at(tick).to_text(), "chord":project.harmony.chord_at(tick).map(|chord| chord.to_string())})
         }).collect();
         let (harmony_events, harmony_event_count) = harmony_events(project, self.start, self.end);
+        let bar_starts = (self.start_bar..=self.end_bar)
+            .map(|bar| (bar, project.signatures.bar_start(bar)))
+            .filter(|(_, tick)| *tick >= self.start && *tick <= self.end)
+            .map(|(bar, tick)| BarStart {
+                bar,
+                seconds: project.tempo_map.ticks_to_seconds(tick).0 - start_seconds,
+            })
+            .collect();
         let options = OfflineOptions {
             start_frames: (start_seconds * 48000.0).round() as u64,
             end_frames: Some(((start_seconds + seconds) * 48000.0).round() as u64),
@@ -377,6 +398,7 @@ impl InspectionJob {
             frequencies: mel.frequencies,
             mel_db: mel.levels,
             notes,
+            bar_starts,
         })
     }
 }

@@ -454,7 +454,7 @@ impl AgentHook for Guard {
         }
         let visual = self.bridge.as_ref().and_then(Bridge::visual);
         if let Some(limit) = self.context {
-            // Generated inspection images are fixed at 512x384; reserve image tokens rather
+            // Generated inspection images have a fixed size; reserve image tokens rather
             // than counting the base64 encoding as natural-language text.
             let estimate = self.context_estimate(event.prompt, event.history)
                 + visual.as_ref().map_or(0, inspection_tokens);

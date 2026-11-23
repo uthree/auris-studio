@@ -463,11 +463,13 @@ impl Bridge {
             report.measurements.clone(),
         )?;
         let caption = format!(
-            "Historical inspection snapshot, revision {}: start_bar={}, bars={}, duration={} seconds. This may predate edits; inspect again to evaluate changed sound. Image 512x384: top 128 rows show mel power over {} Hz (high frequency at top, dark navy=-90 dB through purple and orange to pale yellow=0 dB); bottom 256 rows show authored notes (MIDI {} at top, {} at bottom). Time runs left to right across the selected range. Refer to the matching inspect_audio tool result for measurements and score data.",
+            "Historical inspection snapshot, revision {}: start_bar={}, bars={}, duration={} seconds. This may predate edits; inspect again to evaluate changed sound. Image {}x{}: the upper panel shows mel power over {} Hz (high frequency at top, dark navy=-90 dB through purple and orange to pale yellow=0 dB) with frequencies labelled at its left; the lower panel shows authored notes (MIDI {} at top, {} at bottom) with note names at its left. Time runs left to right across the selected range, with bar numbers under the notes. Refer to the matching inspect_audio tool result for measurements and score data.",
             report.revision,
             report.measurements["start_bar"],
             report.measurements["bars"],
             report.measurements["seconds"],
+            toolbox::audio_inspection::WIDTH,
+            toolbox::audio_inspection::HEIGHT,
             report.measurements["mel_hz_range"],
             report.high_pitch,
             report.low_pitch,
@@ -1373,6 +1375,7 @@ mod tests {
                 notes: vec![],
                 low_pitch: 0,
                 high_pitch: 127,
+                bar_starts: Vec::new(),
             };
             worker
                 .send(
@@ -1591,6 +1594,7 @@ mod tests {
                     notes: vec![],
                     low_pitch: 0,
                     high_pitch: 127,
+                    bar_starts: Vec::new(),
                 })
                 .unwrap();
             // The transcript's copy of the picture, held for the call's result event once.
