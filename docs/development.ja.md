@@ -91,7 +91,7 @@ cargo run --features asio
 
 4つのフロントエンドすべてでこの feature を使えます。`cargo run -p auris-cli --features asio` もその一例です。Windows リリースは4つすべてを `--release --features asio` でビルドします。ローカルの同等ビルドには `cargo build --release --locked --features asio` を使います。`--release` だけでは ASIO は有効になりません。
 
-セットアップスクリプトは既存の LLVM を使うか、Chocolatey／WinGet でインストールし、現在の PowerShell に `LIBCLANG_PATH` を設定します。新しいターミナルでは再実行してください。独自のインストールには `-LlvmBin 'D:\LLVM\bin'` を使います。CI の ASIO チェックと Windows リリースビルドも同じスクリプトを使い、CI はデフォルト構成と ASIO 構成の両方をテストします。`asio-sys` の `Unable to find libclang` は依存関係不足か誤った `LIBCLANG_PATH` を示します。Visual Studio C++ ワークロードだけでは [bindgen](https://rust-lang.github.io/rust-bindgen/requirements.html) が必要とする `libclang.dll` は提供されず、Rust に付属する LLVM もこの依存関係の代わりにはなりません。
+セットアップスクリプトは既存の LLVM を使うか、Chocolatey／WinGet でインストールし、ASIO SDK を `%TEMP%sio_sdk` にダウンロードします（`CPAL_ASIO_DIR` で既存の SDK を指定している場合は除く）。asio-sys 自身のダウンロードは、Cargo を PowerShell 7 から実行すると展開に失敗するためです。そのうえで、現在の PowerShell に `LIBCLANG_PATH` と `CPAL_ASIO_DIR` を設定します。新しいターミナルでは再実行してください。独自のインストールには `-LlvmBin 'D:\LLVM\bin'` を使います。CI の ASIO チェックと Windows リリースビルドも同じスクリプトを使い、CI はデフォルト構成と ASIO 構成の両方をテストします。`asio-sys` の `Unable to find libclang` は依存関係不足か誤った `LIBCLANG_PATH` を示します。Visual Studio C++ ワークロードだけでは [bindgen](https://rust-lang.github.io/rust-bindgen/requirements.html) が必要とする `libclang.dll` は提供されず、Rust に付属する LLVM もこの依存関係の代わりにはなりません。
 
 `asio` を有効にすると初回ビルドで CPAL が ASIO SDK をダウンロードします。展開済みコピーには `CPAL_ASIO_DIR` を設定します。デフォルトビルドには ASIO SDK も LLVM も不要です。
 
