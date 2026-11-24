@@ -116,7 +116,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     ),
                     (
                         "Tremolo strings",
-                        &[("technique", 2.0), ("players", 4.0), ("level", -10.5)],
+                        &[("technique", 2.0), ("players", 4.0), ("level", -9.5)],
                     ),
                     (
                         "Sul ponticello",
@@ -360,7 +360,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("reed_stiffness", 0.32),
                             ("breath_noise", 0.07),
                             ("attack", 0.12),
-                            ("level", 4.5),
+                            ("level", 2.5),
                         ],
                     ),
                     (

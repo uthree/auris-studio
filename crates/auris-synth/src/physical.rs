@@ -656,6 +656,11 @@ pub(crate) mod dials {
     pub(crate) const SLAP_FLESH: usize = 85;
     pub(crate) const SLAP_BOUNCE: usize = 86;
     pub(crate) const SLAP_FRETS: usize = 87;
+    /// The reeds: where the breath's roughness falls away, how rough it is, and how far over
+    /// what a note needs a player blows to start it.
+    pub(crate) const REED_ROUGH_HZ: usize = 90;
+    pub(crate) const REED_ROUGH: usize = 91;
+    pub(crate) const REED_KICK: usize = 92;
 }
 
 /// A dial for each C from C1 to C8, read at a pitch between them along straight lines.

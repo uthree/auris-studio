@@ -2536,3 +2536,37 @@ fn the_new_techniques_do_not_depend_on_the_block_size_and_allocate_nothing() {
         assert_eq!(allocations, 0, "{model:?} {technique}");
     }
 }
+
+#[test]
+fn a_reeds_breath_stays_under_its_tone_and_a_soft_note_speaks_without_a_hiss_or_an_accent() {
+    use crate::test_support::band_amplitude;
+    // Between the harmonics, well above where a clarinet's own have faded: what is there
+    // is the breath. An even hiss stood ten decibels and more over this.
+    for (pitch, velocity) in [(69_u8, 0.65_f32), (57, 0.35), (53, 0.05), (74, 0.95)] {
+        let mut reed = rig(Model::Clarinet, 48_000.0);
+        let audio = reed.render(96_000, &[on(pitch, velocity)]);
+        let settled = &audio[48_000..];
+        let tone = goertzel(settled, 48_000.0, hz(pitch));
+        let breath = 20.0 * (band_amplitude(settled, 48_000.0, 7_000.0) / tone).log10();
+        assert!(
+            breath < -72.0,
+            "{pitch} at {velocity}: breath at {breath} dB"
+        );
+        // Even the softest note has all but spoken three tenths of a second in, and none
+        // begins louder than it goes on.
+        let held = level_db(settled);
+        let early = level_db(&audio[14_400..19_200]);
+        assert!(
+            early > held - 6.0,
+            "{pitch} at {velocity}: {early} dB, then {held}"
+        );
+        let loudest = audio[..48_000]
+            .chunks(4_800)
+            .map(level_db)
+            .fold(f64::MIN, f64::max);
+        assert!(
+            loudest < held + 2.5,
+            "{pitch} at {velocity}: began {loudest} dB, held {held}"
+        );
+    }
+}

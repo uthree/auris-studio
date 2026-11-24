@@ -25,6 +25,8 @@ use auris_core::motion::{MOTION_SCOPE, MotionVoice};
 use auris_core::{ParamDescriptor, ParamUnit};
 use auris_dsp::DcBlocker;
 
+use super::calibration::dial;
+use super::dials;
 use super::waveguide::{Decimator, Line, Noise, lowpass_delay, lowpass_gain, lowpass_pole};
 use super::{Engine, Mute, Note, Performance, Quality, TICK, harmonics, hertz};
 use crate::ParamBank;
@@ -51,6 +53,22 @@ const REGISTER_HZ: f32 = 440.0;
 
 /// How much of the pressure a note first sounds at is already behind the tongue as it lets go.
 const TONGUED: f32 = 0.2;
+/// Where the breath's roughness falls away, in hertz. Air through the slit under a reed is
+/// rough, but the roughness is not white: measured in the settled notes of a recorded
+/// clarinet, what lies between the harmonics falls away above a kilohertz or so, where an
+/// even hiss would stand well over the harmonics.
+const ROUGH_HZ: f32 = 1_200.0;
+/// How rough the breath is at the Breath Noise control's default and a full breath. The
+/// roughness goes with the breath: the same recordings have their noise as far under the
+/// tone at pianissimo as at fortissimo, about 33 dB.
+const ROUGH: f32 = 0.28;
+/// The least a player blows over the pressure a note needs to sound at all while the note is
+/// starting, for a note at [`KICK_HZ`], and the seconds over which that eases to the breath
+/// asked for. A soft note blown no harder than it is held takes most of a second to speak;
+/// a player starts it with a little more and lets it settle.
+const KICK: f32 = 0.08;
+const KICK_HZ: f32 = 300.0;
+const KICK_SECONDS: f32 = 0.1;
 
 pub(super) fn descriptors() -> Vec<ParamDescriptor> {
     vec![
@@ -95,6 +113,8 @@ struct Wind {
     /// How wide the reed's gap is at rest, against the bore's impedance.
     embouchure: f32,
     noise: f32,
+    /// Pole of the low-pass that the breath's roughness is drawn through.
+    rough: f32,
     pole: f32,
     reflection: f32,
     /// Pole of the gentle low-pass on what is radiated.
@@ -118,6 +138,8 @@ struct Voice {
     across: f32,
     mouth: f32,
     air: f32,
+    /// The breath's roughness as it is now.
+    hiss: f32,
     delay: f32,
     delay_step: f32,
     oversampling: usize,
@@ -154,6 +176,7 @@ impl Default for Voice {
             across: 0.0,
             mouth: 0.0,
             air: 0.0,
+            hiss: 0.0,
             delay: 0.0,
             delay_step: 0.0,
             oversampling: 1,
@@ -227,6 +250,7 @@ impl Voice {
         self.across = 0.0;
         self.mouth = 0.0;
         self.air = 0.0;
+        self.hiss = 0.0;
         self.delay = 0.0;
         self.drift = 0.0;
     }
@@ -247,7 +271,8 @@ impl Voice {
         self.mouth += (wind.mouth - self.mouth) * wind.ramp;
         let unloaded = self.mouth - 2.0 * returning;
         // Air through a narrow gap is turbulent: the breath in the tone.
-        let hiss = 1.0 + wind.noise * self.noise.next();
+        self.hiss += (1.0 - wind.rough) * (self.noise.next() - self.hiss);
+        let hiss = 1.0 + wind.noise * self.hiss;
         let (flow, across) = reed_flow(wind.embouchure * hiss, unloaded, self.across);
         self.across = across;
         self.bore.write(returning + flow);
@@ -344,6 +369,8 @@ impl Reeds {
             (settings.release * 0.3).max(0.004)
         };
         let turn = TAU * fundamental / internal;
+        let rough = lowpass_pole(dial(dials::REED_ROUGH_HZ, ROUGH_HZ), internal);
+        let rough_kept = (1.0 - rough) / (1.0 + rough);
         // A stiff reed stands closer to the lay and lets less through.
         let embouchure = 0.48 - 0.26 * settings.reed;
         // The walls take a little of every round trip, more of it from a long narrow one.
@@ -361,6 +388,12 @@ impl Reeds {
             / (6.0 * embouchure);
         let threshold = root * root;
         let over = 0.006 + 0.32 * breath * breath;
+        // A note is started with a little more breath than a soft one is held with, more of
+        // it the lower the note, whose bore takes longer to answer.
+        // Never so much more than the note is held with that it starts with an accent.
+        let kick = (dial(dials::REED_KICK, KICK) * (KICK_HZ / fundamental).clamp(0.5, 2.5))
+            .min(5.0 * over + 0.04);
+        let over = over + (kick - over).max(0.0) * (-seconds / KICK_SECONDS).exp();
         if start && !voice.slurred {
             // The tongue holds the reed shut while the breath gathers behind it, and lets go
             // with a little of it already there: the note grows from the first wave that
@@ -380,7 +413,10 @@ impl Reeds {
             },
             ramp: 1.0 - (-1.0 / (time.max(0.001) * internal)).exp(),
             embouchure,
-            noise: settings.noise * 0.5,
+            // Drawn through a low-pass, white noise keeps only the part of its power under
+            // the corner; the gain puts the control back where it was for that part.
+            noise: settings.noise * dial(dials::REED_ROUGH, ROUGH) * breath / rough_kept.sqrt(),
+            rough,
             pole,
             reflection,
             air: lowpass_pole(7_000.0, internal),

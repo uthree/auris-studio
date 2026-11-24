@@ -78,7 +78,8 @@ Some of what these do is worth knowing before you hear it.
   string does once the bow has left it, a low string for seconds and the top one for a
   fraction of one, and the note is over when it has died away whether or not its key is
   still down. In a tremolo each player's bow goes back and forth about eleven times a
-  second, in their own time; the note sits a few cents under the bowed one. The guitars and
+  second, in their own time, and each tunes by ear from the whole periods between one turn
+  of the bow and the next; the note stays within a few cents of the bowed one. The guitars and
   the bass play **Harmonics**: the note is plucked on a string an octave under it with a
   finger lying on the string's middle, which stops every partial that moves there within a
   few hundredths of a second. What rings on is purer than the fretted note and lasts
@@ -106,7 +107,10 @@ Some of what these do is worth knowing before you hear it.
 - **A clarinet is quiet until it speaks.** Breath is measured from the pressure at which the
   note begins to sound at all, so the softest breath still plays every note, nearly as a
   sine; half-way to shutting the reed it is nearly a square wave. A tongued note starts from
-  nearly nothing and is there in a few hundredths of a second, as a recorded clarinet's is.
+  nearly nothing and is there in about a tenth of a second, as a recorded clarinet's is: a
+  soft one is started with a little more breath than it is held with, or it would take most
+  of a second to speak. The breath in the tone is rough the way a recorded clarinet's is,
+  about 33 dB under the tone at every dynamic and falling away above a kilohertz.
 - **A bell's warble depends on where you strike it.** Each partial is two shapes a
   fraction of a hertz apart, and the place round the rim shares the blow between them.
 
@@ -249,7 +253,7 @@ smaller is closer.
 | Piano, partial balance, register level, knock | the same | 4.0 dB, 1.8 dB, 5.1 dB | 4.2 dB, 1.7 dB, 3.4 dB |
 | Guitar, mel distance | classical guitar, 44 held-out notes | 0.167, and 0.157 as Nylon guitar | 0.144 |
 | Strings, mel distance | solo violin, 39 held-out notes | 0.111 | 0.080 |
-| Reeds, mel distance | B♭ clarinet, held-out pitches | 0.043 | 0.054 |
+| Reeds, mel distance | B♭ clarinet, held-out pitches | 0.041 | 0.054 |
 | Whistles, mel distance of the settled tone | tin whistle scale | 0.017 | 0.018 |
 | Hammered Strings, mel distance | hammered dulcimer | 0.234 | 0.241 |
 
@@ -267,6 +271,12 @@ and 9.6 dB over.
 
 Key to key, a piano's notes are within 0.8 dB rms of the keys around them, and a guitar's and
 the strings' within 1.5 dB.
+
+A clarinet's breath, read between the harmonics of the same recordings' settled notes, lies
+31 to 35 dB under the tone from pianissimo to fortissimo, and 33 to 35 dB here; it had been 21
+to 31 dB, an even hiss that stood over the harmonics above two kilohertz. A pianissimo note
+takes 134 ms to rise from a tenth of its level to nine tenths in the recordings and 131 ms
+here, where it had taken 277 ms. The reeds' row above was read again on 2026-11-24.
 
 The slapped bass is read beside three recorded electric basses, each note played finger-style,
 with the thumb and popped. What is compared is what slapping does to a note: each measure less

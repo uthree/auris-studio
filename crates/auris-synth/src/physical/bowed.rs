@@ -121,6 +121,9 @@ const TREMOLO_HZ: f32 = 11.0;
 const TREMOLO_SPREAD: f32 = 0.12;
 /// The longest a bow takes to turn round in a tremolo, in seconds.
 const TREMOLO_TURN: f32 = 0.006;
+/// How far from the period it is meant to have the time between two lettings-go may be and
+/// still be taken for a period of the note.
+const EVEN: f32 = 0.06;
 
 /// How the strings are played.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -336,6 +339,12 @@ struct Player {
     /// of velocity, and how much of it goes each internal sample once the finger lets go.
     hold: f32,
     let_go: f32,
+    /// The period the note is meant to have, in internal samples; and the times between one
+    /// letting-go and the next that were near it, summed and counted. A bow that turns round
+    /// breaks the string's motion, and the gap it leaves is not a period of anything.
+    expect: f32,
+    even: f32,
+    evens: u32,
     /// Which way this player's bow is going, one or minus one; where in a tremolo's stroke
     /// and back the arm is, in turns; and how many of those it makes a second.
     stroke: f32,
@@ -359,6 +368,8 @@ impl Player {
         self.speed = 0.0;
         self.drift = 0.0;
         self.nut_delay = 0.0;
+        self.even = 0.0;
+        self.evens = 0;
         self.hold = 0.0;
         self.let_go = 0.0;
         self.stroke = 1.0;
@@ -410,6 +421,14 @@ impl Player {
             if self.run == self.real && self.since > self.apart {
                 if self.slips == 0 {
                     self.first = self.watched;
+                } else {
+                    // The time since the last letting-go, where it is a period of the note
+                    // and not the gap a turning bow leaves.
+                    let apart = (self.watched - self.last) as f32;
+                    if (apart - self.expect).abs() < EVEN * self.expect {
+                        self.even += apart;
+                        self.evens += 1;
+                    }
                 }
                 self.last = self.watched;
                 self.slips += 1;
@@ -641,10 +660,10 @@ impl Bowed {
             (settings.pressure + 0.2 * (voice.velocity - 0.5) - lightened).clamp(0.0, 1.0);
         let asked = LIGHTEST * (HEAVIEST / LIGHTEST).powf(pressure);
         let ease = (EASE_PERIODS / fundamental).clamp(0.05, 0.4);
-        // A tremolo catches the string again on every stroke, and stays half-way to as firm
-        // as a catch.
+        // A tremolo's strokes are too short to ease into: each is played at the pressure asked
+        // for from its start.
         let share = if tremolo {
-            asked.max(0.25 * (3.0 * asked + CATCH))
+            asked
         } else {
             asked + (CATCH - asked).max(0.0) * (-seconds / ease).exp()
         };
@@ -703,6 +722,7 @@ impl Bowed {
                 player.chatter = (0.16 * player.bridge_delay as f32) as u32;
             }
             player.meant += internal / hz;
+            player.expect = internal / hz;
             player.ticks += 1;
             // Pieces of one slide come a trip to the bridge and back apart, or two.
             player.apart = (2.6 * player.bridge_delay as f32).min(0.42 * period) as u32;
@@ -714,7 +734,19 @@ impl Bowed {
                     // Nothing to judge: nobody is bowing.
                 } else if player.patience > 0 {
                     player.patience -= 1;
-                } else if slips > 1.4 && !tremolo {
+                } else if tremolo {
+                    // A turning bow leaves no run of periods to time from end to end, so the
+                    // ear goes by the ones that were whole, wherever in the strokes they fell.
+                    // Low on the instrument a stroke holds only a few, and they are kept from
+                    // one listening to the next until there are enough to go by.
+                    if player.evens >= 6 {
+                        let flat = player.even / player.evens as f32 / meant - 1.0;
+                        let nudge = (INTONATION * flat).clamp(-NUDGE, NUDGE);
+                        player.trim = (player.trim - nudge).clamp(-REACH, REACH);
+                        player.even = 0.0;
+                        player.evens = 0;
+                    }
+                } else if slips > 1.4 {
                     // Slipping more than once a period: a firmer bow, a little at a time,
                     // kept once it is found, and given a moment to take.
                     player.press = (player.press * 1.25).min((HEAVIEST / share).max(1.0));
@@ -729,6 +761,10 @@ impl Bowed {
                         let nudge = (INTONATION * flat).clamp(-NUDGE, NUDGE);
                         player.trim = (player.trim - nudge).clamp(-REACH, REACH);
                     }
+                }
+                if !tremolo {
+                    player.even = 0.0;
+                    player.evens = 0;
                 }
                 player.forget();
             }
