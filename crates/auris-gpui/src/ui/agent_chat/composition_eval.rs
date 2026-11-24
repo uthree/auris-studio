@@ -226,7 +226,7 @@ fn wait_for_agent_conversation(app: &gpui::Entity<AurisApp>, cx: &mut gpui::Visu
         if ready {
             return;
         }
-        if started.elapsed() > Duration::from_secs(10) {
+        if started.elapsed() > crate::harness::HANG_GUARD {
             panic!("agent conversation preflight did not become ready for saved seed");
         }
         std::thread::sleep(Duration::from_millis(20));

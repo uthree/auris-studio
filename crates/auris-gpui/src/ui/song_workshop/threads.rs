@@ -281,14 +281,16 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness::{click, paint};
+    use crate::harness::{HANG_GUARD, click, paint};
 
     fn wait_for(
         app: &gpui::Entity<AurisApp>,
         cx: &mut gpui::VisualTestContext,
         ready: impl Fn(&SongWorkshop) -> bool,
     ) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // The owner answers every command it receives with a snapshot, so this only ends in a
+        // failure when the owner has stopped.
+        let deadline = std::time::Instant::now() + HANG_GUARD;
         loop {
             app.update(cx, |this, cx| this.poll_song_workshop(cx));
             paint(app, cx);
