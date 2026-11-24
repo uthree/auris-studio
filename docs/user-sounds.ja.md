@@ -22,11 +22,11 @@ SoundFont のサウンドはライブラリファイルとバンク／プログ�
 
 | 基本インストゥルメント | 開始パッチ |
 | --- | --- |
-| Strings | String section、Violin、Viola、Cello、Contrabass、Sul ponticello、Sul tasto |
+| Strings | String section、Violin、Viola、Cello、Contrabass、Pizzicato strings、Tremolo strings、Sul ponticello、Sul tasto |
 | Piano | Grand piano、Felt piano、Bright piano |
 | Guitar | Acoustic guitar、Nylon guitar、Steel guitar、Muted guitar、Piezo guitar |
-| Electric guitar | Clean electric guitar、Warm electric guitar、Bright electric guitar |
-| Bass | Finger bass、Pick bass、Muted bass、Upright bass |
+| Electric guitar | Clean electric guitar、Warm electric guitar、Bright electric guitar、Guitar harmonics |
+| Bass | Finger bass、Pick bass、Muted bass、Upright bass、Slap bass |
 | Bell | Classic bell、Soft bell、Bright bell、Tubular bells、Handbell、Singing bowl |
 | Mallet | Marimba、Vibraphone、Xylophone、Glockenspiel、Kalimba、Music box、Hard mallet、Muted mallet |
 | Reed winds | Clarinet、Soft clarinet、Breathy clarinet |

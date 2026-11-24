@@ -193,6 +193,75 @@ for a small corpus, not evidence of a perceptual difference.
 C3–C6 (MIDI 48–84). It discards 350 ms and checks the strongest peak across 20 Hz to
 min(10 kHz, 0.49 × sample rate), alongside the interpolated fundamental peak.
 
+## Slapped bass
+
+A slapped note has no reference of its own to be held against: no two basses, pickups or
+recording chains sound alike, and a model voiced toward one bass would be measured as wrong
+against the next. `bass_slap.py` therefore measures a *technique*. Its recordings are single
+notes of the [IDMT-SMT-Bass dataset](https://zenodo.org/records/7188892) (Fraunhofer IDMT,
+Jakob Abeßer; CC BY-NC-ND 4.0), which has every note of three electric basses played
+finger-style, with the thumb and popped. Each measure of a thumbed or popped note is taken
+less the same measure of the same note, on the same bass through the same pickup, plucked.
+That difference is what the hand does, and it is the same kind of number for a rendered note
+as for a recorded one.
+
+The notes are those of the neck pickup (`EQ_1`) on all four strings of all three basses. The
+open strings and the fifth and twelfth frets, 36 notes each way, are the ones the model was set
+on; the third and eighth frets, 24 each way, had no part in it. `fetch` reads only those notes
+out of the 1.6 GB archive, by HTTP range requests; nothing is redistributed or committed.
+
+A note is read from its onset, the first sample a tenth as large as its largest, over six
+tenths of a second at 44.1 kHz. Its *attack* is the first 40 ms and what it leaves is *held*,
+from 0.1 s to 0.4 s.
+
+| Measure | What it reads |
+| --- | --- |
+| Level | RMS of the first 0.4 s |
+| The blow over the note it leaves | RMS of the attack over RMS of what is held |
+| The peak over the note | Largest sample over the RMS of the first 0.4 s |
+| The fundamental's share | Power within a major third of the fundamental, over all of what is held |
+| Fall | RMS from 0.05 s to 0.15 s over RMS from 0.45 s to 0.55 s |
+| Bands | Share of the power in each octave band from 90 Hz to 5.76 kHz, in the attack and in what is held |
+
+The model is first voiced toward the recorded basses, whose plucked notes are darker than the
+default patch's: **Pickup Resonance** at 1.5 kHz, a fingertip (**Contact Hardness** 0.1) for
+the plucked notes and the bone of the thumb (0.9) for the slapped ones, the slapping hand over
+the last fret at 32% of the string. Every note is played at a velocity of 0.8; how hard the
+recorded notes were played is not known. Five numbers in
+`crates/auris-synth/src/physical/slap.rs` were then set by this measure and nothing else about
+the model was: the force of a pluck at full velocity (6.5 N), which says how far a string of a
+given loudness swings; how much of its speed a string keeps where it meets a fret (a quarter);
+the speed of the thumb at full velocity (3.5 m/s) and how much of its mass the string feels
+(4 g); and how hard a pop pulls beside a pluck (0.9). The rest is geometry: a 34-inch scale,
+twenty frets, strings 4 mm over the line of the frets at the saddle.
+
+Read on 2026-11-24, slapped less plucked, recorded and then rendered:
+
+| | Level | Blow over held | Peak over note | Fundamental | Fall |
+| --- | --- | --- | --- | --- | --- |
+| Thumb, notes the model was set on | −1.7, −1.7 dB | 4.0, 2.0 dB | 4.6, 3.6 dB | −4.1, −3.5 dB | −0.2, 0.9 dB |
+| Pop, notes the model was set on | −1.8, −3.1 dB | 2.9, 3.2 dB | 3.6, 3.2 dB | −0.6, −4.8 dB | 0.8, 1.4 dB |
+| Thumb, held-out notes | −3.3, −2.2 dB | 6.0, 3.1 dB | 6.0, 5.1 dB | −4.7, −3.8 dB | 0.5, 1.3 dB |
+| Pop, held-out notes | −2.1, −3.9 dB | 2.1, 4.1 dB | 2.6, 3.8 dB | −0.6, −6.2 dB | 0.7, 1.6 dB |
+
+The octave bands from 180 Hz to 2.88 kHz come up by much the same amounts. On the held-out
+notes a thumbed attack gains 0, 7, 11 and 19 dB on the recorded basses and 1, 6, 12 and 21 dB
+here; a popped one gains −1, 7, 13 and 20 dB and −2, 2, 13 and 22 dB.
+
+Two things are still out. A thumbed note's blow stands 2 to 3 dB less over the note it leaves
+than a recorded one's. And the recorded basses' thumbed notes are as loud beside their
+plucked ones on every string — 1.8, 2.7, 1.3 and 3.5 dB quieter from the low string to the
+high — where the model's run from 0.1 dB louder on the low string to 3.8 dB quieter on the
+high: the same thumb at the same speed gives a heavy string more than a light one, and a
+player evens that out.
+Above 2.88 kHz the difference is not a measure of anything: a rendered plucked note has
+nothing there at all, and a recorded one has its noise floor.
+
+The spread between recorded notes is several decibels on every measure and wider than that on
+the fundamental's share, which depends on where each bass's pickup lies under each note. These
+are regression measurements of whether slapping changes a note as a hand does, not evidence
+that a slapped note sounds like any one bass.
+
 ## Running the measures
 
 Run Python tools with `uv`. On Windows, use the installed `uv.exe` path if it is missing from
@@ -228,6 +297,13 @@ uv run tools/eval/folk_copy.py target/folk-physical/reference <after-worker> \
   target/folk-physical/whistle-validation.json --model tin_whistle \
   --baseline <before-worker>
 uv run tools/eval/folk_tuning.py <after-worker> target/folk-physical/folk-tuning.json
+
+uv run tools/eval/bass_slap.py fetch target/slap-reference
+uv run tools/eval/bass_slap.py measure target/slap-reference <after-worker> \
+  target/slap-reference/measure.json
+uv run tools/eval/bass_slap.py fetch target/slap-reference --fret 3 --fret 8
+uv run tools/eval/bass_slap.py measure target/slap-reference <after-worker> \
+  target/slap-reference/measure-held-out.json --fret 3 --fret 8
 ```
 
 Pin the recorded dependency versions for exact extraction of the Iowa cohort: NumPy 2.5.3,
@@ -242,7 +318,8 @@ expecting an archived worker's hash.
 uv run --with numpy --with scipy --with soundfile --with pytest pytest \
   tools/eval/test_physical_mel.py tools/eval/test_piano_register.py \
   tools/eval/test_clarinet_copy.py tools/eval/test_fetch_clarinet_reference.py \
-  tools/eval/test_fetch_folk_reference.py tools/eval/test_physical_ab.py
+  tools/eval/test_fetch_folk_reference.py tools/eval/test_physical_ab.py \
+  tools/eval/test_bass_slap.py
 uv run --with ruff ruff check tools/eval
 cargo test -p auris-synth --example physical_fit_render
 ```

@@ -29,6 +29,12 @@ impl Line {
         self.cursor = 0;
     }
 
+    /// Fills the line with one value: a wave that has been the same for as long as the line
+    /// is, which is a string held still at a slope.
+    pub(crate) fn fill(&mut self, value: f32) {
+        self.samples.fill(value);
+    }
+
     /// Longest delay that can be read.
     pub(crate) fn reach(&self) -> f32 {
         self.samples.len().saturating_sub(4) as f32

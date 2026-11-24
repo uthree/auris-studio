@@ -111,6 +111,14 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                         ],
                     ),
                     (
+                        "Pizzicato strings",
+                        &[("technique", 1.0), ("players", 4.0), ("level", -2.0)],
+                    ),
+                    (
+                        "Tremolo strings",
+                        &[("technique", 2.0), ("players", 4.0), ("level", -9.5)],
+                    ),
+                    (
                         "Sul ponticello",
                         &[
                             ("position", 0.045),
@@ -157,12 +165,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     ("Acoustic guitar", &[]),
                     (
                         "Nylon guitar",
-                        &[
-                            ("hardness", 0.06),
-                            ("position", 0.28),
-                            ("damping", 0.12),
-                            ("level", -10.5),
-                        ],
+                        &[("hardness", 0.06), ("position", 0.28), ("level", -12.0)],
                     ),
                     (
                         "Steel guitar",
@@ -171,7 +174,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("position", 0.22),
                             ("decay", 5.5),
                             ("damping", 0.08),
-                            ("level", -12.5),
+                            ("level", -11.5),
                         ],
                     ),
                     (
@@ -181,10 +184,10 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("damping", 0.8),
                             ("decay", 0.55),
                             ("release", 0.06),
-                            ("level", -0.5),
+                            ("level", 0.5),
                         ],
                     ),
-                    ("Piezo guitar", &[("pickup", 1.0), ("level", -14.0)]),
+                    ("Piezo guitar", &[("pickup", 1.0), ("level", -15.5)]),
                 ],
             ),
             family(
@@ -196,8 +199,8 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                         &[
                             ("tone", 1600.0),
                             ("pickup_position", 0.26),
-                            ("hardness", 0.25),
-                            ("level", -10.0),
+                            ("hardness", 0.12),
+                            ("level", -12.0),
                         ],
                     ),
                     (
@@ -205,10 +208,11 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                         &[
                             ("tone", 6500.0),
                             ("pickup_position", 0.08),
-                            ("hardness", 0.75),
+                            ("hardness", 0.4),
                             ("level", -10.0),
                         ],
                     ),
+                    ("Guitar harmonics", &[("technique", 1.0), ("level", -8.0)]),
                 ],
             ),
             family(
@@ -226,7 +230,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("damping", 0.8),
                             ("decay", 0.65),
                             ("release", 0.06),
-                            ("level", 1.0),
+                            ("level", 3.0),
                         ],
                     ),
                     (
@@ -235,7 +239,21 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("body", 1.0),
                             ("hardness", 0.3),
                             ("position", 0.25),
-                            ("level", -11.0),
+                            ("decay", 7.0),
+                            ("level", -9.0),
+                        ],
+                    ),
+                    // The hand over the last fret, the bone of the thumb, fresh strings and
+                    // a pickup with its top left open.
+                    (
+                        "Slap bass",
+                        &[
+                            ("technique", 1.0),
+                            ("position", 0.32),
+                            ("hardness", 0.7),
+                            ("damping", 0.05),
+                            ("tone", 4500.0),
+                            ("level", -10.0),
                         ],
                     ),
                 ],
@@ -338,7 +356,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("reed_stiffness", 0.32),
                             ("breath_noise", 0.07),
                             ("attack", 0.12),
-                            ("level", 4.5),
+                            ("level", 2.5),
                         ],
                     ),
                     (

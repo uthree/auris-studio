@@ -24,6 +24,13 @@
 //! once a period leans into it until it stops, and one whose note the bow has pulled flat —
 //! which a firm bow does, more the higher the note — moves the finger until it is in tune.
 //!
+//! The same string can be played without drawing a bow along it. **Pizzicato** is a finger
+//! that holds the string aside over the fingerboard and lets go: held, the string is two
+//! straight pieces, which is a constant wave in each of the two lines, and the finger's force
+//! is what keeps them so until it is taken away. A **tremolo** is the bow drawn back and forth
+//! a dozen times a second, each player in their own time, and the string caught afresh on
+//! every stroke.
+//!
 //! One string is a soloist. A section is several, and no two players have the same vibrato,
 //! bow or tuning, so each player here is a string of their own, a few cents and a few
 //! milliseconds from the next, a seat apart. And a section is not one instrument: a low note
@@ -38,7 +45,9 @@ use auris_core::{ParamDescriptor, ParamUnit};
 use auris_dsp::DcBlocker;
 
 use super::body::{self, Radiator, seeded};
-use super::waveguide::{Decimator, Line, Noise, lowpass_delay, lowpass_pole};
+use super::calibration::dial;
+use super::dials;
+use super::waveguide::{Decimator, Line, Noise, lowpass_delay, lowpass_gain, lowpass_pole};
 use super::{Engine, Mute, Note, Performance, Quality, TICK, harmonics, hertz, touch_position};
 use crate::ParamBank;
 
@@ -53,6 +62,7 @@ const P_LEGATO: u32 = 7;
 const P_VIBRATO: u32 = 8;
 const P_PLAYERS: u32 = 9;
 const P_INSTRUMENT: u32 = 10;
+const P_TECHNIQUE: u32 = 11;
 
 /// Most players on one note.
 const PLAYERS: usize = 4;
@@ -67,6 +77,16 @@ const KNEE: f32 = 0.05;
 /// strings go a tenth of a semitone flat.
 const LIGHTEST: f32 = 0.12;
 const HEAVIEST: f32 = 0.6;
+/// The nearest the bridge, as a share of the sounding string, that this string holds
+/// Helmholtz's motion under any bow. The least force that holds it grows as the square of how
+/// near the bow is, and the most the string takes was measured not to grow at all nearer than
+/// the place a bow is usually drawn: nearer than this there is no force that does both. A
+/// player asked for more goes this far and leans on the bow for the rest, which is the
+/// greater part of what playing by the bridge is.
+const NEAREST_HELD: f32 = 0.09;
+/// How much of the way a bow could not go becomes weight: the power of how many times nearer
+/// the bridge it was asked to be that the force is multiplied by.
+const LEAN: f32 = 0.5;
 /// The share a note is caught at, however lightly it is then played.
 const CATCH: f32 = 0.55;
 /// Periods over which that first firmness eases to the pressure asked for.
@@ -98,6 +118,52 @@ const FILTER_SHARE: f32 = 0.9;
 const DISPLAY: f32 = 0.012;
 /// Scale of a string's wave at the bridge before the body.
 const DRIVE: f32 = 0.35;
+
+/// Where a plucking finger is along an open string, from the bridge: over the end of the
+/// fingerboard.
+const PLUCKED_AT: f32 = 0.22;
+/// Seconds a fingertip takes to let a string go.
+const LET_GO: f32 = 1.5e-3;
+/// Scale of a plucked string's wave at the bridge before the body, at full velocity. Set so
+/// that a plucked note starts about as loud as the same note bowed at the same velocity.
+const PLUCK_DRIVE: f32 = 1.5;
+/// Strokes a second of a tremolo, there and back counting as two, and how far from that each
+/// player may be.
+const TREMOLO_HZ: f32 = 11.0;
+const TREMOLO_SPREAD: f32 = 0.12;
+/// The longest a bow takes to turn round in a tremolo, in seconds.
+const TREMOLO_TURN: f32 = 0.006;
+/// How far from the period it is meant to have the time between two lettings-go may be and
+/// still be taken for a period of the note.
+const EVEN: f32 = 0.06;
+
+/// How the strings are played.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Technique {
+    /// With the bow.
+    #[default]
+    Arco,
+    /// Plucked with a finger.
+    Pizzicato,
+    /// With the bow, in strokes as short and fast as the arm makes them.
+    Tremolo,
+}
+
+const TECHNIQUES: &[Cow<'static, str>] = &[
+    Cow::Borrowed("Arco"),
+    Cow::Borrowed("Pizzicato"),
+    Cow::Borrowed("Bowed tremolo"),
+];
+
+impl Technique {
+    fn from_value(value: f32) -> Self {
+        match value.round() as i32 {
+            i32::MIN..=0 => Self::Arco,
+            1 => Self::Pizzicato,
+            _ => Self::Tremolo,
+        }
+    }
+}
 
 const INSTRUMENTS: &[Cow<'static, str>] = &[
     Cow::Borrowed("Section"),
@@ -174,6 +240,8 @@ pub(super) fn descriptors() -> Vec<ParamDescriptor> {
             .with_steps(PLAYERS as u32),
         ParamDescriptor::new(P_INSTRUMENT, "instrument", "Instrument", 0.0, 4.0, 0.0)
             .with_choices(INSTRUMENTS),
+        ParamDescriptor::new(P_TECHNIQUE, "technique", "Technique", 0.0, 2.0, 0.0)
+            .with_choices(TECHNIQUES),
     ]
 }
 
@@ -190,6 +258,7 @@ struct Settings {
     players: usize,
     /// Zero for a section seated by register; otherwise one more than the body's index.
     instrument: usize,
+    technique: Technique,
 }
 
 /// The force rosin puts on a string, in the string's own units of velocity.
@@ -278,6 +347,21 @@ struct Player {
     nut_delay: f32,
     nut_step: f32,
     noise: Noise,
+    /// What a plucking finger is still holding the string aside with, in the string's units
+    /// of velocity, and how much of it goes each internal sample once the finger lets go.
+    hold: f32,
+    let_go: f32,
+    /// The period the note is meant to have, in internal samples; and the times between one
+    /// letting-go and the next that were near it, summed and counted. A bow that turns round
+    /// breaks the string's motion, and the gap it leaves is not a period of anything.
+    expect: f32,
+    even: f32,
+    evens: u32,
+    /// Which way this player's bow is going, one or minus one; where in a tremolo's stroke
+    /// and back the arm is, in turns; and how many of those it makes a second.
+    stroke: f32,
+    tremolo: f32,
+    tremolo_rate: f32,
 }
 
 impl Player {
@@ -296,6 +380,11 @@ impl Player {
         self.speed = 0.0;
         self.drift = 0.0;
         self.nut_delay = 0.0;
+        self.even = 0.0;
+        self.evens = 0;
+        self.hold = 0.0;
+        self.let_go = 0.0;
+        self.stroke = 1.0;
     }
 
     /// Starts listening afresh.
@@ -318,12 +407,14 @@ impl Player {
             self.wait -= 1;
             (0.0, 0.0)
         } else {
-            (bow.speed * self.drive, bow.force)
+            // A finger that has waited its turn lets go, over a moment.
+            self.hold = (self.hold - self.let_go).max(0.0);
+            (bow.speed * self.drive * self.stroke, bow.force)
         };
         self.speed += (target - self.speed) * bow.ramp;
         let wanted = self.speed - (from_bridge + from_nut);
         let rough = bow.rough * self.noise.next();
-        let push = friction(wanted, force * self.press, &mut self.stuck, rough);
+        let push = friction(wanted, force * self.press, &mut self.stuck, rough) + self.hold;
         // A slip is the string sliding for a fair part of the time a kink takes to reach the
         // bridge and return. The hair catching for a sample or two in the middle of one does
         // not make it two, and neither does a slide that comes in pieces, as it does under
@@ -342,6 +433,14 @@ impl Player {
             if self.run == self.real && self.since > self.apart {
                 if self.slips == 0 {
                     self.first = self.watched;
+                } else {
+                    // The time since the last letting-go, where it is a period of the note
+                    // and not the gap a turning bow leaves.
+                    let apart = (self.watched - self.last) as f32;
+                    if (apart - self.expect).abs() < EVEN * self.expect {
+                        self.even += apart;
+                        self.evens += 1;
+                    }
                 }
                 self.last = self.watched;
                 self.slips += 1;
@@ -381,6 +480,8 @@ struct Voice {
     halvers: [Decimator; 2],
     blockers: [DcBlocker; 2],
     key: f32,
+    /// How this note is played: a note keeps the technique it was started with.
+    technique: Technique,
     /// The pitch being played now, which glides to the key under a slur.
     /// The key a slurred line is sounding, which portamento slides toward a new one.
     slid: f32,
@@ -413,6 +514,7 @@ impl Default for Voice {
             halvers: Default::default(),
             blockers: Default::default(),
             key: 60.0,
+            technique: Technique::Arco,
             pitch: 60.0,
             slid: 60.0,
             velocity: 0.0,
@@ -544,10 +646,20 @@ impl Bowed {
         let register = (fundamental / 440.0).powf(if fundamental > 440.0 { 0.45 } else { 0.25 });
         let corner = 4_500.0 * 0.5_f32.powf(settings.damping) * register;
         let pole = lowpass_pole(corner.clamp(800.0, 16_000.0), internal);
-        let position = (voice.position * stopped(voice.body, fundamental)).min(0.3);
+        let (plucked, tremolo) = (
+            voice.technique == Technique::Pizzicato,
+            voice.technique == Technique::Tremolo,
+        );
+        let (position, lean) = if plucked {
+            (voice.position, 1.0)
+        } else {
+            let asked = (voice.position * stopped(voice.body, fundamental)).min(0.3);
+            let held = asked.max(dial(dials::BOW_NEAREST, NEAREST_HELD));
+            (held, (held / asked).powf(dial(dials::BOW_LEAN, LEAN)))
+        };
         // The bow comes round to what evens the note out over a few hundredths of a second.
         voice.evening += 0.2 * (voice.evened - voice.evening);
-        let speed = if voice.held {
+        let speed = if voice.held && !plucked {
             (0.05 + 0.55 * settings.speed)
                 * (0.3 + 0.7 * voice.velocity)
                 * expression
@@ -560,9 +672,15 @@ impl Bowed {
         let limit = speed.max(0.02) / (position * (GRIP - SLIDE));
         let pressure =
             (settings.pressure + 0.2 * (voice.velocity - 0.5) - lightened).clamp(0.0, 1.0);
-        let asked = LIGHTEST * (HEAVIEST / LIGHTEST).powf(pressure);
+        let asked = (LIGHTEST * (HEAVIEST / LIGHTEST).powf(pressure) * lean).min(HEAVIEST);
         let ease = (EASE_PERIODS / fundamental).clamp(0.05, 0.4);
-        let share = asked + (CATCH - asked).max(0.0) * (-seconds / ease).exp();
+        // A tremolo's strokes are too short to ease into: each is played at the pressure asked
+        // for from its start.
+        let share = if tremolo {
+            asked
+        } else {
+            asked + (CATCH - asked).max(0.0) * (-seconds / ease).exp()
+        };
         // Bowed, a string loses the same part of itself each period wherever it is stopped;
         // let go, it rings for as long as the release says.
         let ring = if voice.held {
@@ -570,30 +688,55 @@ impl Bowed {
         } else {
             settings.release.max(0.01) * fundamental
         };
+        let response = if tremolo {
+            settings.response.min(TREMOLO_TURN)
+        } else {
+            settings.response
+        };
+        // A string nobody is bowing turns freely, and each of its partials feels the whole of
+        // the filter's delay at its own frequency.
+        let filter_share = if plucked { 1.0 } else { FILTER_SHARE };
         voice.bow = Bow {
             speed,
-            force: if voice.held { limit * share } else { 0.0 },
-            ramp: 1.0 - (-1.0 / (settings.response.max(0.001) * internal)).exp(),
+            force: if voice.held && !plucked {
+                limit * share
+            } else {
+                0.0
+            },
+            ramp: 1.0 - (-1.0 / (response.max(0.001) * internal)).exp(),
             rough: 0.12,
             pole,
-            bridge: (-6.907_755 / ring).exp(),
+            // A bow puts back what the bridge's filter takes from the fundamental. Nothing does
+            // for a plucked string, which would lose its note to the filter long before the
+            // time it is meant to ring; the bridge gives that much back, and no more than all.
+            bridge: if plucked {
+                ((-6.907_755 / ring).exp() / lowpass_gain(pole, TAU * fundamental / internal))
+                    .min(0.999_9)
+            } else {
+                (-6.907_755 / ring).exp()
+            },
             nut: 0.997,
         };
         let (held, steps) = (voice.held, (TICK * voice.oversampling) as f32);
         for player in voice.players.iter_mut().take(voice.count) {
+            if tremolo {
+                player.tremolo = (player.tremolo + player.tremolo_rate / ticks_per_second).fract();
+                player.stroke = if player.tremolo < 0.5 { 1.0 } else { -1.0 };
+            }
             player.vibrato = (player.vibrato + player.rate / ticks_per_second).fract();
             // No hand holds a pitch still: a cent or two of slow wander.
             player.drift += (player.noise.next() * 1.8 - player.drift) * 0.03;
             let cents =
                 player.detune + player.drift + depth * player.depth * (TAU * player.vibrato).sin();
             let hz = hertz(voice.pitch + cents / 100.0).max(LOWEST_HZ);
-            let period = internal / hz - lowpass_delay(pole, TAU * hz / internal) * FILTER_SHARE;
+            let period = internal / hz - lowpass_delay(pole, TAU * hz / internal) * filter_share;
             if start {
                 player.bridge_delay = ((position * period).round() as usize).max(2);
                 player.real = ((0.4 * player.bridge_delay as f32) as u32).max(2);
                 player.chatter = (0.16 * player.bridge_delay as f32) as u32;
             }
             player.meant += internal / hz;
+            player.expect = internal / hz;
             player.ticks += 1;
             // Pieces of one slide come a trip to the bridge and back apart, or two.
             player.apart = (2.6 * player.bridge_delay as f32).min(0.42 * period) as u32;
@@ -601,8 +744,22 @@ impl Bowed {
             if held && player.watched as f32 >= listened {
                 let meant = player.meant / player.ticks as f32;
                 let slips = player.slips as f32 * meant / player.watched as f32;
-                if player.patience > 0 {
+                if plucked {
+                    // Nothing to judge: nobody is bowing.
+                } else if player.patience > 0 {
                     player.patience -= 1;
+                } else if tremolo {
+                    // A turning bow leaves no run of periods to time from end to end, so the
+                    // ear goes by the ones that were whole, wherever in the strokes they fell.
+                    // Low on the instrument a stroke holds only a few, and they are kept from
+                    // one listening to the next until there are enough to go by.
+                    if player.evens >= 6 {
+                        let flat = player.even / player.evens as f32 / meant - 1.0;
+                        let nudge = (INTONATION * flat).clamp(-NUDGE, NUDGE);
+                        player.trim = (player.trim - nudge).clamp(-REACH, REACH);
+                        player.even = 0.0;
+                        player.evens = 0;
+                    }
                 } else if slips > 1.4 {
                     // Slipping more than once a period: a firmer bow, a little at a time,
                     // kept once it is found, and given a moment to take.
@@ -619,6 +776,10 @@ impl Bowed {
                         player.trim = (player.trim - nudge).clamp(-REACH, REACH);
                     }
                 }
+                if !tremolo {
+                    player.even = 0.0;
+                    player.evens = 0;
+                }
                 player.forget();
             }
             let wanted = (period * (1.0 + player.trim) - player.bridge_delay as f32)
@@ -629,6 +790,35 @@ impl Bowed {
             } else {
                 player.nut_step = (wanted - player.nut_delay) / steps;
             }
+        }
+    }
+}
+
+impl Bowed {
+    /// Holds every string of voice `index` aside where its finger is, ready to be let go.
+    ///
+    /// A string held aside is straight either side of the finger, and a straight string is a
+    /// constant wave: the two that make up each piece are equal and opposite, so nothing
+    /// moves. The finger's force is what makes the two pieces' waves agree where they meet,
+    /// and taking it away lets the corner between them go. A finger that pulls with the same
+    /// force wherever it is makes the slope of each piece as steep as the other is long.
+    fn pluck(&mut self, index: usize) {
+        let rate = self.rate;
+        let Some(voice) = self.voices.get_mut(index) else {
+            return;
+        };
+        let (bow, strength) = (voice.bow, voice.velocity * voice.evened);
+        let let_go = (LET_GO * rate * voice.oversampling as f32).max(1.0);
+        for player in voice.players.iter_mut().take(voice.count) {
+            let bridge = player.bridge_delay as f32;
+            let at = bridge / (bridge + player.nut_delay).max(1.0);
+            let amount = strength * player.drive;
+            let (toward_bridge, toward_nut) = (amount * (1.0 - at), amount * at);
+            player.bridge.fill(-bow.bridge * toward_bridge);
+            player.nut.fill(-bow.nut * toward_nut);
+            player.low = toward_bridge;
+            player.hold = toward_bridge + toward_nut;
+            player.let_go = player.hold / let_go;
         }
     }
 }
@@ -683,11 +873,15 @@ impl Engine for Bowed {
             vibrato: params.at(P_VIBRATO),
             players: (params.at(P_PLAYERS).round() as usize).clamp(1, PLAYERS),
             instrument: params.at(P_INSTRUMENT).round().clamp(0.0, 4.0) as usize,
+            technique: Technique::from_value(params.at(P_TECHNIQUE)),
         };
         let at = self.bowed_at();
         for voice in self.voices.iter_mut().filter(|voice| voice.sounding) {
-            // The bow moves along the string at once; everything else is read every tick.
-            voice.position = at;
+            // The bow moves along the string at once; everything else is read every tick. A
+            // plucked string was plucked where it was.
+            if voice.technique != Technique::Pizzicato {
+                voice.position = at;
+            }
         }
     }
 
@@ -704,8 +898,25 @@ impl Engine for Bowed {
             chosen => chosen - 1,
         };
         let sounding = hertz(key + self.performance.bend).max(LOWEST_HZ);
+        let technique = settings.technique;
+        let plucked = technique == Technique::Pizzicato;
+        // The plucking hand stays over the end of the fingerboard while the other shortens
+        // the string, so it is further along what is left.
+        let position = if plucked {
+            match note.touch {
+                Some(at) => touch_position(at),
+                None => (PLUCKED_AT * stopped(body, sounding).powi(2)).min(0.45),
+            }
+        } else {
+            position
+        };
         let reach = (position * stopped(body, sounding)).min(0.3);
-        let oversampling = self.oversampling(quality, sounding, reach);
+        // Stick and slip are what the doubled rate is for, and a plucked string has neither.
+        let oversampling = if plucked {
+            1
+        } else {
+            self.oversampling(quality, sounding, reach)
+        };
         let evened = self.bodies.get(body).map_or(1.0, |body| {
             body.favour(sounding).powf(-EVENING).clamp(0.6, 1.5)
         });
@@ -713,6 +924,7 @@ impl Engine for Bowed {
             return;
         };
         voice.key = key;
+        voice.technique = technique;
         voice.evened = evened;
         voice.evening = evened;
         voice.velocity = note.velocity;
@@ -753,15 +965,21 @@ impl Engine for Bowed {
             } else {
                 (0.022 * seeded(note.seed, seat + 5) * internal) as usize
             };
+            player.tremolo = seeded(note.seed, seat + 6);
+            player.tremolo_rate = 0.5 * TREMOLO_HZ * (1.0 + TREMOLO_SPREAD * near(7));
         }
         self.conduct(index, true);
+        if plucked {
+            self.pluck(index);
+        }
     }
 
     fn glide(&mut self, index: usize, note: &Note) -> bool {
         let Some(voice) = self.voices.get_mut(index) else {
             return false;
         };
-        if !voice.sounding {
+        // A plucked note cannot be slurred to: the next one is plucked.
+        if !voice.sounding || voice.technique == Technique::Pizzicato {
             return false;
         }
         voice.key = note.pitch;
@@ -797,7 +1015,9 @@ impl Engine for Bowed {
         if moved {
             let at = self.bowed_at();
             for voice in self.voices.iter_mut().filter(|voice| voice.sounding) {
-                voice.position = at;
+                if voice.technique != Technique::Pizzicato {
+                    voice.position = at;
+                }
             }
         }
     }
@@ -819,7 +1039,9 @@ impl Engine for Bowed {
                 }
                 let voice = &mut self.voices[index];
                 voice.age += 1;
-                if voice.mute.is_closed() || (!voice.held && voice.level < 2.0e-5) {
+                // A plucked note is over when it has died away, whether or not its key is.
+                let free = !voice.held || voice.technique == Technique::Pizzicato;
+                if voice.mute.is_closed() || (free && voice.level < 2.0e-5) {
                     voice.sounding = false;
                     continue;
                 }
@@ -832,7 +1054,17 @@ impl Engine for Bowed {
         let mut used = [false; 4];
         for voice in self.voices.iter_mut().filter(|voice| voice.sounding) {
             let target = voice.pan * width;
-            let scale = DRIVE * (voice.position / 0.09).sqrt() / (voice.count as f32).sqrt();
+            let scale = if voice.technique == Technique::Pizzicato {
+                PLUCK_DRIVE
+            } else {
+                // A bow moves the bridge further the nearer it is drawn, and is heard evenly
+                // by that much: from where it is drawn, which is not always where it was asked.
+                let reach = stopped(voice.body, hertz(voice.pitch).max(LOWEST_HZ));
+                let drawn = voice
+                    .position
+                    .max(dial(dials::BOW_NEAREST, NEAREST_HELD) / reach);
+                DRIVE * (drawn / 0.09).sqrt()
+            } / (voice.count as f32).sqrt();
             let bow = voice.bow;
             used[voice.body] = true;
             let [bus_mid, bus_side] = &mut buses[voice.body];

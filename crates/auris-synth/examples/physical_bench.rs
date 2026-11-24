@@ -3,13 +3,15 @@
 //! ```sh
 //! cargo run --release -p auris-synth --example physical_bench
 //! cargo run --release -p auris-synth --example physical_bench -- --quality 2 --rate 96000
+//! cargo run --release -p auris-synth --example physical_bench -- --model bass technique=1
 //! ```
 //!
 //! For every model it holds one note, then a handful, then as many as the model has voices,
 //! renders ten seconds in host-sized blocks and prints how long that took as a share of the
 //! ten seconds: the part of one core the instrument would use live. `--quality` picks the
 //! live quality (0 draft, 1 standard, 2 high), `--rate` the sample rate and `--block` the
-//! host's block size.
+//! host's block size. `--model` keeps to one instrument, named by the last part of its plugin
+//! id, and any `key=value` sets that parameter on every instrument that has it.
 //!
 //! Development tooling: build it with `--release`, or the numbers mean nothing.
 
@@ -43,9 +45,17 @@ fn chord(model: Model, count: usize) -> Vec<u8> {
         .collect()
 }
 
-fn measure(model: Model, voices: usize, quality: f32, rate: f64, block: usize) -> (f64, usize) {
+fn measure(
+    model: Model,
+    voices: usize,
+    params: &[(String, f32)],
+    rate: f64,
+    block: usize,
+) -> (f64, usize) {
     let mut instrument = Physical::new(model);
-    instrument.set_param_by_key("quality", quality);
+    for (key, value) in params {
+        instrument.set_param_by_key(key, *value);
+    }
     instrument.prepare(&PrepareContext::new(rate, block, 2));
     let mut buffer = AudioBuffer::stereo(block, rate);
     let frames = (SECONDS * rate) as usize;
@@ -92,16 +102,29 @@ fn main() {
     let quality = option("--quality", 1.0) as f32;
     let rate = option("--rate", 48_000.0);
     let block = option("--block", 256.0) as usize;
+    let only = args
+        .iter()
+        .position(|arg| arg == "--model")
+        .and_then(|index| args.get(index + 1));
+    let mut params = vec![("quality".to_owned(), quality)];
+    params.extend(
+        args.iter()
+            .filter_map(|arg| arg.split_once('='))
+            .filter_map(|(key, value)| Some((key.to_owned(), value.parse().ok()?))),
+    );
     println!("quality {quality}, {rate} Hz, blocks of {block}: share of one core");
     println!(
         "{:<20} {:>10} {:>10} {:>14}",
         "model", "1 voice", "6 voices", "every voice"
     );
     for model in Model::ALL {
+        if only.is_some_and(|wanted| model.id().rsplit('.').next() != Some(wanted.as_str())) {
+            continue;
+        }
         let most = model.voices();
-        let (one, _) = measure(model, 1, quality, rate, block);
-        let (six, _) = measure(model, 6.min(most), quality, rate, block);
-        let (all, sounding) = measure(model, most, quality, rate, block);
+        let (one, _) = measure(model, 1, &params, rate, block);
+        let (six, _) = measure(model, 6.min(most), &params, rate, block);
+        let (all, sounding) = measure(model, most, &params, rate, block);
         println!(
             "{:<20} {:>9.2}% {:>9.2}% {:>9.2}% ({sounding})",
             model.name(),

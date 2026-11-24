@@ -58,9 +58,14 @@ const P_STIFFNESS: u32 = 6;
 const P_DETUNE: u32 = 7;
 const P_SYMPATHETIC: u32 = 8;
 
-/// Most partials of one string.
+/// Most partials of one string of three. A hammer that strikes one string or two leaves room
+/// in the same pool for half as many again, which is where a wound bass string needs them:
+/// ninety-six partials of the lowest C end at three kilohertz, and a grand's bass does not.
 const PARTIALS: usize = 96;
 const ROTORS: usize = PARTIALS * STRINGS;
+/// Where the partials past the ninety-sixth stop while playing live, in hertz. A render has
+/// them to the band's edge.
+const BASS_REACH: f32 = 8_000.0;
 /// Highest key with a damper, F6. Strings above it ring on after the key is released.
 const HIGHEST_DAMPER: u8 = 89;
 /// Below this a voice's phasors are taken to have stopped.
@@ -110,8 +115,10 @@ const FRICTION: f32 = 0.9172;
 /// softer or stiffer than the published measurements, at half a millimetre of compression.
 /// A technician needles a grand's hammers until it sounds as it should, and these are needled
 /// against the same Steinway: softest where the ear is keenest, in the fifth octave, and
-/// nearly as measured at either end.
-const FELT: [f32; 8] = [-0.9, -0.9, -0.7, -1.3, -1.7, -1.4, -0.7, -0.3];
+/// nearly as measured at either end. The two lowest were needled again against the blows of
+/// its G1, C2 and G2, which had 6 to 20 dB more than these hammers gave between one and eight
+/// kilohertz; they give within 11 dB of it now, at no cost to how each partial stands.
+const FELT: [f32; 8] = [-0.4, -0.5, -0.7, -1.3, -1.7, -1.4, -0.7, -0.3];
 /// How much more steeply than measured the voiced felt stiffens as it is driven in, added to
 /// the exponent of its force law. It is what makes a soft blow so much rounder than a hard one.
 const FELT_SHAPE: f32 = 0.4;
@@ -127,6 +134,14 @@ const DAMPER: [f32; 8] = [2.5, 2.0, 1.4, 1.0, 0.8, 0.7, 0.6, 0.6];
 const TUNED: f32 = 0.258;
 /// The beat rate a tuner leaves between the strings of a treble unison, in hertz.
 const TUNED_BEAT: f32 = 0.092_23;
+/// How many times further apart than a tuner leaves a unison the motions of the lowest strings
+/// lie, at and below [`BASS_LOW`] hertz, falling to one at [`BASS_HIGH`]. A wound string's
+/// two planes, and the two strings of a low pair, are not as nearly one as a treble unison:
+/// a recorded grand's lowest notes fall nine or ten decibels in their first second and then
+/// hardly at all, where strings in perfect agreement would go on falling as they began.
+const BASS_APART: f64 = 3.5;
+const BASS_LOW: f64 = 65.4;
+const BASS_HIGH: f64 = 98.0;
 /// How unequally the hammer strikes the strings of a unison.
 const UNEVEN: f64 = 0.5198;
 /// A single string's second polarisation: how it pulls on the bridge, how much of the blow it
@@ -266,6 +281,11 @@ struct Settings {
 struct Stringing {
     strings: usize,
     cents: [f64; STRINGS],
+    /// How many times as far apart as `cents` the lowest strings' fundamentals lie. What is
+    /// over one is the same number of hertz at every partial, not the same number of cents:
+    /// it comes of how the bridge gives, which does not grow with the partial as a mistuned
+    /// string's beating does.
+    wide: f64,
     weights: [f64; STRINGS],
     shares: [f64; STRINGS],
 }
@@ -735,15 +755,21 @@ impl Struck {
         let uneven = UNEVEN * f64::from(uneven);
         // A tuner leaves a treble unison beating no faster than it would lower down.
         let tuned = f64::from(1200.0 * (1.0 + TUNED_BEAT / fundamental).log2() / TUNED).min(1.0);
+        let low = ((BASS_HIGH / f64::from(fundamental)).log2() / (BASS_HIGH / BASS_LOW).log2())
+            .clamp(0.0, 1.0);
+        let wide = 1.0 + (BASS_APART - 1.0) * low;
+        let wide = if self.is_piano() { wide } else { 1.0 };
         let apart = detune * if self.is_piano() { tuned } else { 1.0 };
         let pair = Stringing {
             strings: 2,
+            wide,
             cents: [-apart, apart, 0.0],
             weights: [1.0, 1.0, 0.0],
             shares: [1.0 + uneven, 1.0 - uneven, 0.0],
         };
         let triple = Stringing {
             strings: 3,
+            wide,
             cents: [-apart, 0.0, apart],
             weights: [1.0; 3],
             shares: [1.0 + uneven, 1.0, 1.0 - uneven],
@@ -764,6 +790,7 @@ impl Struck {
             let [weight, share, offset] = POLARISATION;
             Stringing {
                 strings: 2,
+                wide,
                 cents: [0.0, offset * detune / f64::from(TUNED), 0.0],
                 weights: [1.0, weight, 0.0],
                 shares: [1.0, share, 0.0],
@@ -874,7 +901,10 @@ impl Struck {
             let bridge = self.bridge_loss(key, order);
             let give = self.give(key, fundamental, order);
             let detune: [f64; STRINGS] = std::array::from_fn(|string| {
-                f64::from(TAU * hz) * ((stringing.cents[string] / 1200.0).exp2() - 1.0)
+                let apart = (stringing.cents[string] / 1200.0).exp2() - 1.0;
+                f64::from(TAU)
+                    * apart
+                    * (f64::from(hz) + (stringing.wide - 1.0) * f64::from(fundamental))
             });
             let (found, count) = normals(
                 &detune[..strings],
@@ -1104,16 +1134,20 @@ impl Engine for Struck {
         } else {
             struck
         };
-        let budget = match quality {
-            Quality::Draft => 64,
-            Quality::Standard => 192,
-            Quality::High => ROTORS,
-        };
         let limit = rate * 0.45;
+        let (budget, reach) = match quality {
+            Quality::Draft => (64, limit),
+            Quality::Standard if strings <= 2 => (ROTORS, BASS_REACH),
+            Quality::Standard => (192, limit),
+            Quality::High => (ROTORS, limit),
+        };
+        let most = (budget / strings).min(ROTORS / strings);
         let mut partials = 0;
-        while partials < (budget / strings).min(PARTIALS)
-            && fundamental * partial_ratio((partials + 1) as f32, stiffness) * 1.002 < limit
-        {
+        while partials < most {
+            let hz = fundamental * partial_ratio((partials + 1) as f32, stiffness);
+            if hz * 1.002 >= limit || (partials >= PARTIALS && hz >= reach) {
+                break;
+            }
             partials += 1;
         }
         let piano = self.is_piano();

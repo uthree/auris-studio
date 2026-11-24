@@ -31,7 +31,8 @@ class Renderer:
             self.process.wait()
         self.process.stdout.close()
 
-    def render(self, model, notes, params, seconds, hold, rate=RATE, effects=(), inputs=()):
+    def render(self, model, notes, params, seconds, hold, rate=RATE, effects=(), inputs=(),
+               dials=None):
         """One row of mono PCM per note, each `seconds` long at `rate`."""
         request = {"model": model, "notes": [{key: note[key] for key in
                     ("pitch", "velocity", "tuning_cents", "hold", "bends", "expression")
@@ -44,6 +45,9 @@ class Renderer:
             request["effects"] = effects
         if inputs:
             request["inputs"] = [str(path) for path in inputs]
+        # Voicing dials need a worker built with `--features physical-calibration`.
+        if dials:
+            request["dials"] = {str(index): value for index, value in dials.items()}
         self.process.stdin.write((json.dumps(request, allow_nan=False) + "\n").encode())
         self.process.stdin.flush()
         header = self.process.stdout.read(4)

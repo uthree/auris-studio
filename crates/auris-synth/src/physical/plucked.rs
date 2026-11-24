@@ -17,6 +17,16 @@
 //! electric's string is watched by a magnet part-way along it, which hears the string's
 //! velocity there and so a comb of the partials that have a node elsewhere, through the
 //! resonant low-pass its coil and cable make.
+//!
+//! Any of the three can play a harmonic: a finger of the other hand lies lightly on the middle
+//! of the string while it is plucked, and comes off. Every partial that moves there is
+//! stopped by it within a few hundredths of a second, and those are the odd ones, so what
+//! rings on is the string's octave — played on a string twice as long as the note's own,
+//! which is why a harmonic is purer and longer than the same note fretted.
+//!
+//! A bass can be slapped as well as plucked, and then the string meets its frets: that is not
+//! a way of setting the partials going but something done to them while they ring, and it is
+//! in `slap`.
 
 use std::f32::consts::PI;
 
@@ -25,7 +35,10 @@ use auris_core::{ParamDescriptor, ParamUnit};
 use auris_dsp::{Biquad, BiquadCoefficients};
 
 use super::body::{self, Radiator, seeded};
+use super::calibration::dial;
+use super::dials;
 use super::rotors::{Rotor, Rotors, decay_rate, pole};
+use super::slap::{self, Blow, Slap, Stroke, Technique};
 use super::strings::{
     BASS_STRINGS, GUITAR_STRINGS, Losses, fretted, material, partial_ratio, pluck_share,
     release_rolloff,
@@ -47,6 +60,43 @@ const P_RELEASE: u32 = 5;
 const P_PICKUP: u32 = 6;
 const P_TONE: u32 = 6;
 const P_PICKUP_Q: u32 = 7;
+/// How the instrument is played, after its other controls: plucked, a harmonic, and on the
+/// bass slapped.
+const fn technique_param(model: Model) -> u32 {
+    match model {
+        Model::ElectricGuitar => 9,
+        _ => 7,
+    }
+}
+
+/// The guitars' techniques, in parameter-value order.
+const TECHNIQUES: &[std::borrow::Cow<'static, str>] = &[
+    std::borrow::Cow::Borrowed("Pluck"),
+    std::borrow::Cow::Borrowed("Harmonics"),
+];
+
+/// How long the touching finger stays on the string, in seconds.
+const TOUCH: f32 = 0.06;
+/// How fast a partial with all of its motion under the touching finger dies, as the time it
+/// takes to lose sixty decibels, in seconds.
+const TOUCH_GRIP: f32 = 0.025;
+/// Width of the touching finger as a share of the string it is laid on. A finger is not a
+/// point, so the high partials whose loops are no longer than it is are stopped as well.
+const TOUCH_WIDTH: f32 = 0.02;
+
+/// How much of partial `order`'s motion a finger laid across the middle of the string takes
+/// hold of: the square of the partial's shape, averaged over the finger's width. All of an
+/// odd partial low on the string, next to none of an even one, and half of any whose loops
+/// are shorter than the finger.
+fn touched(order: f32) -> f32 {
+    let across = PI * order * TOUCH_WIDTH;
+    let spread = if across < 1.0e-3 {
+        1.0
+    } else {
+        across.sin() / across
+    };
+    0.5 * (1.0 - (PI * order).cos() * spread)
+}
 const P_DECAY_RATIO: u32 = 8;
 
 /// Most partials of one polarisation.
@@ -81,11 +131,14 @@ const PALM_GRIP: f32 = 30.0;
 /// of how much it does.
 const EVENING: f32 = 0.6;
 
+/// The velocity at which `Build::snap` is its first number: a middling pluck.
+const SNAP_AT: f32 = 0.65;
+
 pub(super) fn descriptors(model: Model) -> Vec<ParamDescriptor> {
     let (hardness, position, decay, damping, release) = match model {
-        Model::ElectricGuitar => (0.6, 0.13, 9.0, 0.03, 0.1),
-        Model::Bass => (0.35, 0.16, 7.0, 0.12, 0.1),
-        _ => (0.2, 0.26, 6.5, 0.1, 0.12),
+        Model::ElectricGuitar => (0.3, 0.13, 9.0, 0.03, 0.1),
+        Model::Bass => (0.35, 0.16, 35.0, 0.12, 0.1),
+        _ => (0.2, 0.26, 12.5, 0.5, 0.12),
     };
     let mut descriptors = vec![
         ParamDescriptor::percent(P_HARDNESS, "hardness", "Contact Hardness", hardness),
@@ -103,10 +156,10 @@ pub(super) fn descriptors(model: Model) -> Vec<ParamDescriptor> {
             "decay",
             "Resonance Decay",
             0.1,
-            if model == Model::ElectricGuitar {
-                40.0
-            } else {
-                12.0
+            match model {
+                Model::ElectricGuitar => 40.0,
+                Model::Bass => 40.0,
+                _ => 20.0,
             },
             decay,
         )
@@ -151,16 +204,42 @@ pub(super) fn descriptors(model: Model) -> Vec<ParamDescriptor> {
                 .with_unit(ParamUnit::Ratio),
             );
         }
-        Model::Bass => descriptors.push(
-            ParamDescriptor::new(P_TONE, "tone", "Pickup Resonance", 400.0, 8_000.0, 2_400.0)
-                .with_unit(ParamUnit::Hertz),
-        ),
+        Model::Bass => {
+            descriptors.push(
+                ParamDescriptor::new(P_TONE, "tone", "Pickup Resonance", 400.0, 8_000.0, 2_400.0)
+                    .with_unit(ParamUnit::Hertz),
+            );
+            descriptors.push(
+                ParamDescriptor::new(
+                    technique_param(model),
+                    "technique",
+                    "Technique",
+                    0.0,
+                    4.0,
+                    0.0,
+                )
+                .with_choices(Technique::CHOICES),
+            );
+        }
         _ => descriptors.push(ParamDescriptor::percent(
             P_PICKUP,
             "pickup",
             "Pickup blend",
             0.0,
         )),
+    }
+    if model != Model::Bass {
+        descriptors.push(
+            ParamDescriptor::new(
+                technique_param(model),
+                "technique",
+                "Technique",
+                0.0,
+                1.0,
+                0.0,
+            )
+            .with_choices(TECHNIQUES),
+        );
     }
     descriptors
 }
@@ -180,6 +259,8 @@ struct Settings {
     tone: f32,
     pickup_q: f32,
     decay_ratio: f32,
+    /// How the instrument is played. A guitar's choice is between the first and the last.
+    technique: Technique,
 }
 
 /// What differs between the three instruments and is not a control.
@@ -190,13 +271,58 @@ struct Build {
     /// Pitch at which the decay control is the fundamental's decay time.
     reference: f32,
     /// Exponent by which higher notes decay faster: the terminations see more of them.
+    ///
+    /// None on the bass. Open or stopped at the third fret, a recorded bass's fundamental
+    /// loses about 2 dB a second on every string from the E to the G: a heavier string
+    /// meets its bridge less often and gives it more each time.
     tracking: f32,
+    /// Exponent by which a stopped string decays faster than the same string open, as a
+    /// power of how much shorter it sounds: the fingertip that stops it takes what a nut
+    /// does not, and the wave meets it more often.
+    ///
+    /// The recorded basses' fundamentals lose 2.3 dB a second open, 3.2 at the fifth fret
+    /// and 4.1 at the twelfth, where the string sounds at half its length.
+    stopped: f32,
     /// Cents a full pluck pulls the string sharp before it settles.
+    ///
+    /// A recorded bass's note is 0.7 cents sharper over its first half second than two
+    /// seconds on, and no more than 1.4 on its lowest string. A string that rings for as
+    /// long as a bass's does carries whatever it is given for as long.
     glide: f32,
-    /// Factor on the material's loss factors: wound strings are deader than plain ones.
-    wound: f32,
+    /// Factors on the material's two loss factors, for internal friction and for bending. A
+    /// wound string is deader than a plain one in its friction, where its windings rub, and
+    /// livelier in its bending, which only its thin core does.
+    ///
+    /// The bass's are read off three recorded electric basses played finger-style, sixty
+    /// notes left to ring: over the four strings their partials fall at about 4 dB a second
+    /// under 250 Hz, at 11 to 33 between 500 Hz and 1 kHz and at 19 to 40 between 1 and
+    /// 2 kHz. One factor for both losses could not do that: with the bending a low string's
+    /// high partials do, the E string lost 74 dB a second between 1 and 2 kHz where the
+    /// recorded ones lose 30.
+    wound: (f32, f32),
     /// Loudness of one pluck before the instrument's own normalisation.
     drive: f32,
+    /// How much sooner a fast string leaves the finger than a slow one: the power of how many
+    /// times faster the wave runs on a string than on the lowest by which its pluck's corner
+    /// is higher, at a pluck of middling force, and what a whole unit of velocity adds to
+    /// that power.
+    ///
+    /// A finger lets a string go over a time, and a light, taut string is away from under it
+    /// sooner than a heavy one; a hard pluck snaps it off a nail where a soft one rolls it off
+    /// the flesh beside it. The guitar's two numbers are measured on a recorded classical
+    /// guitar. Its sixth string holds what one corner for every string gives it, at every
+    /// dynamic; its first, whose wave runs four times as fast, held 15 dB more than that
+    /// above its eighth partial played softly, 22 dB at a middling pluck and 34 dB played
+    /// hard, and is within 10 dB of what these two numbers give it at all three.
+    ///
+    /// The electric guitar's power is fitted with its other controls on a recorded
+    /// Stratocaster's clean notes, 48 of them, and read on 46 more at other pitches: with the
+    /// power free the fit lands on 1.3 and a soft pick, without it on the hardest pick there
+    /// is, and the error on the held-out notes is 5% lower with it. Those notes were played
+    /// at one dynamic, so nothing is said of what a harder stroke adds. The bass keeps one
+    /// corner for every string: its recordings could not tell a law from the combs its
+    /// pickups hear.
+    snap: (f32, f32),
 }
 
 impl Build {
@@ -208,27 +334,33 @@ impl Build {
                 stiffness: &[5.0e-5, 3.5e-5, 2.5e-5, 1.1e-4, 6.0e-5, 3.0e-5],
                 reference: 64.0,
                 tracking: 0.0,
+                stopped: 0.0,
                 glide: 9.0,
-                wound: 1.0,
+                wound: (1.0, 1.0),
                 drive: 1.0,
+                snap: (1.4, 0.0),
             },
             Model::Bass => Self {
                 strings: &BASS_STRINGS,
                 stiffness: &[9.0e-5, 7.0e-5, 5.0e-5, 4.0e-5],
                 reference: 40.0,
-                tracking: 0.45,
-                glide: 12.0,
-                wound: 2.5,
+                tracking: 0.0,
+                stopped: 1.0,
+                glide: 2.0,
+                wound: (5.5, 0.66),
                 drive: 1.0,
+                snap: (0.0, 0.0),
             },
             _ => Self {
                 strings: &GUITAR_STRINGS,
                 stiffness: &[4.5e-5, 3.5e-5, 3.0e-5, 2.5e-5, 5.0e-5, 3.0e-5],
                 reference: 55.0,
                 tracking: 0.45,
+                stopped: 0.0,
                 glide: 5.0,
-                wound: 1.0,
+                wound: (1.0, 1.0),
                 drive: 1.0,
+                snap: (1.175, 2.25),
             },
         }
     }
@@ -273,6 +405,12 @@ struct Voice {
     tuned: f32,
     /// The string the note is fretted on, while the finger holds it there.
     string: Option<usize>,
+    /// The thumb and the frets of a slapped note.
+    slap: Slap,
+    /// Control ticks a harmonic's touching finger has still to stay on the string, and
+    /// whether it has just come off.
+    touching: u32,
+    lift: bool,
 }
 
 impl Voice {
@@ -380,7 +518,11 @@ impl Plucked {
             settings.decay
         };
         let register = hertz(pitch) / hertz(self.build.reference);
-        decay_rate(seconds) * (1.0 + 3.0 * settings.damping) * register.powf(self.build.tracking)
+        let stopped = fretted(pitch, self.build.strings).1;
+        decay_rate(seconds)
+            * (1.0 + 3.0 * settings.damping)
+            * register.powf(self.build.tracking)
+            * stopped.powf(dial(dials::PLUCK_STOPPED, self.build.stopped))
     }
 
     /// Works out the decay rate of every phasor of `voice` from the controls as they stand.
@@ -391,8 +533,8 @@ impl Plucked {
             self.fundamental_rate(voice.pitch),
             voice.fundamental,
             voice.stiffness,
-            friction * self.build.wound,
-            bending * self.build.wound,
+            friction * self.build.wound.0,
+            bending * self.build.wound.1,
         )
     }
 
@@ -424,6 +566,9 @@ impl Plucked {
             if gripped > 0.0 {
                 let moves = (PI * order * palm_at).sin();
                 nepers += gripped * moves * moves;
+            }
+            if voice.touching > 0 {
+                nepers += decay_rate(TOUCH_GRIP) * touched(order);
             }
             if n < voice.paired
                 && let Some(slot) = voice.nepers.get_mut(across + 1)
@@ -513,6 +658,9 @@ impl Engine for Plucked {
                 voice.rotors.prepare(ROTORS);
                 voice.hz = vec![0.0; ROTORS];
                 voice.nepers = vec![0.0; ROTORS];
+                if self.model == Model::Bass {
+                    voice.slap.prepare(ROTORS);
+                }
                 voice
             })
             .collect();
@@ -536,6 +684,9 @@ impl Engine for Plucked {
             voice.mute.open();
             voice.last = 0.0;
             voice.string = None;
+            voice.slap.rest();
+            voice.touching = 0;
+            voice.lift = false;
         }
         self.body.reset();
         self.open.reset();
@@ -574,6 +725,11 @@ impl Engine for Plucked {
             } else {
                 1.0
             },
+            technique: match (self.model, params.at(technique_param(self.model))) {
+                (Model::Bass, value) => Technique::from_value(value),
+                (_, value) if value >= 0.5 => Technique::Harmonics,
+                _ => Technique::Pluck,
+            },
         };
         if self.settings.tone > 0.0 {
             let coefficients = BiquadCoefficients::lowpass(
@@ -603,7 +759,14 @@ impl Engine for Plucked {
 
     fn start(&mut self, index: usize, note: &Note, quality: Quality) {
         let (rate, settings) = (self.rate, self.settings);
-        let pitch = note.pitch;
+        let stroke = settings.technique.stroke(note.pitch);
+        // A harmonic is the octave of a string twice as long: the string an octave under
+        // the note, with the finger at its middle.
+        let pitch = if stroke == Stroke::Harmonic {
+            note.pitch - 12.0
+        } else {
+            note.pitch
+        };
         let fundamental = hertz(pitch);
         let (string, fret) = fretted(pitch, self.build.strings);
         let stiffness =
@@ -617,7 +780,26 @@ impl Engine for Plucked {
         };
         let pickup = (settings.pickup_position * fret).clamp(0.02, 0.9);
         let hardness = self.performance.hardness(settings.hardness) * (0.55 + 0.45 * note.velocity);
-        let corner = 500.0 * 24.0_f32.powf(hardness);
+        // A string that snaps off a hooked finger leaves it faster than one a fingertip
+        // rolls off: a pop is let go as the harder half of the plucks are.
+        let corner = match stroke {
+            Stroke::Pop => 500.0 * 24.0_f32.powf(0.5 + 0.5 * hardness),
+            _ => 500.0 * 24.0_f32.powf(hardness),
+        };
+        // A fast string is gone from under the finger sooner than a slow one, and the more
+        // so the harder it is plucked.
+        let (snap, harder) = self.build.snap;
+        let open = self.build.strings.get(string).copied();
+        let lowest = self.build.strings.first().copied();
+        let corner = match (open, lowest) {
+            (Some(open), Some(lowest)) => {
+                let faster = hertz(f32::from(open)) / hertz(f32::from(lowest));
+                let power = dial(dials::PLUCK_SNAP, snap)
+                    + dial(dials::PLUCK_HARDER, harder) * (note.velocity - SNAP_AT);
+                corner * faster.powf(power.max(0.0))
+            }
+            _ => corner,
+        };
         let budget = match quality {
             Quality::Draft => 40,
             Quality::Standard => 96,
@@ -627,18 +809,29 @@ impl Engine for Plucked {
         let (acoustic, magnetic) = (self.acoustic(), self.magnetic());
         let glide = self.build.glide * note.velocity * note.velocity;
         // A note the box favours is plucked a little more gently, and one it refuses a
-        // little harder: what a player's hand learns of an instrument.
+        // little harder: what a player's hand learns of an instrument. It is the note heard
+        // that the hand learns, and a harmonic is heard an octave over its string.
         let evened = if acoustic > 0.0 {
             self.body
-                .favour(fundamental)
+                .favour(hertz(note.pitch))
                 .powf(-EVENING * acoustic)
                 .clamp(0.6, 1.5)
         } else {
             1.0
         };
-        let amplitude = note.velocity * self.build.drive * evened;
+        // A thumb leaves the string where it lay and gives it its speed; a popping finger
+        // pulls about as hard as a plucking one, away from the board.
+        let amplitude = note.velocity
+            * self.build.drive
+            * evened
+            * match stroke {
+                Stroke::Pluck | Stroke::Harmonic => 1.0,
+                Stroke::Thumb => 0.0,
+                Stroke::Pop => slap::pull(),
+            };
         // The string leaves the finger at an angle to the soundboard that no two plucks share.
-        let angle = if acoustic > 0.0 {
+        // A slapped one is driven straight at the board, and so straight across the soundboard.
+        let angle = if acoustic > 0.0 && stroke == Stroke::Pluck {
             0.35 + 0.5 * seeded(note.seed, 1)
         } else {
             0.0
@@ -673,8 +866,24 @@ impl Engine for Plucked {
         voice.held = true;
         voice.sounding = true;
         voice.glide = glide;
-        voice.attack = 0.0;
+        // Nothing is let go under a thumb: the string starts from rest and is heard at once.
+        voice.attack = if stroke == Stroke::Thumb { 1.0 } else { 0.0 };
         voice.attack_step = 1.0 / ((0.000_2 + 0.002_5 * (1.0 - hardness).powi(2)) * rate).max(1.0);
+        voice.touching = if stroke == Stroke::Harmonic {
+            (TOUCH * rate / TICK as f32).ceil() as u32
+        } else {
+            0
+        };
+        voice.slap.begin(&Blow {
+            stroke,
+            fundamental,
+            fret,
+            contact,
+            velocity: note.velocity,
+            hardness,
+            frets: slap::frets(quality == Quality::Draft),
+            rate,
+        });
         let mut partials = 0;
         while partials < budget
             && fundamental * partial_ratio((partials + 1) as f32, stiffness) < limit
@@ -707,6 +916,7 @@ impl Engine for Plucked {
             if let Some(slot) = voice.hz.get_mut(across) {
                 *slot = hz;
             }
+            voice.slap.partial(across, order, hz);
             if n < voice.paired {
                 let jitter = 1.0 + 4.0e-5 * (seeded(note.seed, 16 + n as u32) - 0.5);
                 voice.rotors.set(
@@ -794,15 +1004,35 @@ impl Engine for Plucked {
             self.open.tick();
             for voice in self.voices.iter_mut().filter(|voice| voice.sounding) {
                 voice.moving = voice.rotors.settle(FLOOR);
-                if voice.moving == 0.0 || voice.mute.is_closed() {
+                if voice.slap.is_striking() {
+                    // A thumbed string starts from rest: what it is given is known only
+                    // once the thumb has left it.
+                    voice.plucked = voice.plucked.max(voice.moving);
+                    voice.energy = voice.energy.max(voice.low_energy());
+                } else if voice.moving == 0.0 || voice.mute.is_closed() {
                     voice.sounding = false;
                     voice.rotors.rest();
+                    voice.slap.rest();
                     continue;
+                }
+                voice.slap.tick(TICK as f32 / rate);
+                if voice.touching > 0 {
+                    voice.touching -= 1;
+                    voice.lift = voice.touching == 0;
                 }
                 // A hard pluck stretches the string, and it comes back to pitch as it calms.
                 let glide = voice.glide * (voice.low_energy() / voice.energy).min(1.0);
                 if (cents + glide - voice.tuned).abs() > 0.25 {
                     voice.retune(cents + glide, rate);
+                }
+            }
+            // A harmonic's finger comes off, and what it was holding is free to ring.
+            for index in 0..self.voices.len() {
+                if std::mem::take(&mut self.voices[index].lift) {
+                    self.set_rates(index);
+                    let voice = &mut self.voices[index];
+                    let tuned = voice.tuned;
+                    voice.retune(tuned, rate);
                 }
             }
         }
@@ -811,7 +1041,11 @@ impl Engine for Plucked {
         for voice in self.voices.iter_mut().filter(|voice| voice.sounding) {
             let string = &mut string[..frames];
             string.fill(0.0);
-            voice.rotors.ring(string);
+            if voice.slap.is_armed() {
+                voice.slap.ring(&mut voice.rotors, string);
+            } else {
+                voice.rotors.ring(string);
+            }
             let target = voice.pan * width;
             for ((sample, to_mid), to_side) in string
                 .iter()

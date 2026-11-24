@@ -248,7 +248,21 @@ mod tests {
     #[test]
     fn the_reeds_and_whistles_publish_their_bores_with_a_node_at_the_open_end() {
         for model in [Model::Clarinet, Model::TinWhistle] {
-            let frame = observe(Box::new(Physical::new(model)), &[on(74)]);
+            // A standing wave passes through nothing twice a period, and a picture taken
+            // then says little: the one with the most in it of a few taken in a row.
+            let mut rig = Rig::new(Box::new(Physical::new(model)), 48_000.0, 256, 2);
+            let monitor = rig.instrument.motion_monitor().expect("a body to observe");
+            monitor.watch(true);
+            rig.render(9_600, &[on(74)]);
+            let frame = (0..8)
+                .map(|_| {
+                    rig.render(256, &[]);
+                    monitor.read().expect("a published frame")
+                })
+                .max_by(|a, b| {
+                    loudest(&a.voices[0].points).total_cmp(&loudest(&b.voices[0].points))
+                })
+                .expect("eight pictures");
             assert_eq!(frame.geometry, MotionGeometry::Bore, "{model:?}");
             assert_eq!(frame.active, 1);
             let voice = &frame.voices[0];
