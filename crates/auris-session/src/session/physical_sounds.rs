@@ -88,7 +88,9 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
                 ("damping", 0.08),
             ],
         ),
-        26..=27 | 31 => (Model::ElectricGuitar, &[]),
+        26..=27 => (Model::ElectricGuitar, &[]),
+        // Harmonics: the same guitar with a finger laid on the middle of the string.
+        31 => (Model::ElectricGuitar, &[("technique", 1.0)]),
         28 => (
             Model::ElectricGuitar,
             &[("damping", 0.8), ("decay", 0.55), ("release", 0.06)],
@@ -122,12 +124,9 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
             Model::Violin,
             &[("instrument", 4.0), ("players", 1.0), ("release", 0.3)],
         ),
-        44 => (Model::Violin, &[("players", 4.0)]),
-        // Pizzicato is a string section plucked: the nearest thing here is the plucked string.
-        45 => (
-            Model::Guitar,
-            &[("hardness", 0.3), ("decay", 1.2), ("damping", 0.5)],
-        ),
+        // The section with its bows going back and forth, and the section plucked.
+        44 => (Model::Violin, &[("players", 4.0), ("technique", 2.0)]),
+        45 => (Model::Violin, &[("players", 4.0), ("technique", 1.0)]),
         48..=49 => (
             Model::Violin,
             &[("players", 4.0), ("bow_pressure", 0.4), ("release", 0.5)],
@@ -240,6 +239,24 @@ mod tests {
                 native_sound(128, patch).is_none(),
                 "a specialty kit is not the standard physical kit"
             );
+        }
+    }
+
+    #[test]
+    fn programs_named_for_a_technique_are_the_instrument_played_that_way() {
+        for (patch, model, technique) in [
+            (31, Model::ElectricGuitar, 1.0),
+            (44, Model::Violin, 2.0),
+            (45, Model::Violin, 1.0),
+        ] {
+            let (id, state) = native_sound(0, patch).unwrap();
+            assert_eq!(id, model.id(), "program {patch}");
+            assert_eq!(state.params.get("technique"), Some(&technique));
+        }
+        // The plain programs beside them stay as they were played.
+        for patch in [27, 40, 48] {
+            let (_, state) = native_sound(0, patch).unwrap();
+            assert!(!state.params.contains_key("technique"));
         }
     }
 

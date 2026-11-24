@@ -27,14 +27,14 @@ that wave sample by sample.
 | --- | --- | --- |
 | Piano | A felt hammer that stiffens as it is driven in, thrown at one, two or three strings that share a bridge; dampers; every other string answering; a soundboard; the knock of the case | Contact hardness, excitation position, unison detune, sympathetic resonance, string stiffness, release (the dampers) |
 | Hammered Strings | A light hammer on courses of thin wire over a shallow box | Hammer hardness, strike position, course detune, bridge damping |
-| Guitar | Plucked strings moving in two directions at once, on a box with an air resonance and a top plate; the open strings nobody is playing answer through the bridge | Pick hardness, pluck position, damping, body, pickup blend (box to saddle) |
-| Electric Guitar | Steel strings under a magnet, before the amplifier | Pick and pickup position, tone, pickup Q, decay per octave |
+| Guitar | Plucked strings moving in two directions at once, on a box with an air resonance and a top plate; the open strings nobody is playing answer through the bridge | Pick hardness, pluck position, damping, body, pickup blend (box to saddle), technique |
+| Electric Guitar | Steel strings under a magnet, before the amplifier | Pick and pickup position, tone, pickup Q, decay per octave, technique |
 | Bass | Plucked bass strings under a pickup, or on an upright's body; slapped, a thumb thrown at the string and the frets the string comes down on | Hardness, position, body (zero is electric, one is upright), tone, technique |
-| Strings | Each player a string under a bow whose rosin grips and lets go; a section of one to four players; violin, viola, cello and bass bodies | Bow pressure, speed, position and response, players, instrument, vibrato, legato |
+| Strings | Each player a string under a bow whose rosin grips and lets go; a section of one to four players; violin, viola, cello and bass bodies | Bow pressure, speed, position and response, players, instrument, vibrato, legato, technique |
 | Mallet | A bar over a resonator tube: marimba, vibraphone, xylophone, glockenspiel, or a tine held at one end | Bar, mallet hardness, strike position, tubes, tremolo |
 | Bell | Paired modes that beat as they ring: a cast bell, a tubular bell, a handbell, a singing bowl | Bell, hardness, where round the rim it is struck, warble |
-| Reeds | A reed valve on a cylinder of air closed at the reed: a clarinet | Breath pressure, reed stiffness, breath noise, attack, vibrato, legato |
-| Whistles | An air jet across the window of an open pipe | Breath pressure, jet shape, breath noise, attack, vibrato, legato |
+| Reeds | A reed valve on a cylinder of air closed at the reed: a clarinet | Breath pressure, reed stiffness, breath noise, attack, vibrato, legato, technique |
+| Whistles | An air jet across the window of an open pipe | Breath pressure, jet shape, breath noise, attack, vibrato, legato, technique |
 
 Every model also has **Level**, **Stereo Width**, **Live Quality** and **Render Quality**.
 
@@ -72,6 +72,19 @@ Some of what these do is worth knowing before you hear it.
   the board under it, and nearer the bridge it comes down past the end of the neck. **Contact
   Hardness** runs from the pad of the thumb to its bone. Thumb and Pop play every note one
   way. The **Slap bass** sound sets all of this.
+- **Technique chooses how the other instruments are played, too.** The strings are bowed
+  (Arco), plucked (Pizzicato) or bowed in a tremolo. A plucked string is held aside by a
+  finger over the end of the fingerboard and let go: it rings and dies away as a bowed
+  string does once the bow has left it, a low string for seconds and the top one for a
+  fraction of one, and the note is over when it has died away whether or not its key is
+  still down. In a tremolo each player's bow goes back and forth about eleven times a
+  second, in their own time; the note sits a few cents under the bowed one. The guitars and
+  the bass play **Harmonics**: the note is plucked on a string an octave under it with a
+  finger lying on the string's middle, which stops every partial that moves there within a
+  few hundredths of a second. What rings on is purer than the fretted note and lasts
+  longer. The reeds and whistles **Flutter-tongue**: the tongue is rolled against the
+  breath two dozen times a second. A low note, whose pipe is slow to answer, flutters less
+  deeply than a high one.
 - **A key pressed very gently makes no sound and lifts its damper.** Take a low C at velocity
   1, play the C above and let it go: the low strings ring on at the higher note's pitch. The
   sustain pedal does that for every string at once.
@@ -104,8 +117,9 @@ hammer blow is shorter and so brighter, a faster bow presses harder, a harder br
 the reed further.
 
 Changes to **Decay**, **Damping**, **Release** and **Unison Detune** reach notes that are
-already sounding. Hardness, position, stiffness and the bass's **Technique** belong to the
-blow or the pluck, and wait for the next one. On the strings, **Bow Position** moves the bow at once.
+already sounding. Hardness, position, stiffness and the **Technique** of the strings, the
+guitars and the bass belong to the blow, the pluck or the stroke, and wait for the next one.
+On the reeds and whistles the tongue starts and stops rolling at once. On the strings, **Bow Position** moves the bow at once.
 
 MIDI CC7 is channel volume. CC11 is expression: level, and also bow speed and breath. CC1
 deepens the vibrato of the bowed and blown instruments. CC64 lifts the piano's dampers and the
@@ -136,9 +150,9 @@ a wind controller sends it, and in the bottom tenth of its travel the pipe stops
 vibraphone the modulation wheel turns the motor, wherever it is further up than **Tremolo**.
 CC64 is also the damper pedal of the tubular chimes and of the hammered strings, like a
 cimbalom's.
-Slapping is not a controller. MIDI has no message for it and General MIDI gives the slapped
-basses programs of their own, so here it is the bass's **Technique** control, automated like
-any other where a part changes hands.
+A technique is not a controller. MIDI has no message for a slap, a plucked violin or a
+harmonic, and General MIDI gives each of them a program of its own, so here each is the
+instrument's **Technique** control, automated like any other where a part changes hands.
 Pitch bend reaches sounding notes, up to two octaves either way. On the piano **Release** is
 the damper: the time it takes to remove 80 dB, longer in the bass, and the keys above F6 have
 none.
@@ -179,10 +193,10 @@ instrument named:
 | 8–13, 108 | Mallet: celesta and glockenspiel on steel bars, music box and kalimba on tines, vibraphone, marimba, xylophone |
 | 14, 112 | Bell: tubular bells, handbell |
 | 15 | Hammered Strings |
-| 24–25, 45 | Guitar: nylon, steel, and pizzicato strings as a short pluck |
-| 26–28, 31 | Electric Guitar; 28 is muted |
+| 24–25 | Guitar: nylon, steel |
+| 26–28, 31 | Electric Guitar; 28 is muted, 31 is harmonics |
 | 32–37 | Bass: 32 is the upright, 36–37 are slapped |
-| 40–44, 48–49 | Strings: solo violin, viola, cello and contrabass, and sections of four |
+| 40–45, 48–49 | Strings: solo violin, viola, cello and contrabass, and sections of four; 44 is the tremolo, 45 pizzicato |
 | 71 | Reeds |
 | 74, 78 | Whistles: recorder, whistle |
 
@@ -270,6 +284,13 @@ setting the model, read on 2026-11-24.
 A thumbed note's blow is the measure furthest out: it stands 3 dB less over the note it leaves
 than a recorded one's.
 
+A plucked violin's notes on its D and E strings fall by 17 to 310 dB a second in the Iowa
+recordings, read from 5 dB under their loudest to 25 dB under, and by 66 to 450 dB a second
+here; the median of one over the other is 1.25. The recorded open string rings four times as
+long as a stopped one beside it, which the model does not tell apart. The tremolo, the
+harmonics and the flutter-tongue are held to what each of them is by the tests, not to a
+recording.
+
 ## Development verification
 
 ```sh
@@ -297,7 +318,10 @@ rates, that a render does not depend on the host's block size, that nothing on t
 allocates; that a piano is stretched the way a tuner stretches one and falls fast and then
 slowly; that a bowed string moves as Helmholtz said at every pressure; that a clarinet has no
 even harmonics and speaks at the softest breath; that a slapped string never gains energy from
-its frets, and a thumb and a string never hold more between them than the thumb came with. `physical_probe` plays single notes and prints
+its frets, and a thumb and a string never hold more between them than the thumb came with;
+that a plucked string ends with its key down, a tremolo's bow turns a dozen times a second, a
+harmonic has lost the octave under it within a tenth of a second, and a fluttered note stays
+on its pitch. `physical_probe` plays single notes and prints
 each one's level, pitch and decay; `physical_bench` prints the share of a processor each model
 takes. `physical_fit_render` is the worker the measuring scripts under `tools/eval` drive:
 freeze a copy of it before changing anything that sounds, and compare the two against the

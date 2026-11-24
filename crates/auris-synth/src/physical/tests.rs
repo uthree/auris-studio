@@ -2090,11 +2090,13 @@ fn edge_db(samples: &[f32]) -> f64 {
 fn only_a_bass_is_slapped_and_it_is_plucked_until_it_is_told_otherwise() {
     let bass = Physical::new(Model::Bass);
     assert_eq!(bass.param_by_key("technique"), Some(0.0));
-    let technique = bass.descriptor_for_key("technique").unwrap();
-    assert_eq!(technique.choices.len(), 4);
-    for model in [Model::Guitar, Model::ElectricGuitar] {
-        assert!(Physical::new(model).param_by_key("technique").is_none());
-    }
+    let slapped = |model: Model| {
+        let instrument = Physical::new(model);
+        let technique = instrument.descriptor_for_key("technique").unwrap();
+        technique.choices.iter().any(|choice| choice == "Slap")
+    };
+    assert!(slapped(Model::Bass));
+    assert!(!slapped(Model::Guitar) && !slapped(Model::ElectricGuitar));
 }
 
 #[test]
@@ -2256,4 +2258,281 @@ fn slapping_does_not_depend_on_the_block_size_and_allocates_nothing() {
         bass.reset();
     });
     assert_eq!(allocations, 0);
+}
+
+// --- Techniques of the other instruments --------------------------------------------------
+
+/// A model at 48 kHz with its technique control at `technique`.
+fn played(model: Model, technique: f32) -> Rig {
+    let mut rig = rig(model, 48_000.0);
+    rig.set_param("technique", technique);
+    rig
+}
+
+/// How far the level of `samples` swings: the loudest tenth of its five-millisecond stretches
+/// over the quietest tenth, in decibels.
+fn swing_db(samples: &[f32]) -> f64 {
+    let mut levels: Vec<f64> = samples.chunks(240).map(level_db).collect();
+    levels.sort_by(f64::total_cmp);
+    levels[levels.len() * 9 / 10] - levels[levels.len() / 10]
+}
+
+/// How many times a second the level of `samples` swings: the strongest rate, from 4 to 40
+/// hertz, in the levels of its five-millisecond stretches.
+fn swing_hz(samples: &[f32]) -> i32 {
+    let levels: Vec<f64> = samples.chunks(240).map(level_db).collect();
+    let mean = levels.iter().sum::<f64>() / levels.len() as f64;
+    let at = |rate: f64| {
+        let (mut re, mut im) = (0.0, 0.0);
+        for (n, level) in levels.iter().enumerate() {
+            let turn = std::f64::consts::TAU * rate * n as f64 / 200.0;
+            re += (level - mean) * turn.cos();
+            im += (level - mean) * turn.sin();
+        }
+        re.hypot(im)
+    };
+    (4..=40)
+        .max_by(|a, b| at(f64::from(*a)).total_cmp(&at(f64::from(*b))))
+        .unwrap()
+}
+
+#[test]
+fn every_technique_control_starts_on_the_way_the_instrument_was_always_played() {
+    for (model, choices) in [
+        (Model::Guitar, 2),
+        (Model::ElectricGuitar, 2),
+        (Model::Bass, 5),
+        (Model::Violin, 3),
+        (Model::Clarinet, 2),
+        (Model::TinWhistle, 2),
+    ] {
+        let instrument = Physical::new(model);
+        let technique = instrument.descriptor_for_key("technique").unwrap();
+        assert_eq!(technique.default, 0.0, "{model:?}");
+        assert_eq!(technique.choices.len(), choices, "{model:?}");
+        assert_eq!(technique.max, (choices - 1) as f32, "{model:?}");
+    }
+    // A hammer, a mallet and a clapper are what they are.
+    for model in [
+        Model::Piano,
+        Model::HammeredDulcimer,
+        Model::Mallet,
+        Model::Bell,
+    ] {
+        assert!(Physical::new(model).param_by_key("technique").is_none());
+    }
+}
+
+#[test]
+fn a_plucked_string_section_rings_at_its_pitch_dies_away_and_ends_with_its_key_down() {
+    for players in [1.0, 4.0] {
+        for pitch in [43_u8, 55, 69, 81] {
+            let mut strings = played(Model::Violin, 1.0);
+            strings.set_param("players", players);
+            let audio = strings.render(96_000, &[on(pitch, 0.8)]);
+            assert!(audio.iter().all(|sample| sample.is_finite()));
+            let cents = peak_cents(&audio[1_200..12_000], 48_000.0, hz(pitch), -400..=400);
+            // One player is on the note; four are each a few cents from it, and beat.
+            let near = if players > 1.0 { 25.0 } else { 8.0 };
+            assert!(cents.abs() < near, "{players} on {pitch}: {cents} cents");
+            // Nobody is feeding it: a second on, it is far below where it began.
+            let fell = level_db(&audio[..4_800]) - level_db(&audio[48_000..52_800]);
+            assert!(fell > 15.0, "{players} on {pitch}: fell {fell} dB");
+            // And a note that has died away is over, key or no key.
+            strings.render(480_000, &[]);
+            assert_eq!(strings.instrument.active_voices(), 0, "{pitch} never ended");
+        }
+    }
+}
+
+#[test]
+fn a_plucked_string_starts_about_as_loud_as_a_bowed_one_and_cannot_be_slurred() {
+    for pitch in [48_u8, 67, 79] {
+        let bowed = played(Model::Violin, 0.0).render(48_000, &[on(pitch, 0.8)]);
+        let plucked = played(Model::Violin, 1.0).render(48_000, &[on(pitch, 0.8)]);
+        let level = 20.0 * f64::from(peak(&plucked) / peak(&bowed[24_000..])).log10();
+        assert!(
+            (-8.0..8.0).contains(&level),
+            "{pitch}: plucked {level} dB over bowed"
+        );
+    }
+    // With legato on, a second key over the first is a second pluck, not a moved finger.
+    let mut strings = played(Model::Violin, 1.0);
+    strings.set_param("legato", 1.0);
+    strings.set_param("players", 1.0);
+    strings.render(4_800, &[on(67, 0.8)]);
+    let second = strings.render(4_800, &[on(74, 0.8)]);
+    assert!(peak(&second[..960]) > peak(&second[3_840..]) * 0.8);
+    assert!(goertzel(&second, 48_000.0, hz(74)) > goertzel(&second, 48_000.0, hz(67)) * 0.5);
+}
+
+#[test]
+fn a_tremolo_is_the_bow_going_back_and_forth_a_dozen_times_a_second() {
+    for pitch in [60_u8, 67, 76] {
+        let take = |technique: f32| {
+            let mut strings = played(Model::Violin, technique);
+            strings.set_param("players", 1.0);
+            strings.set_param("vibrato", 0.0);
+            strings.render(96_000, &[on(pitch, 0.8)])[24_000..].to_vec()
+        };
+        let (drawn, trembled) = (take(0.0), take(2.0));
+        assert!(trembled.iter().all(|sample| sample.is_finite()));
+        assert!(swing_db(&drawn) < 2.5, "{pitch}: {} dB", swing_db(&drawn));
+        assert!(
+            swing_db(&trembled) > 3.5,
+            "{pitch}: {} dB",
+            swing_db(&trembled)
+        );
+        let strokes = swing_hz(&trembled);
+        assert!((8..=14).contains(&strokes), "{pitch}: {strokes} a second");
+        // It is the same note at much the same loudness.
+        let level = level_db(&trembled) - level_db(&drawn);
+        assert!(level.abs() < 6.0, "{pitch}: {level} dB");
+    }
+}
+
+#[test]
+fn a_harmonic_is_the_octave_of_a_string_twice_as_long() {
+    for (model, technique, pitch) in [
+        (Model::Guitar, 1.0, 64_u8),
+        (Model::Guitar, 1.0, 76),
+        (Model::ElectricGuitar, 1.0, 64),
+        (Model::ElectricGuitar, 1.0, 71),
+        (Model::Bass, 4.0, 52),
+        (Model::Bass, 4.0, 43),
+    ] {
+        let plucked = played(model, 0.0).render(72_000, &[on(pitch, 0.8)]);
+        let harmonic = played(model, technique).render(72_000, &[on(pitch, 0.8)]);
+        // It sounds at the note that was asked for.
+        let cents = peak_cents(&harmonic[9_600..48_000], 48_000.0, hz(pitch), -300..=300);
+        assert!(cents.abs() < 6.0, "{model:?} {pitch}: {cents} cents");
+        // The long string's own fundamental, an octave under, is gone once the finger has
+        // been on it: at first it is there, and a tenth of a second on it is not.
+        let under = |audio: &[f32]| {
+            20.0 * (partial(audio, hz(pitch) * 0.5, 1.0) / partial(audio, hz(pitch), 1.0)).log10()
+        };
+        assert!(
+            under(&harmonic[4_800..24_000]) < -30.0,
+            "{model:?} {pitch}: the octave under at {} dB",
+            under(&harmonic[4_800..24_000])
+        );
+        // A longer string rings longer, and with less above the note than a fretted one.
+        let fall =
+            |audio: &[f32]| level_db(&audio[4_800..9_600]) - level_db(&audio[62_400..67_200]);
+        assert!(
+            fall(&harmonic) < fall(&plucked) - 1.0,
+            "{model:?} {pitch}: fell {} dB against {}",
+            fall(&harmonic),
+            fall(&plucked)
+        );
+        let top = |audio: &[f32]| {
+            let upper: f64 = (3..=8)
+                .map(|n| partial(&audio[4_800..24_000], hz(pitch), f64::from(n)))
+                .sum();
+            20.0 * (upper / partial(&audio[4_800..24_000], hz(pitch), 1.0)).log10()
+        };
+        assert!(
+            top(&harmonic) < top(&plucked) - 1.0,
+            "{model:?} {pitch}: top {} dB against {}",
+            top(&harmonic),
+            top(&plucked)
+        );
+    }
+}
+
+#[test]
+fn a_fluttered_tongue_rolls_two_dozen_times_a_second_and_the_note_stays_where_it_was() {
+    for (model, pitch) in [
+        (Model::Clarinet, 69_u8),
+        (Model::Clarinet, 81),
+        (Model::TinWhistle, 86),
+        (Model::TinWhistle, 93),
+    ] {
+        let take = |technique: f32| {
+            let mut wind = played(model, technique);
+            wind.set_param("vibrato", 0.0);
+            wind.render(72_000, &[on(pitch, 0.8)])[24_000..].to_vec()
+        };
+        let (plain, fluttered) = (take(0.0), take(1.0));
+        assert!(
+            swing_db(&plain) < 1.0,
+            "{model:?} {pitch}: {}",
+            swing_db(&plain)
+        );
+        assert!(
+            swing_db(&fluttered) > 2.0,
+            "{model:?} {pitch}: swings {} dB",
+            swing_db(&fluttered)
+        );
+        let cents = peak_cents(&fluttered, 48_000.0, hz(pitch), -300..=300);
+        let plain_cents = peak_cents(&plain, 48_000.0, hz(pitch), -300..=300);
+        assert!(
+            (cents - plain_cents).abs() < 8.0,
+            "{model:?} {pitch}: {cents} cents against {plain_cents}"
+        );
+        // The roll takes some of the breath, and not most of it.
+        let level = level_db(&fluttered) - level_db(&plain);
+        assert!(
+            (-9.0..0.5).contains(&level),
+            "{model:?} {pitch}: {level} dB"
+        );
+        let strongest = swing_hz(&fluttered);
+        assert!(
+            (20..=28).contains(&strongest),
+            "{model:?} {pitch}: {strongest} Hz"
+        );
+    }
+}
+
+#[test]
+fn the_new_techniques_do_not_depend_on_the_block_size_and_allocate_nothing() {
+    for (model, technique) in [
+        (Model::Violin, 1.0),
+        (Model::Violin, 2.0),
+        (Model::Guitar, 1.0),
+        (Model::ElectricGuitar, 1.0),
+        (Model::Bass, 4.0),
+        (Model::Clarinet, 1.0),
+        (Model::TinWhistle, 1.0),
+    ] {
+        let pitch = home(model);
+        let events = [
+            NoteEvent::note_on(73, pitch, 0.8),
+            NoteEvent::note_on(1_301, pitch + 4, 0.5),
+            NoteEvent::PitchBend {
+                frame: 2_000,
+                semitones: 0.5,
+            },
+            off(3_333, pitch),
+            off(6_100, pitch + 4),
+        ];
+        let mut renders = Vec::new();
+        for block in [64, 250, 1_024] {
+            let mut instrument = Physical::new(model);
+            instrument.set_param_by_key("technique", technique);
+            let mut rig = Rig::new(Box::new(instrument), 48_000.0, block, 2);
+            renders.push(rig.render_stereo(12_000, &events));
+        }
+        assert!(peak(&renders[0].0) > 0.0, "{model:?} {technique}");
+        assert!(
+            renders[0] == renders[1] && renders[0] == renders[2],
+            "{model:?} {technique}: blocks differ"
+        );
+
+        let mut instrument = Physical::new(model);
+        instrument.set_param_by_key("technique", technique);
+        instrument.prepare(&PrepareContext::new(48_000.0, 256, 2));
+        let mut buffer = AudioBuffer::stereo(256, 48_000.0);
+        let ctx = ProcessContext::realtime(48_000.0, 256, 0, 120.0, true);
+        let quality = instrument.descriptor_for_key("quality").unwrap().id;
+        let allocations = count_allocations(|| {
+            for pitch in 30..90_u8 {
+                instrument.set_param(quality, f32::from(pitch % 3));
+                instrument.process(&[on(pitch, 0.9), off(200, pitch - 2)], &mut buffer, &ctx);
+            }
+            instrument.process(&[NoteEvent::AllSoundOff { frame: 50 }], &mut buffer, &ctx);
+            instrument.reset();
+        });
+        assert_eq!(allocations, 0, "{model:?} {technique}");
+    }
 }

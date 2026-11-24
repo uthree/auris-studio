@@ -36,6 +36,7 @@ const P_ATTACK: u32 = 3;
 const P_RELEASE: u32 = 4;
 const P_VIBRATO: u32 = 5;
 const P_LEGATO: u32 = 6;
+const P_TECHNIQUE: u32 = 7;
 
 /// Lowest note the bore is long enough for.
 const LOWEST_HZ: f32 = 20.0;
@@ -62,6 +63,8 @@ pub(super) fn descriptors() -> Vec<ParamDescriptor> {
             .with_unit(ParamUnit::Seconds),
         ParamDescriptor::percent(P_VIBRATO, "vibrato", "Vibrato", 0.12),
         ParamDescriptor::toggle(P_LEGATO, "legato", "Legato", false),
+        ParamDescriptor::new(P_TECHNIQUE, "technique", "Technique", 0.0, 1.0, 0.0)
+            .with_choices(super::TONGUINGS),
     ]
 }
 
@@ -73,7 +76,15 @@ struct Settings {
     attack: f32,
     release: f32,
     vibrato: f32,
+    /// Whether the tongue is rolled against the breath: a flutter-tongue.
+    flutter: bool,
 }
+
+/// How much a rolled tongue takes away at each roll: of the pressure the breath has over what
+/// the note needs to sound at all, and of that pressure itself. Nearly all of the first and
+/// very little of the second, or the reed would stop between rolls and have to start again.
+const FLUTTER: f32 = 0.9;
+const FLUTTER_UNDER: f32 = 0.04;
 
 /// What a voice needs for one control tick.
 #[derive(Clone, Copy, Debug, Default)]
@@ -317,8 +328,18 @@ impl Reeds {
             * (0.15 + 0.85 * voice.velocity)
             * (0.4 + 0.6 * expression)
             * performance.breath.clamp(0.0, 1.0);
+        // A rolled tongue lets the breath through and stops it faster than a note is begun.
+        let (roll, attack) = if settings.flutter {
+            let rolls = super::FLUTTER_HZ + 2.0 * (voice.vibrato_rate - 5.0);
+            (
+                super::flutter(seconds, rolls, FLUTTER),
+                settings.attack.min(super::FLUTTER_TURN),
+            )
+        } else {
+            (1.0, settings.attack)
+        };
         let time = if voice.held {
-            settings.attack
+            attack
         } else {
             (settings.release * 0.3).max(0.004)
         };
@@ -352,7 +373,8 @@ impl Reeds {
             // The breath controller blows over the threshold, as the pedal does, until at the
             // bottom of its travel there is no breath left to reach it.
             mouth: if voice.held {
-                (threshold + over) * performance.speaking()
+                (threshold * (1.0 - FLUTTER_UNDER * (1.0 - roll) / FLUTTER) + over * roll)
+                    * performance.speaking()
             } else {
                 0.0
             },
@@ -413,6 +435,7 @@ impl Engine for Reeds {
             attack: params.at(P_ATTACK),
             release: params.at(P_RELEASE),
             vibrato: params.at(P_VIBRATO),
+            flutter: params.at(P_TECHNIQUE) >= 0.5,
         };
     }
 

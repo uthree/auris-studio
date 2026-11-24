@@ -425,6 +425,21 @@ pub(crate) fn slide(slid: &mut f32, key: f32, performance: &Performance, ticks_p
     }
 }
 
+/// How a blown instrument is tongued, in parameter-value order.
+pub(crate) const TONGUINGS: &[Cow<'static, str>] =
+    &[Cow::Borrowed("Ordinary"), Cow::Borrowed("Flutter-tongue")];
+/// Rolls of the tongue a second in a flutter.
+pub(crate) const FLUTTER_HZ: f32 = 24.0;
+/// The quickest a player's breath can follow the tongue, in seconds.
+pub(crate) const FLUTTER_TURN: f32 = 0.004;
+
+/// How much of the breath a fluttering tongue lets past `seconds` into a note: all of it
+/// between rolls, and all but `depth` of it as the tongue comes up, `rolls` times a second.
+pub(crate) fn flutter(seconds: f32, rolls: f32, depth: f32) -> f32 {
+    let turn = (seconds * rolls).fract();
+    1.0 - depth * (0.5 - 0.5 * (std::f32::consts::TAU * turn).cos())
+}
+
 impl Performance {
     /// How far the sustain pedal holds the dampers off the strings: 0 with them resting on the
     /// strings, 1 with them clear, and in between a damper that only brushes the string — the

@@ -111,6 +111,14 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                         ],
                     ),
                     (
+                        "Pizzicato strings",
+                        &[("technique", 1.0), ("players", 4.0), ("level", -2.0)],
+                    ),
+                    (
+                        "Tremolo strings",
+                        &[("technique", 2.0), ("players", 4.0), ("level", -10.5)],
+                    ),
+                    (
                         "Sul ponticello",
                         &[
                             ("position", 0.045),
@@ -209,6 +217,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("level", -10.0),
                         ],
                     ),
+                    ("Guitar harmonics", &[("technique", 1.0), ("level", -9.0)]),
                 ],
             ),
             family(

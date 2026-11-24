@@ -124,6 +124,8 @@ pub(crate) enum Technique {
     Thumb,
     /// Every note popped.
     Pop,
+    /// Every note a harmonic.
+    Harmonics,
 }
 
 impl Technique {
@@ -133,6 +135,7 @@ impl Technique {
         Cow::Borrowed("Slap"),
         Cow::Borrowed("Thumb"),
         Cow::Borrowed("Pop"),
+        Cow::Borrowed("Harmonics"),
     ];
 
     /// The technique a choice parameter's value names, rounding to the nearest step.
@@ -141,7 +144,8 @@ impl Technique {
             i32::MIN..=0 => Self::Pluck,
             1 => Self::Slap,
             2 => Self::Thumb,
-            _ => Self::Pop,
+            3 => Self::Pop,
+            _ => Self::Harmonics,
         }
     }
 
@@ -151,6 +155,7 @@ impl Technique {
             Self::Pluck => Stroke::Pluck,
             Self::Thumb => Stroke::Thumb,
             Self::Pop => Stroke::Pop,
+            Self::Harmonics => Stroke::Harmonic,
             Self::Slap if pitch < POP_FROM => Stroke::Thumb,
             Self::Slap => Stroke::Pop,
         }
@@ -167,6 +172,8 @@ pub(crate) enum Stroke {
     Thumb,
     /// Pulled away from the board and let go.
     Pop,
+    /// Plucked with a finger of the other hand laid lightly on the middle of the string.
+    Harmonic,
 }
 
 /// One note as the slapping hand meets it.
@@ -272,7 +279,7 @@ impl Slap {
     /// Lays the frets out under a string and throws the thumb at it. Each of the string's
     /// partials is then described with [`Slap::partial`].
     pub(super) fn begin(&mut self, blow: &Blow) {
-        if self.frets.is_empty() || blow.stroke == Stroke::Pluck {
+        if self.frets.is_empty() || !matches!(blow.stroke, Stroke::Thumb | Stroke::Pop) {
             self.rest();
             return;
         }
@@ -442,12 +449,14 @@ mod tests {
             (1.2, Technique::Slap),
             (2.0, Technique::Thumb),
             (3.0, Technique::Pop),
-            (9.0, Technique::Pop),
+            (4.0, Technique::Harmonics),
+            (9.0, Technique::Harmonics),
             (f32::NAN, Technique::Pluck),
         ] {
             assert_eq!(Technique::from_value(value), technique);
         }
-        assert_eq!(Technique::CHOICES.len(), 4);
+        assert_eq!(Technique::Harmonics.stroke(40.0), Stroke::Harmonic);
+        assert_eq!(Technique::CHOICES.len(), 5);
     }
 
     fn blow(stroke: Stroke, fret: f32, frets: usize) -> Blow {
