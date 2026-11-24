@@ -137,7 +137,7 @@ const SNAP_AT: f32 = 0.65;
 pub(super) fn descriptors(model: Model) -> Vec<ParamDescriptor> {
     let (hardness, position, decay, damping, release) = match model {
         Model::ElectricGuitar => (0.6, 0.13, 9.0, 0.03, 0.1),
-        Model::Bass => (0.35, 0.16, 7.0, 0.12, 0.1),
+        Model::Bass => (0.35, 0.16, 35.0, 0.12, 0.1),
         _ => (0.2, 0.26, 12.5, 0.5, 0.12),
     };
     let mut descriptors = vec![
@@ -158,7 +158,7 @@ pub(super) fn descriptors(model: Model) -> Vec<ParamDescriptor> {
             0.1,
             match model {
                 Model::ElectricGuitar => 40.0,
-                Model::Bass => 12.0,
+                Model::Bass => 40.0,
                 _ => 20.0,
             },
             decay,
@@ -271,11 +271,35 @@ struct Build {
     /// Pitch at which the decay control is the fundamental's decay time.
     reference: f32,
     /// Exponent by which higher notes decay faster: the terminations see more of them.
+    ///
+    /// None on the bass. Open or stopped at the third fret, a recorded bass's fundamental
+    /// loses about 2 dB a second on every string from the E to the G: a heavier string
+    /// meets its bridge less often and gives it more each time.
     tracking: f32,
+    /// Exponent by which a stopped string decays faster than the same string open, as a
+    /// power of how much shorter it sounds: the fingertip that stops it takes what a nut
+    /// does not, and the wave meets it more often.
+    ///
+    /// The recorded basses' fundamentals lose 2.3 dB a second open, 3.2 at the fifth fret
+    /// and 4.1 at the twelfth, where the string sounds at half its length.
+    stopped: f32,
     /// Cents a full pluck pulls the string sharp before it settles.
+    ///
+    /// A recorded bass's note is 0.7 cents sharper over its first half second than two
+    /// seconds on, and no more than 1.4 on its lowest string. A string that rings for as
+    /// long as a bass's does carries whatever it is given for as long.
     glide: f32,
-    /// Factor on the material's loss factors: wound strings are deader than plain ones.
-    wound: f32,
+    /// Factors on the material's two loss factors, for internal friction and for bending. A
+    /// wound string is deader than a plain one in its friction, where its windings rub, and
+    /// livelier in its bending, which only its thin core does.
+    ///
+    /// The bass's are read off three recorded electric basses played finger-style, sixty
+    /// notes left to ring: over the four strings their partials fall at about 4 dB a second
+    /// under 250 Hz, at 11 to 33 between 500 Hz and 1 kHz and at 19 to 40 between 1 and
+    /// 2 kHz. One factor for both losses could not do that: with the bending a low string's
+    /// high partials do, the E string lost 74 dB a second between 1 and 2 kHz where the
+    /// recorded ones lose 30.
+    wound: (f32, f32),
     /// Loudness of one pluck before the instrument's own normalisation.
     drive: f32,
     /// How much sooner a fast string leaves the finger than a slow one: the power of how many
@@ -304,8 +328,9 @@ impl Build {
                 stiffness: &[5.0e-5, 3.5e-5, 2.5e-5, 1.1e-4, 6.0e-5, 3.0e-5],
                 reference: 64.0,
                 tracking: 0.0,
+                stopped: 0.0,
                 glide: 9.0,
-                wound: 1.0,
+                wound: (1.0, 1.0),
                 drive: 1.0,
                 snap: (0.0, 0.0),
             },
@@ -313,9 +338,10 @@ impl Build {
                 strings: &BASS_STRINGS,
                 stiffness: &[9.0e-5, 7.0e-5, 5.0e-5, 4.0e-5],
                 reference: 40.0,
-                tracking: 0.45,
-                glide: 12.0,
-                wound: 2.5,
+                tracking: 0.0,
+                stopped: 1.0,
+                glide: 2.0,
+                wound: (5.5, 0.66),
                 drive: 1.0,
                 snap: (0.0, 0.0),
             },
@@ -324,8 +350,9 @@ impl Build {
                 stiffness: &[4.5e-5, 3.5e-5, 3.0e-5, 2.5e-5, 5.0e-5, 3.0e-5],
                 reference: 55.0,
                 tracking: 0.45,
+                stopped: 0.0,
                 glide: 5.0,
-                wound: 1.0,
+                wound: (1.0, 1.0),
                 drive: 1.0,
                 snap: (1.175, 2.25),
             },
@@ -485,7 +512,11 @@ impl Plucked {
             settings.decay
         };
         let register = hertz(pitch) / hertz(self.build.reference);
-        decay_rate(seconds) * (1.0 + 3.0 * settings.damping) * register.powf(self.build.tracking)
+        let stopped = fretted(pitch, self.build.strings).1;
+        decay_rate(seconds)
+            * (1.0 + 3.0 * settings.damping)
+            * register.powf(self.build.tracking)
+            * stopped.powf(dial(dials::PLUCK_STOPPED, self.build.stopped))
     }
 
     /// Works out the decay rate of every phasor of `voice` from the controls as they stand.
@@ -496,8 +527,8 @@ impl Plucked {
             self.fundamental_rate(voice.pitch),
             voice.fundamental,
             voice.stiffness,
-            friction * self.build.wound,
-            bending * self.build.wound,
+            friction * self.build.wound.0,
+            bending * self.build.wound.1,
         )
     }
 

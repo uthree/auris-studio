@@ -321,7 +321,7 @@ impl Model {
             Self::HammeredDulcimer => 1.616,
             Self::Guitar => 0.806,
             Self::ElectricGuitar => 0.821,
-            Self::Bass => 0.927,
+            Self::Bass => 0.776,
             Self::Violin => 1.345,
             Self::Mallet => 0.634,
             Self::Bell => 0.329,
@@ -671,6 +671,8 @@ pub(crate) mod dials {
     /// pluck, and what a unit of velocity adds to that power.
     pub(crate) const PLUCK_SNAP: usize = 96;
     pub(crate) const PLUCK_HARDER: usize = 97;
+    /// The power of how much shorter a stopped string sounds by which it decays faster.
+    pub(crate) const PLUCK_STOPPED: usize = 98;
 }
 
 /// A dial for each C from C1 to C8, read at a pitch between them along straight lines.

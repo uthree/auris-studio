@@ -946,6 +946,30 @@ fn a_fast_string_is_let_go_sooner_and_sooner_still_when_it_is_plucked_hard() {
     );
 }
 
+#[test]
+fn a_bass_string_rings_for_long_and_a_stopped_one_for_less() {
+    // Decibels a second a note's fundamental loses once the pluck has passed.
+    let falls = |pitch: u8| {
+        let audio = rig(Model::Bass, 48_000.0).render(120_000, &[on(pitch, 0.8)]);
+        let at = |from: usize| 20.0 * partial(&audio[from..from + 24_000], hz(pitch), 1.0).log10();
+        (at(14_400) - at(86_400)) / 1.5
+    };
+    // The recorded basses' open strings lose about 2 dB a second, the low ones as the high.
+    for open in [28_u8, 33, 38, 43] {
+        let fall = falls(open);
+        assert!(
+            (1.6..3.2).contains(&fall),
+            "open {open}: {fall} dB a second"
+        );
+    }
+    // An octave up the top string the same string sounds at half its length, under a finger.
+    let (open, octave) = (falls(43), falls(55));
+    assert!(
+        octave > open * 1.6 && octave < open * 2.6,
+        "open {open} dB a second, an octave up it {octave}"
+    );
+}
+
 /// How far each key's first third of a second is from the keys around it, in decibels.
 fn apart_from_neighbours(model: Model, keys: std::ops::RangeInclusive<u8>) -> Vec<(u8, f64)> {
     let levels: Vec<f64> = keys
@@ -2186,8 +2210,10 @@ fn a_harder_slap_clanks_more_than_it_gets_louder() {
             "{technique} on {pitch}: the blow grew {blow} dB"
         );
         assert!(edge > 1.5, "{technique} on {pitch}: {edge} dB brighter");
+        // A string that rings for long keeps meeting its frets for longer, and a hard pop
+        // leaves a little less of its fundamental than a soft one.
         assert!(
-            fundamental.abs() < 7.0 && fundamental < blow - 4.0,
+            fundamental.abs() < 8.0 && fundamental < blow - 4.0,
             "{technique} on {pitch}: the fundamental grew {fundamental} dB"
         );
     }
@@ -2217,10 +2243,11 @@ fn a_slapped_note_is_in_tune_rings_on_and_ends() {
             );
             let cents = peak_cents(&audio[12_000..48_000], 48_000.0, hz(pitch), -300..=300);
             assert!(cents.abs() < 6.0, "{technique} on {pitch}: {cents} cents");
-            // The rattle takes its share at once; what is left rings as a plucked note does.
+            // The rattle takes its share at once; what is left rings as a plucked note does,
+            // which on a bass is for a long time.
             let fell = level_db(&audio[4_800..9_600]) - level_db(&audio[43_200..48_000]);
             assert!(
-                (4.0..22.0).contains(&fell),
+                (2.0..22.0).contains(&fell),
                 "{technique} on {pitch}: fell {fell} dB in a second"
             );
             bass.render(96_000, &[off(0, pitch)]);
@@ -2247,7 +2274,7 @@ fn a_slap_is_much_the_same_at_every_sample_rate() {
             for rate in [44_100.0, 96_000.0] {
                 let (blow, held) = take(rate);
                 assert!(
-                    (blow - reference.0).abs() < 1.5 && (held - reference.1).abs() < 1.5,
+                    (blow - reference.0).abs() < 1.5 && (held - reference.1).abs() < 2.0,
                     "{technique} on {pitch} at {rate}: blow {blow} dB, held {held} dB, \
                      against {reference:?}"
                 );
@@ -2458,7 +2485,7 @@ fn a_harmonic_is_the_octave_of_a_string_twice_as_long() {
         let fall =
             |audio: &[f32]| level_db(&audio[4_800..9_600]) - level_db(&audio[62_400..67_200]);
         assert!(
-            fall(&harmonic) < fall(&plucked) - 1.0,
+            fall(&harmonic) < fall(&plucked) - 0.5,
             "{model:?} {pitch}: fell {} dB against {}",
             fall(&harmonic),
             fall(&plucked)

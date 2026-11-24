@@ -346,6 +346,37 @@ did not change. A guitar saved with its controls written out keeps the damping a
 had, and with them a brighter top that rings as long as it did. The Body effect's guitar is
 this box and changed with it.
 
+The bass was read the same day against the three recorded electric basses its slap was set
+on: sixty finger-style notes, each left to ring for two or three seconds. Their level falls
+at 3.7 dB a second and their fundamental at 3.5; this bass fell at 12.6 and 12.0, three times
+as fast. A recorded fundamental loses about 2 dB a second open or at the third fret on every
+string, the low ones as the high, and nearly twice that an octave up the same string; here a
+note decayed faster the higher it was, whatever string it was on.
+
+The bass's **Decay** rests at 35 s now, where its open strings ring as the recorded ones do.
+A stopped string decays faster by how much shorter it sounds, and pitch by itself no longer
+shortens a note. A wound string's two losses are set apart, more to its friction and less to
+its bending: the E string's partials between one and two kilohertz had died at 74 dB a second
+where the recorded ones die at 30. Note for note the level's fall is 1.1 dB a second from the
+recordings' where it was 8.8, and the partials' falls 2.5 to 5 from theirs where they were 6
+to 8. A full pluck had also pulled a note 12 cents sharp, which a string that rings this long
+would carry for seconds; the recorded notes are 0.7 cents sharper over their first half second
+than two seconds on, and a full pluck is 2 cents sharp now. The Upright bass keeps the 7 s it
+had. What slapping does to a note moved by half a decibel or less, and the table below is
+read on this bass.
+
+Whether a bass's or an electric guitar's high strings are let go sooner than its low ones, as
+the guitar's are, was looked for on both and neither was changed. A magnet hears a comb of
+each string's partials, with its teeth at different frequencies on each string and on each
+recorded instrument, and that moves single bands by 20 dB. On the bass, with the guitar's law
+and without it, the model lies 7.8 dB rms from the recordings between strings. On the electric
+guitar's recorded neck pickup the first string is about 8 dB brighter against the sixth
+between 2.5 and 4 kHz than here, and the law takes most of that out; but on the instrument's
+own measure a law reads 0.135 where a harder pick on every string reads 0.136, and with the
+pickups a little off where a Stratocaster's are the law reads worse than none. That is not
+enough to tell a law from a pick. The same measure reads 0.140 with the pickups at a quarter
+and at 6.5% of the string and 0.162 where they were assumed before.
+
 The slapped bass is read beside three recorded electric basses, each note played finger-style,
 with the thumb and popped. What is compared is what slapping does to a note: each measure less
 the same measure of the same note plucked. These are means over notes that had no part in
@@ -353,11 +384,11 @@ setting the model, read on 2026-11-24.
 
 | Slapped less plucked | Recorded, thumb | Here | Recorded, pop | Here |
 | --- | --- | --- | --- | --- |
-| Level | −3.3 dB | −1.8 dB | −2.1 dB | −3.5 dB |
-| The blow over the note it leaves | 6.0 dB | 2.8 dB | 2.1 dB | 3.8 dB |
-| The peak over the note | 6.0 dB | 5.0 dB | 2.6 dB | 4.1 dB |
-| The fundamental's share | −4.7 dB | −3.6 dB | −0.6 dB | −5.2 dB |
-| Fall from 0.1 s to 0.5 s | 0.5 dB | 1.0 dB | 0.7 dB | 1.2 dB |
+| Level | −3.3 dB | −2.2 dB | −2.1 dB | −3.9 dB |
+| The blow over the note it leaves | 6.0 dB | 3.1 dB | 2.1 dB | 4.1 dB |
+| The peak over the note | 6.0 dB | 5.1 dB | 2.6 dB | 3.8 dB |
+| The fundamental's share | −4.7 dB | −3.8 dB | −0.6 dB | −6.2 dB |
+| Fall from 0.1 s to 0.5 s | 0.5 dB | 1.3 dB | 0.7 dB | 1.6 dB |
 
 A thumbed note's blow is the measure furthest out: it stands 3 dB less over the note it leaves
 than a recorded one's.

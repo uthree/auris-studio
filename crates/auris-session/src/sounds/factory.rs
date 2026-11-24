@@ -230,7 +230,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("damping", 0.8),
                             ("decay", 0.65),
                             ("release", 0.06),
-                            ("level", 1.0),
+                            ("level", 3.0),
                         ],
                     ),
                     (
@@ -239,7 +239,8 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("body", 1.0),
                             ("hardness", 0.3),
                             ("position", 0.25),
-                            ("level", -11.0),
+                            ("decay", 7.0),
+                            ("level", -9.0),
                         ],
                     ),
                     // The hand over the last fret, the bone of the thumb, fresh strings and

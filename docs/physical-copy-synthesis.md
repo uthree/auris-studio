@@ -239,10 +239,10 @@ Read on 2026-11-24, slapped less plucked, recorded and then rendered:
 
 | | Level | Blow over held | Peak over note | Fundamental | Fall |
 | --- | --- | --- | --- | --- | --- |
-| Thumb, notes the model was set on | −1.7, −1.3 dB | 4.0, 1.7 dB | 4.6, 3.8 dB | −4.1, −3.2 dB | −0.2, 0.6 dB |
-| Pop, notes the model was set on | −1.8, −2.6 dB | 2.9, 2.8 dB | 3.6, 3.3 dB | −0.6, −3.8 dB | 0.8, 1.1 dB |
-| Thumb, held-out notes | −3.3, −1.8 dB | 6.0, 2.8 dB | 6.0, 5.0 dB | −4.7, −3.6 dB | 0.5, 1.0 dB |
-| Pop, held-out notes | −2.1, −3.5 dB | 2.1, 3.8 dB | 2.6, 4.1 dB | −0.6, −5.2 dB | 0.7, 1.2 dB |
+| Thumb, notes the model was set on | −1.7, −1.7 dB | 4.0, 2.0 dB | 4.6, 3.6 dB | −4.1, −3.5 dB | −0.2, 0.9 dB |
+| Pop, notes the model was set on | −1.8, −3.1 dB | 2.9, 3.2 dB | 3.6, 3.2 dB | −0.6, −4.8 dB | 0.8, 1.4 dB |
+| Thumb, held-out notes | −3.3, −2.2 dB | 6.0, 3.1 dB | 6.0, 5.1 dB | −4.7, −3.8 dB | 0.5, 1.3 dB |
+| Pop, held-out notes | −2.1, −3.9 dB | 2.1, 4.1 dB | 2.6, 3.8 dB | −0.6, −6.2 dB | 0.7, 1.6 dB |
 
 The octave bands from 180 Hz to 2.88 kHz come up by much the same amounts. On the held-out
 notes a thumbed attack gains 0, 7, 11 and 19 dB on the recorded basses and 1, 6, 12 and 21 dB
