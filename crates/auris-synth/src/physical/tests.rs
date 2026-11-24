@@ -2069,3 +2069,191 @@ fn a_damper_pedal_lets_chimes_and_a_cimbalom_ring_after_release() {
         );
     }
 }
+
+// --- The slapped bass --------------------------------------------------------------------
+
+/// A bass at `rate` played with `technique`, the hand over the last fret.
+fn slapped(technique: f32, rate: f64) -> Rig {
+    let mut bass = rig(Model::Bass, rate);
+    bass.set_param("technique", technique);
+    bass.set_param("position", 0.32);
+    bass
+}
+
+/// How bright a stretch of sound is: the level of its slope over its own, in decibels.
+fn edge_db(samples: &[f32]) -> f64 {
+    let slope: Vec<f32> = samples.windows(2).map(|pair| pair[1] - pair[0]).collect();
+    level_db(&slope) - level_db(samples)
+}
+
+#[test]
+fn only_a_bass_is_slapped_and_it_is_plucked_until_it_is_told_otherwise() {
+    let bass = Physical::new(Model::Bass);
+    assert_eq!(bass.param_by_key("technique"), Some(0.0));
+    let technique = bass.descriptor_for_key("technique").unwrap();
+    assert_eq!(technique.choices.len(), 4);
+    for model in [Model::Guitar, Model::ElectricGuitar] {
+        assert!(Physical::new(model).param_by_key("technique").is_none());
+    }
+}
+
+#[test]
+fn a_slapped_string_comes_down_on_its_frets_and_a_plucked_one_does_not() {
+    // The same note at the same velocity with the hand in the same place: all that differs
+    // is whether the string is driven at the board. Thumbed notes on the low strings, popped
+    // ones on the high.
+    for (technique, pitches) in [(2.0, [28_u8, 33, 40, 45]), (3.0, [40, 45, 50, 55])] {
+        for pitch in pitches {
+            let take =
+                |technique: f32| slapped(technique, 48_000.0).render(24_000, &[on(pitch, 0.8)]);
+            let (plucked, slapped) = (take(0.0), take(technique));
+            // The blow is the metal: far brighter than a pluck for its first few hundredths
+            // of a second, and standing further over the note it leaves.
+            let clank = edge_db(&slapped[..1_920]) - edge_db(&plucked[..1_920]);
+            assert!(clank > 5.0, "{technique} on {pitch}: {clank} dB brighter");
+            let crest =
+                |audio: &[f32]| 20.0 * f64::from(peak(audio)).log10() - level_db(&audio[..19_200]);
+            let stands = crest(&slapped) - crest(&plucked);
+            assert!(stands > 1.5, "{technique} on {pitch}: {stands} dB of crest");
+            // It is the same instrument at the same dynamic, and about as loud.
+            let level = level_db(&slapped[..19_200]) - level_db(&plucked[..19_200]);
+            assert!(
+                (-8.0..4.0).contains(&level),
+                "{technique} on {pitch}: {level} dB louder"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_harder_slap_clanks_more_than_it_gets_louder() {
+    // The frets are as far under the string as they are however hard it is slapped, so the
+    // note left behind stops growing and what grows is the blow.
+    for (technique, pitch) in [(2.0, 28_u8), (2.0, 33), (3.0, 45), (3.0, 50)] {
+        let take = |velocity: f32| {
+            let audio = slapped(technique, 48_000.0).render(24_000, &[on(pitch, velocity)]);
+            let fundamental = 20.0 * partial(&audio[4_800..19_200], hz(pitch), 1.0).log10();
+            (
+                fundamental,
+                level_db(&audio[..1_920]),
+                edge_db(&audio[..1_920]),
+            )
+        };
+        let (soft, hard) = (take(0.3), take(1.0));
+        let (fundamental, blow, edge) = (hard.0 - soft.0, hard.1 - soft.1, hard.2 - soft.2);
+        assert!(
+            blow > 6.0,
+            "{technique} on {pitch}: the blow grew {blow} dB"
+        );
+        assert!(edge > 1.5, "{technique} on {pitch}: {edge} dB brighter");
+        assert!(
+            fundamental.abs() < 7.0 && fundamental < blow - 4.0,
+            "{technique} on {pitch}: the fundamental grew {fundamental} dB"
+        );
+    }
+}
+
+#[test]
+fn the_slap_technique_thumbs_low_notes_and_pops_the_ones_from_e2_up() {
+    let take =
+        |technique: f32, pitch: u8| slapped(technique, 48_000.0).render(9_600, &[on(pitch, 0.8)]);
+    assert!(take(1.0, 39) == take(2.0, 39));
+    assert!(take(1.0, 40) == take(3.0, 40));
+    assert!(take(1.0, 39) != take(3.0, 39));
+    assert!(take(1.0, 40) != take(2.0, 40));
+}
+
+#[test]
+fn a_slapped_note_is_in_tune_rings_on_and_ends() {
+    for technique in [2.0, 3.0] {
+        for pitch in [28_u8, 40, 52, 60] {
+            let mut bass = slapped(technique, 48_000.0);
+            let audio = bass.render(96_000, &[on(pitch, 0.9)]);
+            assert!(audio.iter().all(|sample| sample.is_finite()));
+            assert!(
+                peak(&audio) < 1.0,
+                "{technique} on {pitch}: {}",
+                peak(&audio)
+            );
+            let cents = peak_cents(&audio[12_000..48_000], 48_000.0, hz(pitch), -300..=300);
+            assert!(cents.abs() < 6.0, "{technique} on {pitch}: {cents} cents");
+            // The rattle takes its share at once; what is left rings as a plucked note does.
+            let fell = level_db(&audio[4_800..9_600]) - level_db(&audio[43_200..48_000]);
+            assert!(
+                (4.0..22.0).contains(&fell),
+                "{technique} on {pitch}: fell {fell} dB in a second"
+            );
+            bass.render(96_000, &[off(0, pitch)]);
+            assert_eq!(bass.instrument.active_voices(), 0);
+        }
+    }
+}
+
+#[test]
+fn a_slap_is_much_the_same_at_every_sample_rate() {
+    // The frets are met sample by sample, and how often that is must not be heard.
+    for technique in [2.0, 3.0] {
+        for pitch in [28_u8, 45] {
+            let take = |rate: f64| {
+                let frames = |seconds: f64| (rate * seconds) as usize;
+                let audio = slapped(technique, rate).render(frames(0.5), &[on(pitch, 0.8)]);
+                assert!(audio.iter().all(|sample| sample.is_finite()));
+                (
+                    level_db(&audio[..frames(0.04)]),
+                    level_db(&audio[frames(0.1)..frames(0.4)]),
+                )
+            };
+            let reference = take(48_000.0);
+            for rate in [44_100.0, 96_000.0] {
+                let (blow, held) = take(rate);
+                assert!(
+                    (blow - reference.0).abs() < 1.5 && (held - reference.1).abs() < 1.5,
+                    "{technique} on {pitch} at {rate}: blow {blow} dB, held {held} dB, \
+                     against {reference:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn slapping_does_not_depend_on_the_block_size_and_allocates_nothing() {
+    let events = [
+        on(33, 0.9),
+        NoteEvent::note_on(700, 45, 0.8),
+        controller(1_500, 75, 0.2),
+        off(2_000, 33),
+        NoteEvent::note_on(2_400, 28, 1.0),
+        NoteEvent::PitchBend {
+            frame: 3_000,
+            semitones: 0.5,
+        },
+        off(5_000, 45),
+    ];
+    let mut renders = Vec::new();
+    for block in [64, 250, 1_024] {
+        let mut bass = Physical::new(Model::Bass);
+        bass.set_param_by_key("technique", 1.0);
+        let mut rig = Rig::new(Box::new(bass), 48_000.0, block, 2);
+        renders.push(rig.render_stereo(12_000, &events));
+    }
+    assert!(peak(&renders[0].0) > 0.0);
+    assert!(renders[0] == renders[1] && renders[0] == renders[2]);
+
+    let mut bass = Physical::new(Model::Bass);
+    bass.set_param_by_key("technique", 1.0);
+    bass.prepare(&PrepareContext::new(48_000.0, 256, 2));
+    let mut buffer = AudioBuffer::stereo(256, 48_000.0);
+    let ctx = ProcessContext::realtime(48_000.0, 256, 0, 120.0, true);
+    let quality = bass.descriptor_for_key("quality").unwrap().id;
+    let allocations = count_allocations(|| {
+        // Thumbs and pops at every quality, past the end of the neck and past the pool.
+        for pitch in 26..76_u8 {
+            bass.set_param(quality, f32::from(pitch % 3));
+            bass.process(&[on(pitch, 0.9), off(200, pitch - 2)], &mut buffer, &ctx);
+        }
+        bass.process(&[NoteEvent::AllSoundOff { frame: 50 }], &mut buffer, &ctx);
+        bass.reset();
+    });
+    assert_eq!(allocations, 0);
+}

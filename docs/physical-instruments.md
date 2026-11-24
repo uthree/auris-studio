@@ -29,7 +29,7 @@ that wave sample by sample.
 | Hammered Strings | A light hammer on courses of thin wire over a shallow box | Hammer hardness, strike position, course detune, bridge damping |
 | Guitar | Plucked strings moving in two directions at once, on a box with an air resonance and a top plate; the open strings nobody is playing answer through the bridge | Pick hardness, pluck position, damping, body, pickup blend (box to saddle) |
 | Electric Guitar | Steel strings under a magnet, before the amplifier | Pick and pickup position, tone, pickup Q, decay per octave |
-| Bass | Plucked bass strings under a pickup, or on an upright's body | Hardness, position, body (zero is electric, one is upright), tone |
+| Bass | Plucked bass strings under a pickup, or on an upright's body; slapped, a thumb thrown at the string and the frets the string comes down on | Hardness, position, body (zero is electric, one is upright), tone, technique |
 | Strings | Each player a string under a bow whose rosin grips and lets go; a section of one to four players; violin, viola, cello and bass bodies | Bow pressure, speed, position and response, players, instrument, vibrato, legato |
 | Mallet | A bar over a resonator tube: marimba, vibraphone, xylophone, glockenspiel, or a tine held at one end | Bar, mallet hardness, strike position, tubes, tremolo |
 | Bell | Paired modes that beat as they ring: a cast bell, a tubular bell, a handbell, a singing bowl | Bell, hardness, where round the rim it is struck, warble |
@@ -61,6 +61,17 @@ Some of what these do is worth knowing before you hear it.
   between every open string's partials, leaves nothing. A string being fretted is the note's
   own and does not ring open; turning **Body** down, or the pickup blend over to the saddle,
   takes the bridge's coupling away with it.
+- **A slapped bass meets its frets.** With **Technique** on Slap, the notes below E2 are
+  struck with the side of the thumb and the ones from E2 up are popped: hooked by a finger,
+  pulled away from the board and let go. Either way the string is driven at the fingerboard
+  and comes down on the frets, and that is the sound — a clank of metal for a few hundredths
+  of a second, and a rattle for as long as the string swings further than the frets allow.
+  The frets are as far under the string as they are however hard it is slapped, so a harder
+  slap is mostly a harder clank: the note it leaves grows less than the blow does. **Excitation Position** is
+  where the hand is, and a slapping hand is over the last fret, at 32%: there the thumb has
+  the board under it, and nearer the bridge it comes down past the end of the neck. **Contact
+  Hardness** runs from the pad of the thumb to its bone. Thumb and Pop play every note one
+  way. The **Slap bass** sound sets all of this.
 - **A key pressed very gently makes no sound and lifts its damper.** Take a low C at velocity
   1, play the C above and let it go: the low strings ring on at the higher note's pitch. The
   sustain pedal does that for every string at once.
@@ -93,8 +104,8 @@ hammer blow is shorter and so brighter, a faster bow presses harder, a harder br
 the reed further.
 
 Changes to **Decay**, **Damping**, **Release** and **Unison Detune** reach notes that are
-already sounding. Hardness, position and stiffness belong to the blow or the pluck, and wait
-for the next one. On the strings, **Bow Position** moves the bow at once.
+already sounding. Hardness, position, stiffness and the bass's **Technique** belong to the
+blow or the pluck, and wait for the next one. On the strings, **Bow Position** moves the bow at once.
 
 MIDI CC7 is channel volume. CC11 is expression: level, and also bow speed and breath. CC1
 deepens the vibrato of the bowed and blown instruments. CC64 lifts the piano's dampers and the
@@ -125,6 +136,9 @@ a wind controller sends it, and in the bottom tenth of its travel the pipe stops
 vibraphone the modulation wheel turns the motor, wherever it is further up than **Tremolo**.
 CC64 is also the damper pedal of the tubular chimes and of the hammered strings, like a
 cimbalom's.
+Slapping is not a controller. MIDI has no message for it and General MIDI gives the slapped
+basses programs of their own, so here it is the bass's **Technique** control, automated like
+any other where a part changes hands.
 Pitch bend reaches sounding notes, up to two octaves either way. On the piano **Release** is
 the damper: the time it takes to remove 80 dB, longer in the bass, and the keys above F6 have
 none.
@@ -167,7 +181,7 @@ instrument named:
 | 15 | Hammered Strings |
 | 24–25, 45 | Guitar: nylon, steel, and pizzicato strings as a short pluck |
 | 26–28, 31 | Electric Guitar; 28 is muted |
-| 32–35 | Bass: 32 is the upright |
+| 32–37 | Bass: 32 is the upright, 36–37 are slapped |
 | 40–44, 48–49 | Strings: solo violin, viola, cello and contrabass, and sections of four |
 | 71 | Reeds |
 | 74, 78 | Whistles: recorder, whistle |
@@ -240,6 +254,22 @@ and 9.6 dB over.
 Key to key, a piano's notes are within 0.8 dB rms of the keys around them, and a guitar's and
 the strings' within 1.5 dB.
 
+The slapped bass is read beside three recorded electric basses, each note played finger-style,
+with the thumb and popped. What is compared is what slapping does to a note: each measure less
+the same measure of the same note plucked. These are means over notes that had no part in
+setting the model, read on 2026-11-24.
+
+| Slapped less plucked | Recorded, thumb | Here | Recorded, pop | Here |
+| --- | --- | --- | --- | --- |
+| Level | −3.3 dB | −1.8 dB | −2.1 dB | −3.5 dB |
+| The blow over the note it leaves | 6.0 dB | 2.8 dB | 2.1 dB | 3.8 dB |
+| The peak over the note | 6.0 dB | 5.0 dB | 2.6 dB | 4.1 dB |
+| The fundamental's share | −4.7 dB | −3.6 dB | −0.6 dB | −5.2 dB |
+| Fall from 0.1 s to 0.5 s | 0.5 dB | 1.0 dB | 0.7 dB | 1.2 dB |
+
+A thumbed note's blow is the measure furthest out: it stands 3 dB less over the note it leaves
+than a recorded one's.
+
 ## Development verification
 
 ```sh
@@ -257,13 +287,17 @@ uv run tools/eval/evaluate_physical_mel.py target/physical-reference \
 uv run tools/eval/piano_register.py target/piano-register prepare
 uv run tools/eval/piano_register.py target/piano-register evaluate \
   <a worker frozen earlier> target/release/examples/physical_fit_render target/piano-register/evaluation.json
+uv run tools/eval/bass_slap.py fetch target/slap-reference
+uv run tools/eval/bass_slap.py measure target/slap-reference \
+  target/release/examples/physical_fit_render target/slap-reference/measure.json
 ```
 
 The tests assert on numbers: that every model is in tune across its range at three sample
 rates, that a render does not depend on the host's block size, that nothing on the audio thread
 allocates; that a piano is stretched the way a tuner stretches one and falls fast and then
 slowly; that a bowed string moves as Helmholtz said at every pressure; that a clarinet has no
-even harmonics and speaks at the softest breath. `physical_probe` plays single notes and prints
+even harmonics and speaks at the softest breath; that a slapped string never gains energy from
+its frets, and a thumb and a string never hold more between them than the thumb came with. `physical_probe` plays single notes and prints
 each one's level, pitch and decay; `physical_bench` prints the share of a processor each model
 takes. `physical_fit_render` is the worker the measuring scripts under `tools/eval` drive:
 freeze a copy of it before changing anything that sounds, and compare the two against the

@@ -17,6 +17,10 @@
 //! electric's string is watched by a magnet part-way along it, which hears the string's
 //! velocity there and so a comb of the partials that have a node elsewhere, through the
 //! resonant low-pass its coil and cable make.
+//!
+//! A bass can be slapped as well as plucked, and then the string meets its frets: that is not
+//! a way of setting the partials going but something done to them while they ring, and it is
+//! in `slap`.
 
 use std::f32::consts::PI;
 
@@ -26,6 +30,7 @@ use auris_dsp::{Biquad, BiquadCoefficients};
 
 use super::body::{self, Radiator, seeded};
 use super::rotors::{Rotor, Rotors, decay_rate, pole};
+use super::slap::{self, Blow, Slap, Stroke, Technique};
 use super::strings::{
     BASS_STRINGS, GUITAR_STRINGS, Losses, fretted, material, partial_ratio, pluck_share,
     release_rolloff,
@@ -47,6 +52,8 @@ const P_RELEASE: u32 = 5;
 const P_PICKUP: u32 = 6;
 const P_TONE: u32 = 6;
 const P_PICKUP_Q: u32 = 7;
+/// How the bass is played: plucked, or slapped.
+const P_TECHNIQUE: u32 = 7;
 const P_DECAY_RATIO: u32 = 8;
 
 /// Most partials of one polarisation.
@@ -151,10 +158,16 @@ pub(super) fn descriptors(model: Model) -> Vec<ParamDescriptor> {
                 .with_unit(ParamUnit::Ratio),
             );
         }
-        Model::Bass => descriptors.push(
-            ParamDescriptor::new(P_TONE, "tone", "Pickup Resonance", 400.0, 8_000.0, 2_400.0)
-                .with_unit(ParamUnit::Hertz),
-        ),
+        Model::Bass => {
+            descriptors.push(
+                ParamDescriptor::new(P_TONE, "tone", "Pickup Resonance", 400.0, 8_000.0, 2_400.0)
+                    .with_unit(ParamUnit::Hertz),
+            );
+            descriptors.push(
+                ParamDescriptor::new(P_TECHNIQUE, "technique", "Technique", 0.0, 3.0, 0.0)
+                    .with_choices(Technique::CHOICES),
+            );
+        }
         _ => descriptors.push(ParamDescriptor::percent(
             P_PICKUP,
             "pickup",
@@ -180,6 +193,8 @@ struct Settings {
     tone: f32,
     pickup_q: f32,
     decay_ratio: f32,
+    /// How a bass is played. The guitars are always plucked.
+    technique: Technique,
 }
 
 /// What differs between the three instruments and is not a control.
@@ -273,6 +288,8 @@ struct Voice {
     tuned: f32,
     /// The string the note is fretted on, while the finger holds it there.
     string: Option<usize>,
+    /// The thumb and the frets of a slapped note.
+    slap: Slap,
 }
 
 impl Voice {
@@ -513,6 +530,9 @@ impl Engine for Plucked {
                 voice.rotors.prepare(ROTORS);
                 voice.hz = vec![0.0; ROTORS];
                 voice.nepers = vec![0.0; ROTORS];
+                if self.model == Model::Bass {
+                    voice.slap.prepare(ROTORS);
+                }
                 voice
             })
             .collect();
@@ -536,6 +556,7 @@ impl Engine for Plucked {
             voice.mute.open();
             voice.last = 0.0;
             voice.string = None;
+            voice.slap.rest();
         }
         self.body.reset();
         self.open.reset();
@@ -573,6 +594,11 @@ impl Engine for Plucked {
                 params.at(P_DECAY_RATIO)
             } else {
                 1.0
+            },
+            technique: if self.model == Model::Bass {
+                Technique::from_value(params.at(P_TECHNIQUE))
+            } else {
+                Technique::Pluck
             },
         };
         if self.settings.tone > 0.0 {
@@ -617,7 +643,13 @@ impl Engine for Plucked {
         };
         let pickup = (settings.pickup_position * fret).clamp(0.02, 0.9);
         let hardness = self.performance.hardness(settings.hardness) * (0.55 + 0.45 * note.velocity);
-        let corner = 500.0 * 24.0_f32.powf(hardness);
+        let stroke = settings.technique.stroke(pitch);
+        // A string that snaps off a hooked finger leaves it faster than one a fingertip
+        // rolls off: a pop is let go as the harder half of the plucks are.
+        let corner = match stroke {
+            Stroke::Pop => 500.0 * 24.0_f32.powf(0.5 + 0.5 * hardness),
+            _ => 500.0 * 24.0_f32.powf(hardness),
+        };
         let budget = match quality {
             Quality::Draft => 40,
             Quality::Standard => 96,
@@ -636,9 +668,19 @@ impl Engine for Plucked {
         } else {
             1.0
         };
-        let amplitude = note.velocity * self.build.drive * evened;
+        // A thumb leaves the string where it lay and gives it its speed; a popping finger
+        // pulls about as hard as a plucking one, away from the board.
+        let amplitude = note.velocity
+            * self.build.drive
+            * evened
+            * match stroke {
+                Stroke::Pluck => 1.0,
+                Stroke::Thumb => 0.0,
+                Stroke::Pop => slap::pull(),
+            };
         // The string leaves the finger at an angle to the soundboard that no two plucks share.
-        let angle = if acoustic > 0.0 {
+        // A slapped one is driven straight at the board, and so straight across the soundboard.
+        let angle = if acoustic > 0.0 && stroke == Stroke::Pluck {
             0.35 + 0.5 * seeded(note.seed, 1)
         } else {
             0.0
@@ -673,8 +715,19 @@ impl Engine for Plucked {
         voice.held = true;
         voice.sounding = true;
         voice.glide = glide;
-        voice.attack = 0.0;
+        // Nothing is let go under a thumb: the string starts from rest and is heard at once.
+        voice.attack = if stroke == Stroke::Thumb { 1.0 } else { 0.0 };
         voice.attack_step = 1.0 / ((0.000_2 + 0.002_5 * (1.0 - hardness).powi(2)) * rate).max(1.0);
+        voice.slap.begin(&Blow {
+            stroke,
+            fundamental,
+            fret,
+            contact,
+            velocity: note.velocity,
+            hardness,
+            frets: slap::frets(quality == Quality::Draft),
+            rate,
+        });
         let mut partials = 0;
         while partials < budget
             && fundamental * partial_ratio((partials + 1) as f32, stiffness) < limit
@@ -707,6 +760,7 @@ impl Engine for Plucked {
             if let Some(slot) = voice.hz.get_mut(across) {
                 *slot = hz;
             }
+            voice.slap.partial(across, order, hz);
             if n < voice.paired {
                 let jitter = 1.0 + 4.0e-5 * (seeded(note.seed, 16 + n as u32) - 0.5);
                 voice.rotors.set(
@@ -794,11 +848,18 @@ impl Engine for Plucked {
             self.open.tick();
             for voice in self.voices.iter_mut().filter(|voice| voice.sounding) {
                 voice.moving = voice.rotors.settle(FLOOR);
-                if voice.moving == 0.0 || voice.mute.is_closed() {
+                if voice.slap.is_striking() {
+                    // A thumbed string starts from rest: what it is given is known only
+                    // once the thumb has left it.
+                    voice.plucked = voice.plucked.max(voice.moving);
+                    voice.energy = voice.energy.max(voice.low_energy());
+                } else if voice.moving == 0.0 || voice.mute.is_closed() {
                     voice.sounding = false;
                     voice.rotors.rest();
+                    voice.slap.rest();
                     continue;
                 }
+                voice.slap.tick(TICK as f32 / rate);
                 // A hard pluck stretches the string, and it comes back to pitch as it calms.
                 let glide = voice.glide * (voice.low_energy() / voice.energy).min(1.0);
                 if (cents + glide - voice.tuned).abs() > 0.25 {
@@ -811,7 +872,11 @@ impl Engine for Plucked {
         for voice in self.voices.iter_mut().filter(|voice| voice.sounding) {
             let string = &mut string[..frames];
             string.fill(0.0);
-            voice.rotors.ring(string);
+            if voice.slap.is_armed() {
+                voice.slap.ring(&mut voice.rotors, string);
+            } else {
+                voice.rotors.ring(string);
+            }
             let target = voice.pan * width;
             for ((sample, to_mid), to_side) in string
                 .iter()

@@ -179,6 +179,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Finger bass", "フィンガーベース"),
     ("Pick bass", "ピックベース"),
     ("Muted bass", "ミュートベース"),
+    ("Slap bass", "スラップベース"),
     ("Classic bell", "クラシックベル"),
     ("Soft bell", "ソフトベル"),
     ("Bright bell", "ブライトベル"),
@@ -673,6 +674,7 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Tremolo Rate", "トレモロ速度"),
     ("Unison Detune", "ユニゾンの調律差"),
     ("Warble", "うなり"),
+    ("Technique", "奏法"),
 ];
 
 /// The short names the progression pickers show, keyed on the catalogue's own name.
@@ -869,6 +871,10 @@ const CHOICES: &[(&str, &str)] = &[
     ("Xylophone", "シロフォン"),
     ("Glockenspiel", "グロッケンシュピール"),
     ("Tine", "タイン（金属の舌）"),
+    ("Pluck", "指・ピック弾き"),
+    ("Slap", "スラップ（サムとプル）"),
+    ("Thumb", "サムピング"),
+    ("Pop", "プル"),
     ("Cast bell", "鋳造ベル"),
     ("Tubular bell", "チューブラーベル"),
     ("Handbell", "ハンドベル"),

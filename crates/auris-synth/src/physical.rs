@@ -12,7 +12,7 @@
 //! | Model | What resonates | What sets it going |
 //! |---|---|---|
 //! | Piano, Hammered Strings | stiff strings in bridge-coupled unisons, on a soundboard | a felt or wooden hammer, solved against the string it strikes |
-//! | Guitar, Electric Guitar, Bass | a string in two polarisations, on a body or under a pickup | a finger or a pick, let go |
+//! | Guitar, Electric Guitar, Bass | a string in two polarisations, on a body or under a pickup | a finger or a pick, let go; on a bass, a thumb thrown at the string and the frets it comes down on |
 //! | Strings | a travelling-wave string per player, on the body of its register | a bow: stick, slip, and the hysteresis between them |
 //! | Mallet | a tuned bar over a resonator tube | a yarn or rubber mallet's Hertzian contact |
 //! | Bell | the paired modes of a shell | a clapper or a hammer |
@@ -55,6 +55,7 @@ mod legato;
 mod plucked;
 mod reeds;
 pub(crate) mod rotors;
+mod slap;
 pub(crate) mod strings;
 mod struck;
 mod unison;
@@ -629,6 +630,17 @@ pub(crate) mod dials {
     pub(crate) const BRIDGE_SLOPE: usize = 69;
     /// Multiplies the internal friction of the partials above the fundamental.
     pub(crate) const FRICTION: usize = 70;
+    /// The slapped bass: the force of a full pluck, the saddle's height, how far a pop pulls,
+    /// the thumb's speed, its mass and its flesh's damping, what a fret gives back, and how
+    /// many frets a string is held to.
+    pub(crate) const SLAP_PLUCK: usize = 80;
+    pub(crate) const SLAP_SADDLE: usize = 81;
+    pub(crate) const SLAP_PULL: usize = 82;
+    pub(crate) const SLAP_THUMB_SPEED: usize = 83;
+    pub(crate) const SLAP_THUMB_MASS: usize = 84;
+    pub(crate) const SLAP_FLESH: usize = 85;
+    pub(crate) const SLAP_BOUNCE: usize = 86;
+    pub(crate) const SLAP_FRETS: usize = 87;
 }
 
 /// A dial for each C from C1 to C8, read at a pitch between them along straight lines.

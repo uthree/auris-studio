@@ -26,7 +26,7 @@ SoundFont のサウンドはライブラリファイルとバンク／プログ�
 | Piano | Grand piano、Felt piano、Bright piano |
 | Guitar | Acoustic guitar、Nylon guitar、Steel guitar、Muted guitar、Piezo guitar |
 | Electric guitar | Clean electric guitar、Warm electric guitar、Bright electric guitar |
-| Bass | Finger bass、Pick bass、Muted bass、Upright bass |
+| Bass | Finger bass、Pick bass、Muted bass、Upright bass、Slap bass |
 | Bell | Classic bell、Soft bell、Bright bell、Tubular bells、Handbell、Singing bowl |
 | Mallet | Marimba、Vibraphone、Xylophone、Glockenspiel、Kalimba、Music box、Hard mallet、Muted mallet |
 | Reed winds | Clarinet、Soft clarinet、Breathy clarinet |

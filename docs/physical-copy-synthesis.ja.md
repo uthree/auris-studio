@@ -78,6 +78,41 @@ University of Iowaの[Steinway model Bの録音](https://theremin.music.uiowa.ed
 
 `folk_tuning.py` は独立した音高の検査である。24 kHzと48 kHzで、速度0.35、0.65、0.95のノートを1.2秒保持する。ホイッスルはD5–D7（MIDI 74–98）、ダルシマーはC3–C6（MIDI 48–84）が対象である。最初の350 msを捨て、20 Hzからmin(10 kHz, 0.49 × サンプルレート)の範囲で最も強いピークを、補間した基音のピークとあわせて確認する。
 
+<a id="slapped-bass"></a>
+## スラップベース
+
+スラップした音には、そのまま比べられる参照がない。ベースもピックアップも録音経路も1本ごとに音が違うので、あるベースに合わせて整音したモデルは、別のベースと比べれば外れていることになる。そこで `bass_slap.py` は、音そのものではなく**奏法**を測る。録音は [IDMT-SMT-Bass データセット](https://zenodo.org/records/7188892)（Fraunhofer IDMT、Jakob Abeßer、CC BY-NC-ND 4.0）の単音で、3本のエレキベースのすべての音を、指弾き、サムピング、プルで弾いたものが入っている。サムピングやプルで弾いた音の各指標から、同じベースの同じピックアップで同じ音を指で弾いたときの値を引く。この差が手のしたことであり、レンダリングした音でも録音でも同じ種類の数値になる。
+
+使うのは、3本すべてのベースの4本の弦を、ネック側のピックアップ（`EQ_1`）で録った音である。開放弦と5フレット、12フレットの音（奏法ごとに36音）でモデルを調整し、3フレットと8フレットの音（奏法ごとに24音）は調整に使っていない。`fetch` は1.6 GBのアーカイブからこれらの音だけをHTTPの範囲リクエストで読む。再配布もコミットもしない。
+
+各音は、最大値の10分の1を最初に超えたサンプルをオンセットとし、そこから0.6秒を44.1 kHzで読む。最初の40 msを*アタック*、0.1秒から0.4秒までを*残る音*と呼ぶ。
+
+| 指標 | 読むもの |
+| --- | --- |
+| 音量 | 最初の0.4秒のRMS |
+| 当たる音と残る音の比 | アタックのRMSを、残る音のRMSで割った値 |
+| ピークと音全体の比 | 最大のサンプルを、最初の0.4秒のRMSで割った値 |
+| 基音が占める割合 | 残る音のパワーのうち、基音から長3度以内にある分 |
+| 減衰 | 0.05〜0.15秒のRMSを、0.45〜0.55秒のRMSで割った値 |
+| 帯域 | 90 Hzから5.76 kHzまでのオクターブ帯域ごとのパワーの割合。アタックと残る音のそれぞれで読む |
+
+測る前に、モデルを録音のベースに寄せて整音する。録音のベースは、指で弾いた音が既定のパッチより暗いためである。**Pickup Resonance** は1.5 kHz、指弾きは指先（**Contact Hardness** 0.1）、スラップは親指の骨（0.9）とし、スラップする手の位置は最終フレットの上（弦の32%）とする。ベロシティはすべて0.8で弾く。録音の音がどの強さで弾かれたかは分からない。そのうえで、`crates/auris-synth/src/physical/slap.rs` の5つの数値をこの測定で決めた。モデルのほかの部分は、この測定では変えていない。5つは、ベロシティ最大の撥弦の力（6.5 N。ある音量の弦がどれだけ振れるかを決める）、弦がフレットに当たったときに残る速さの割合（4分の1）、ベロシティ最大のときの親指の速さ（3.5 m/s）、親指の質量のうち弦が感じる分（4 g）、プルが撥弦に比べてどれだけ強く引くか（0.9）である。残りは楽器の寸法で、スケールは34インチ、フレットは20本、サドルでの弦の高さはフレットの頂点を結ぶ線から4 mmである。
+
+2026-11-24時点の値を示す。スラップと指弾きの差で、左が録音、右がレンダリングである。
+
+| | 音量 | 当たる音と残る音の比 | ピークと音全体の比 | 基音 | 減衰 |
+| --- | --- | --- | --- | --- | --- |
+| サム、調整に使った音 | −1.7、−1.3 dB | 4.0、1.7 dB | 4.6、3.8 dB | −4.1、−3.2 dB | −0.2、0.6 dB |
+| プル、調整に使った音 | −1.8、−2.6 dB | 2.9、2.8 dB | 3.6、3.3 dB | −0.6、−3.8 dB | 0.8、1.1 dB |
+| サム、調整に使っていない音 | −3.3、−1.8 dB | 6.0、2.8 dB | 6.0、5.0 dB | −4.7、−3.6 dB | 0.5、1.0 dB |
+| プル、調整に使っていない音 | −2.1、−3.5 dB | 2.1、3.8 dB | 2.6、4.1 dB | −0.6、−5.2 dB | 0.7、1.2 dB |
+
+180 Hzから2.88 kHzまでのオクターブ帯域も、ほぼ同じだけ持ち上がる。調整に使っていない音では、サムのアタックは録音で0、7、11、19 dB、モデルで1、6、12、21 dB増える。プルのアタックは録音で−1、7、13、20 dB、モデルで−2、2、13、22 dB増える。2.88 kHzより上の差には意味がない。レンダリングした指弾きの音にはその帯域の成分がまったくなく、録音にはノイズフロアがあるからである。
+
+まだ合っていない点が2つある。1つは、サムの当たる音が、残る音に対して録音より2〜3 dB小さいことである。もう1つは弦ごとの音量である。録音では、サムの音はどの弦でも指弾きとほぼ同じだけ差があり、低い弦から順に1.8、2.7、1.3、3.5 dB小さい。モデルでは、いちばん低い弦で0.1 dB大きく、いちばん高い弦で3.8 dB小さい。同じ親指を同じ速さで当てると、重い弦のほうが軽い弦より多くのエネルギーを受け取るためで、奏者はこの差を弾き方でならしている。
+
+録音どうしのばらつきは、どの指標でも数デシベルある。基音が占める割合はそれより大きくばらつく。各ベースのピックアップが、その音の弦のどこにあるかで変わるためである。これは、スラップが手と同じように音を変えるかを確かめる回帰測定であり、スラップした音が特定のベースに似ていることを示すものではない。
+
 <a id="running-the-measures"></a>
 ## 測定の実行
 
@@ -111,6 +146,13 @@ uv run tools/eval/folk_copy.py target/folk-physical/reference <after-worker> \
   target/folk-physical/whistle-validation.json --model tin_whistle \
   --baseline <before-worker>
 uv run tools/eval/folk_tuning.py <after-worker> target/folk-physical/folk-tuning.json
+
+uv run tools/eval/bass_slap.py fetch target/slap-reference
+uv run tools/eval/bass_slap.py measure target/slap-reference <after-worker> \
+  target/slap-reference/measure.json
+uv run tools/eval/bass_slap.py fetch target/slap-reference --fret 3 --fret 8
+uv run tools/eval/bass_slap.py measure target/slap-reference <after-worker> \
+  target/slap-reference/measure-held-out.json --fret 3 --fret 8
 ```
 
 Iowaコホートを正確に抽出するには、記録された依存関係のバージョン（NumPy 2.5.3、SciPy 1.18.1、SoundFile 0.14.0）を固定する。正規のノートマニフェストのSHA-256は `878f66a719dd47400ad6246d9a23c8ecb09676c26837bbfa569993099b76c4bc` である。マニフェストの識別には、UTF-8でエンコードした、ソート済みでコンパクトなJSONを使い、ファイルの行末には依存しない。レポートには、ワーカーのハッシュ、工場出荷時パラメーター、ノートごとの距離をすべて記録する。再ビルドした実行ファイルのハッシュはツールチェーンとビルドパスに依存するため、アーカイブしたワーカーのハッシュと一致することを期待せず、PCMと指標を比較する。
@@ -119,7 +161,8 @@ Iowaコホートを正確に抽出するには、記録された依存関係の�
 uv run --with numpy --with scipy --with soundfile --with pytest pytest \
   tools/eval/test_physical_mel.py tools/eval/test_piano_register.py \
   tools/eval/test_clarinet_copy.py tools/eval/test_fetch_clarinet_reference.py \
-  tools/eval/test_fetch_folk_reference.py tools/eval/test_physical_ab.py
+  tools/eval/test_fetch_folk_reference.py tools/eval/test_physical_ab.py \
+  tools/eval/test_bass_slap.py
 uv run --with ruff ruff check tools/eval
 cargo test -p auris-synth --example physical_fit_render
 ```

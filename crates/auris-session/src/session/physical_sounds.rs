@@ -100,6 +100,17 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
         ),
         33 | 35 => (Model::Bass, &[("hardness", 0.35), ("position", 0.3)]),
         34 => (Model::Bass, &[("hardness", 0.85), ("position", 0.13)]),
+        // Slapped: the hand over the last fret, low notes thumbed and the rest popped.
+        36..=37 => (
+            Model::Bass,
+            &[
+                ("technique", 1.0),
+                ("position", 0.32),
+                ("hardness", 0.7),
+                ("damping", 0.05),
+                ("tone", 4500.0),
+            ],
+        ),
         // One player on the instrument named, or the section that seats itself by register.
         40 => (Model::Violin, &[("instrument", 1.0), ("players", 1.0)]),
         41 => (Model::Violin, &[("instrument", 2.0), ("players", 1.0)]),
@@ -216,7 +227,7 @@ mod tests {
     #[test]
     fn distinct_gm_timbres_are_not_replaced_by_unrelated_physical_models() {
         for patch in [
-            4, 5, 29, 30, 36, 37, 38, 39, 46, 47, 50, 51, 56, 61, 65, 73, 81, 84, 88, 94, 98,
+            4, 5, 29, 30, 38, 39, 46, 47, 50, 51, 56, 61, 65, 73, 81, 84, 88, 94, 98,
         ] {
             assert!(
                 native_sound(0, patch).is_none(),
@@ -229,6 +240,20 @@ mod tests {
                 native_sound(128, patch).is_none(),
                 "a specialty kit is not the standard physical kit"
             );
+        }
+    }
+
+    #[test]
+    fn the_slap_basses_are_the_bass_slapped() {
+        for patch in [36, 37] {
+            let (id, state) = native_sound(0, patch).unwrap();
+            assert_eq!(id, Model::Bass.id());
+            assert_eq!(state.params.get("technique"), Some(&1.0));
+        }
+        // The fingered and picked basses stay plucked.
+        for patch in 32..=35 {
+            let (_, state) = native_sound(0, patch).unwrap();
+            assert!(!state.params.contains_key("technique"));
         }
     }
 

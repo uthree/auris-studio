@@ -238,6 +238,19 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("level", -11.0),
                         ],
                     ),
+                    // The hand over the last fret, the bone of the thumb, fresh strings and
+                    // a pickup with its top left open.
+                    (
+                        "Slap bass",
+                        &[
+                            ("technique", 1.0),
+                            ("position", 0.32),
+                            ("hardness", 0.7),
+                            ("damping", 0.05),
+                            ("tone", 4500.0),
+                            ("level", -10.0),
+                        ],
+                    ),
                 ],
             ),
             family(
