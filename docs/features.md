@@ -827,7 +827,7 @@ Square and saw are PolyBLEP band-limited, so high notes stay clean instead of al
 
 ### Subtractive synthesiser
 
-Seven ready-made synthesiser sounds, every one the same subtractive engine with its own settings,
+Ten ready-made synthesiser sounds, every one the same subtractive engine with its own settings,
 listed as separate instruments so a pad is found by looking for a pad:
 
 | Id | Name | What it is |
@@ -839,6 +839,9 @@ listed as separate instruments so a pad is found by looking for a pad:
 | `auris.synth.pwm_strings` | PWM Strings | A pulse stack whose width an LFO keeps moving |
 | `auris.synth.brass` | Synth Brass | Saws behind a slowly opening filter that swells with velocity |
 | `auris.synth.pluck` | Synth Pluck | A short filter envelope over a percussive amp |
+| `auris.synth.house_bass` | House Bass | A driven, low-cut saw stab whose filter snaps shut, over a clean sine sub: bass house |
+| `auris.synth.growl_bass` | Growl Bass | An FM saw through a driven filter that talks in eighth notes |
+| `auris.synth.reese_bass` | Reese Bass | Detuned saws beating against each other, driven, over a clean sine sub |
 
 The controls are shared, so any patch can be turned into any other. A **unison stack** of up to
 seven saws, squares or triangles is spread over ±**Detune** semitones — unevenly, so the copies
@@ -848,7 +851,24 @@ and **Noise Level** join the stack; **PWM Depth** and **PWM Rate** move a square
 in opposite directions on neighbouring copies. All of it goes through a gentle saturator into a
 resonant **24 dB low-pass** (two state-variable sections), whose **Cutoff** moves with its own
 envelope by **Filter Envelope** semitones, with **Key Tracking** from C4 and **Velocity to
-Filter**. Amp ADSR, glide and the same vibrato controls as the other synths follow.
+Filter**. **Filter LFO** opens the cutoff by that many semitones and back, at an **LFO Rate**
+that is a note value (1/1 to 1/16, triplets too) at the project's tempo, restarted on every note
+so each wobble lands on the beat it was played on.
+
+After the filter, **Drive** pushes each voice into a `tanh` clipper — after the filter, so a stab
+whose filter has closed keeps its grit — and **Low Cut** takes the bottom out of what came through
+with a 12 dB high-pass. **Sine Sub** then adds a clean sine at the note itself, after both, so the
+weight of a bass stays undistorted while the saw above it is hollowed out. **Pitch Envelope**
+starts every note that many semitones high and drops it into place over **Pitch Decay**, and
+**FM Depth** phase-modulates the whole stack with a sine at **FM Ratio** times the note. Each of
+these is off at its zero. Amp ADSR, glide and the same vibrato controls as the other synths
+follow.
+
+The three bass patches are the post-filter stages put to work for bass house. House Bass was set
+against a club track at 130 BPM: between its hats, its bass stabs measured a spectral centroid of
+414 Hz, 1–4 kHz 16.8 dB under 150 Hz–1 kHz, and a 30–55 Hz sine 2.6 dB over that, which the patch
+matches within 13 Hz, 2.4 dB and 0.1 dB. The kick-driven pump of the genre is the engine's
+sidechain, not the instrument's.
 
 In the instrument view the patch is drawn as the **unison stack** — every copy at its detune in
 cents and its level — beside the **filter**: its response over multiples of the note, faint at the

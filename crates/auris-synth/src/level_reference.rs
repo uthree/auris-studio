@@ -49,6 +49,9 @@ pub fn register(id: &str) -> u8 {
     match id {
         "auris.physical.bass"
         | "auris.synth.bass"
+        | "auris.synth.house_bass"
+        | "auris.synth.growl_bass"
+        | "auris.synth.reese_bass"
         | "auris.synth.boom_bass"
         | "auris.synth.kick_bass"
         | "auris.synth.sub_bass" => 36,

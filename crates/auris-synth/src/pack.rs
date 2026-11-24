@@ -148,19 +148,22 @@ mod tests {
                 "auris.synth.edm_kit",
                 "auris.synth.electro_kit",
                 "auris.synth.fm2",
+                "auris.synth.growl_bass",
+                "auris.synth.house_bass",
                 "auris.synth.kick_bass",
                 "auris.synth.lead",
                 "auris.synth.noisedrum",
                 "auris.synth.pad",
                 "auris.synth.pluck",
                 "auris.synth.pwm_strings",
+                "auris.synth.reese_bass",
                 "auris.synth.sub_bass",
                 "auris.synth.supersaw",
                 "auris.synth.trap_kit",
                 "auris.synth.vocal"
             ]
         );
-        assert_eq!(registry.instruments().count(), 29);
+        assert_eq!(registry.instruments().count(), 32);
         // The effects modelled the way the instruments are, beside the instruments.
         let effects: Vec<&str> = registry.effects().map(|d| d.id.as_ref()).collect();
         assert_eq!(
@@ -229,7 +232,7 @@ mod tests {
             // Every physical instrument places its notes across the stereo field, and so do
             // the subtractive patches with a stereo width (all but the bass).
             let stereo = id.starts_with("auris.physical.")
-                || crate::AnalogPatch::from_id(&id).is_some_and(|p| p != crate::AnalogPatch::Bass);
+                || crate::AnalogPatch::from_id(&id).is_some_and(|p| !p.is_mono());
             if stereo {
                 assert!(buffer.channel(1).iter().all(|s| s.is_finite()));
                 assert!(
