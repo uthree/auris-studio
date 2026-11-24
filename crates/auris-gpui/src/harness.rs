@@ -515,6 +515,16 @@ pub(crate) fn reference_editor(app: &Entity<AurisApp>, cx: &VisualTestContext) -
     })
 }
 
+/// How long a test waits for something that is going to happen: a background worker's answer, a
+/// storage write, a snapshot from the conversation owner. It guards against a hang, not against a
+/// slow machine, so no wait for an expected event may double as a speed check.
+///
+/// The work being waited for runs on threads of its own, and a loaded machine can starve them
+/// for seconds at a time. A wait in the song workshop's thread test that takes a quarter of a
+/// second on an idle machine was measured at 6.7 seconds beside three other copies of this suite
+/// and 32 busy loops, and still ended with the snapshot it was waiting for.
+pub(crate) const HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Removes a test's project folder once the window has stopped writing into it.
 ///
 /// Saving or opening a project points the conversation store at its folder, and the store
@@ -526,8 +536,8 @@ pub(crate) fn remove_project_folder(
     cx: &mut VisualTestContext,
     root: &std::path::Path,
 ) {
-    // A hang guard, not a budget: one small JSON write per pass.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    // One small JSON write per pass.
+    let deadline = std::time::Instant::now() + HANG_GUARD;
     while app.update(cx, |this, cx| this.conversation_storage_busy(cx)) {
         assert!(
             std::time::Instant::now() < deadline,

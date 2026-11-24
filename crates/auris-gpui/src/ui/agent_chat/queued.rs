@@ -563,7 +563,7 @@ mod tests {
         });
         app.update(cx, |this, cx| this.agent_stop(cx));
         if let Some(flush) = app.update(cx, |this, _| this.flush_conversation_storage()) {
-            flush.recv_timeout(Duration::from_secs(10)).unwrap();
+            flush.recv_timeout(crate::harness::HANG_GUARD).unwrap();
         }
     }
 

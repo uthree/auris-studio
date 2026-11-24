@@ -12,7 +12,7 @@
 //! | Model | What resonates | What sets it going |
 //! |---|---|---|
 //! | Piano, Hammered Strings | stiff strings in bridge-coupled unisons, on a soundboard | a felt or wooden hammer, solved against the string it strikes |
-//! | Guitar, Electric Guitar, Bass | a string in two polarisations, on a body or under a pickup | a finger or a pick, let go |
+//! | Guitar, Electric Guitar, Bass | a string in two polarisations, on a body or under a pickup | a finger or a pick, let go; on a bass, a thumb thrown at the string and the frets it comes down on |
 //! | Strings | a travelling-wave string per player, on the body of its register | a bow: stick, slip, and the hysteresis between them |
 //! | Mallet | a tuned bar over a resonator tube | a yarn or rubber mallet's Hertzian contact |
 //! | Bell | the paired modes of a shell | a clapper or a hammer |
@@ -55,6 +55,7 @@ mod legato;
 mod plucked;
 mod reeds;
 pub(crate) mod rotors;
+mod slap;
 pub(crate) mod strings;
 mod struck;
 mod unison;
@@ -318,9 +319,9 @@ impl Model {
         match self {
             Self::Piano => 0.505,
             Self::HammeredDulcimer => 1.616,
-            Self::Guitar => 0.919,
-            Self::ElectricGuitar => 0.821,
-            Self::Bass => 0.927,
+            Self::Guitar => 0.806,
+            Self::ElectricGuitar => 0.733,
+            Self::Bass => 0.776,
             Self::Violin => 1.345,
             Self::Mallet => 0.634,
             Self::Bell => 0.329,
@@ -422,6 +423,21 @@ pub(crate) fn slide(slid: &mut f32, key: f32, performance: &Performance, ticks_p
         }
         None => *slid = key,
     }
+}
+
+/// How a blown instrument is tongued, in parameter-value order.
+pub(crate) const TONGUINGS: &[Cow<'static, str>] =
+    &[Cow::Borrowed("Ordinary"), Cow::Borrowed("Flutter-tongue")];
+/// Rolls of the tongue a second in a flutter.
+pub(crate) const FLUTTER_HZ: f32 = 24.0;
+/// The quickest a player's breath can follow the tongue, in seconds.
+pub(crate) const FLUTTER_TURN: f32 = 0.004;
+
+/// How much of the breath a fluttering tongue lets past `seconds` into a note: all of it
+/// between rolls, and all but `depth` of it as the tongue comes up, `rolls` times a second.
+pub(crate) fn flutter(seconds: f32, rolls: f32, depth: f32) -> f32 {
+    let turn = (seconds * rolls).fract();
+    1.0 - depth * (0.5 - 0.5 * (std::f32::consts::TAU * turn).cos())
 }
 
 impl Performance {
@@ -629,6 +645,34 @@ pub(crate) mod dials {
     pub(crate) const BRIDGE_SLOPE: usize = 69;
     /// Multiplies the internal friction of the partials above the fundamental.
     pub(crate) const FRICTION: usize = 70;
+    /// The slapped bass: the force of a full pluck, the saddle's height, how far a pop pulls,
+    /// the thumb's speed, its mass and its flesh's damping, what a fret gives back, and how
+    /// many frets a string is held to.
+    pub(crate) const SLAP_PLUCK: usize = 80;
+    pub(crate) const SLAP_SADDLE: usize = 81;
+    pub(crate) const SLAP_PULL: usize = 82;
+    pub(crate) const SLAP_THUMB_SPEED: usize = 83;
+    pub(crate) const SLAP_THUMB_MASS: usize = 84;
+    pub(crate) const SLAP_FLESH: usize = 85;
+    pub(crate) const SLAP_BOUNCE: usize = 86;
+    pub(crate) const SLAP_FRETS: usize = 87;
+    /// The reeds: where the breath's roughness falls away, how rough it is, and how far over
+    /// what a note needs a player blows to start it.
+    pub(crate) const REED_ROUGH_HZ: usize = 90;
+    pub(crate) const REED_ROUGH: usize = 91;
+    pub(crate) const REED_KICK: usize = 92;
+    /// Cents the hardest breath sends a reed's note sharp, which the player takes out.
+    pub(crate) const REED_SHARP: usize = 93;
+    /// The bow: the nearest the bridge a string holds its motion, and how much of the way a
+    /// bow could not go becomes weight.
+    pub(crate) const BOW_NEAREST: usize = 94;
+    pub(crate) const BOW_LEAN: usize = 95;
+    /// The guitar's pluck: the power of a string's speed its corner rises by at a middling
+    /// pluck, and what a unit of velocity adds to that power.
+    pub(crate) const PLUCK_SNAP: usize = 96;
+    pub(crate) const PLUCK_HARDER: usize = 97;
+    /// The power of how much shorter a stopped string sounds by which it decays faster.
+    pub(crate) const PLUCK_STOPPED: usize = 98;
 }
 
 /// A dial for each C from C1 to C8, read at a pitch between them along straight lines.

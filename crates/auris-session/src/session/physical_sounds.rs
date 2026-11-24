@@ -88,7 +88,9 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
                 ("damping", 0.08),
             ],
         ),
-        26..=27 | 31 => (Model::ElectricGuitar, &[]),
+        26..=27 => (Model::ElectricGuitar, &[]),
+        // Harmonics: the same guitar with a finger laid on the middle of the string.
+        31 => (Model::ElectricGuitar, &[("technique", 1.0)]),
         28 => (
             Model::ElectricGuitar,
             &[("damping", 0.8), ("decay", 0.55), ("release", 0.06)],
@@ -100,6 +102,17 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
         ),
         33 | 35 => (Model::Bass, &[("hardness", 0.35), ("position", 0.3)]),
         34 => (Model::Bass, &[("hardness", 0.85), ("position", 0.13)]),
+        // Slapped: the hand over the last fret, low notes thumbed and the rest popped.
+        36..=37 => (
+            Model::Bass,
+            &[
+                ("technique", 1.0),
+                ("position", 0.32),
+                ("hardness", 0.7),
+                ("damping", 0.05),
+                ("tone", 4500.0),
+            ],
+        ),
         // One player on the instrument named, or the section that seats itself by register.
         40 => (Model::Violin, &[("instrument", 1.0), ("players", 1.0)]),
         41 => (Model::Violin, &[("instrument", 2.0), ("players", 1.0)]),
@@ -111,12 +124,9 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
             Model::Violin,
             &[("instrument", 4.0), ("players", 1.0), ("release", 0.3)],
         ),
-        44 => (Model::Violin, &[("players", 4.0)]),
-        // Pizzicato is a string section plucked: the nearest thing here is the plucked string.
-        45 => (
-            Model::Guitar,
-            &[("hardness", 0.3), ("decay", 1.2), ("damping", 0.5)],
-        ),
+        // The section with its bows going back and forth, and the section plucked.
+        44 => (Model::Violin, &[("players", 4.0), ("technique", 2.0)]),
+        45 => (Model::Violin, &[("players", 4.0), ("technique", 1.0)]),
         48..=49 => (
             Model::Violin,
             &[("players", 4.0), ("bow_pressure", 0.4), ("release", 0.5)],
@@ -216,7 +226,7 @@ mod tests {
     #[test]
     fn distinct_gm_timbres_are_not_replaced_by_unrelated_physical_models() {
         for patch in [
-            4, 5, 29, 30, 36, 37, 38, 39, 46, 47, 50, 51, 56, 61, 65, 73, 81, 84, 88, 94, 98,
+            4, 5, 29, 30, 38, 39, 46, 47, 50, 51, 56, 61, 65, 73, 81, 84, 88, 94, 98,
         ] {
             assert!(
                 native_sound(0, patch).is_none(),
@@ -229,6 +239,38 @@ mod tests {
                 native_sound(128, patch).is_none(),
                 "a specialty kit is not the standard physical kit"
             );
+        }
+    }
+
+    #[test]
+    fn programs_named_for_a_technique_are_the_instrument_played_that_way() {
+        for (patch, model, technique) in [
+            (31, Model::ElectricGuitar, 1.0),
+            (44, Model::Violin, 2.0),
+            (45, Model::Violin, 1.0),
+        ] {
+            let (id, state) = native_sound(0, patch).unwrap();
+            assert_eq!(id, model.id(), "program {patch}");
+            assert_eq!(state.params.get("technique"), Some(&technique));
+        }
+        // The plain programs beside them stay as they were played.
+        for patch in [27, 40, 48] {
+            let (_, state) = native_sound(0, patch).unwrap();
+            assert!(!state.params.contains_key("technique"));
+        }
+    }
+
+    #[test]
+    fn the_slap_basses_are_the_bass_slapped() {
+        for patch in [36, 37] {
+            let (id, state) = native_sound(0, patch).unwrap();
+            assert_eq!(id, Model::Bass.id());
+            assert_eq!(state.params.get("technique"), Some(&1.0));
+        }
+        // The fingered and picked basses stay plucked.
+        for patch in 32..=35 {
+            let (_, state) = native_sound(0, patch).unwrap();
+            assert!(!state.params.contains_key("technique"));
         }
     }
 

@@ -448,7 +448,7 @@ mod tests {
             .map(|(l, r)| 0.5 * (l + r))
             .collect();
         let at = |signal: &[f32], hz: f64| goertzel(signal, RATE, hz);
-        assert!(at(&mid, 102.0) > at(&mid, 140.0) * 2.0);
+        assert!(at(&mid, 109.0) > at(&mid, 140.0) * 2.0);
 
         let mut bigger = prepared();
         bigger.set_param(ParamId(MIX), 1.0);
@@ -459,8 +459,8 @@ mod tests {
             .zip(&right)
             .map(|(l, r)| 0.5 * (l + r))
             .collect();
-        // The air resonance has moved from 102 Hz to 68.
-        assert!(at(&mid, 68.0) > at(&mid, 102.0) * 1.5);
+        // The air resonance has moved from 109 Hz to 73.
+        assert!(at(&mid, 72.7) > at(&mid, 109.0) * 1.5);
     }
 
     #[test]

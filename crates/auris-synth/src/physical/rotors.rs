@@ -54,6 +54,60 @@ pub(crate) struct Rotor {
 
 type Lane = [f32; LANES];
 
+/// One place on the body the phasors are the modes of: how far each of them moves there.
+///
+/// Whatever touches a body touches it somewhere, and needs to know two things about that
+/// place that the output does not carry: where the body is there, and how fast it is going.
+/// Both are sums over the modes, weighted by each mode's shape at the place. An obstacle the
+/// body runs into, or a hand laid on it, is then solved against those two numbers and answered
+/// with an impulse, which each mode takes in proportion to the same shape.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Point {
+    /// Each mode's shape at the place: its share of the velocity there, and of an impulse.
+    shape: Vec<Lane>,
+    /// The shape over the mode's angular frequency: the displacement half of a phasor is
+    /// carried at the size of its velocity, and this brings it back to a distance.
+    reach: Vec<Lane>,
+    /// Sum of the squared shapes: what a unit impulse adds to the velocity at the place.
+    mobility: f32,
+}
+
+impl Point {
+    /// Allocates room for the modes of a pool of `capacity` phasors. The only method that
+    /// allocates.
+    pub(crate) fn prepare(&mut self, capacity: usize) {
+        let groups = capacity.div_ceil(LANES).max(1);
+        self.shape = vec![[0.0; LANES]; groups];
+        self.reach = vec![[0.0; LANES]; groups];
+        self.mobility = 0.0;
+    }
+
+    /// Forgets every mode: a place nothing moves at.
+    pub(crate) fn clear(&mut self) {
+        self.shape.fill([0.0; LANES]);
+        self.reach.fill([0.0; LANES]);
+        self.mobility = 0.0;
+    }
+
+    /// Says that phasor `index`, turning at `hz`, moves by `shape` at this place for each unit
+    /// of its own motion. Called once for each mode after [`Point::clear`].
+    pub(crate) fn set(&mut self, index: usize, shape: f32, hz: f32) {
+        let (group, lane) = (index / LANES, index % LANES);
+        let (Some(shapes), Some(reaches)) = (self.shape.get_mut(group), self.reach.get_mut(group))
+        else {
+            return;
+        };
+        shapes[lane] = shape;
+        reaches[lane] = shape / (TAU * hz.max(1.0));
+        self.mobility += shape * shape;
+    }
+
+    /// What a unit impulse here adds to the velocity here: the sum of the squared shapes.
+    pub(crate) fn mobility(&self) -> f32 {
+        self.mobility
+    }
+}
+
 /// A fixed pool of phasors with one driving signal and one output.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Rotors {
@@ -236,6 +290,41 @@ impl Rotors {
         let listen_re = self.listen_re.get(group).map_or(0.0, |lanes| lanes[lane]);
         let listen_im = self.listen_im.get(group).map_or(0.0, |lanes| lanes[lane]);
         re * listen_re + im * listen_im
+    }
+
+    /// Where the body is at `point`: its displacement there, in the phasors' units times
+    /// seconds.
+    pub(crate) fn displacement(&self, point: &Point) -> f32 {
+        let mut place = [0.0_f32; LANES];
+        for (im, reach) in self.im.iter().zip(point.reach.iter()).take(self.live) {
+            for lane in 0..LANES {
+                place[lane] += reach[lane] * im[lane];
+            }
+        }
+        place.iter().sum()
+    }
+
+    /// How fast the body is moving at `point`, in the phasors' units.
+    pub(crate) fn velocity(&self, point: &Point) -> f32 {
+        let mut speed = [0.0_f32; LANES];
+        for (re, shape) in self.re.iter().zip(point.shape.iter()).take(self.live) {
+            for lane in 0..LANES {
+                speed[lane] += shape[lane] * re[lane];
+            }
+        }
+        speed.iter().sum()
+    }
+
+    /// Gives the body `impulse` at `point`: each mode's velocity changes by its shape there.
+    pub(crate) fn knock(&mut self, point: &Point, impulse: f32) {
+        let groups = self.groups;
+        for (re, shape) in self.re.iter_mut().zip(point.shape.iter()).take(groups) {
+            for lane in 0..LANES {
+                re[lane] += impulse * shape[lane];
+            }
+        }
+        // A mode that had died away may have been set going again.
+        self.live = groups;
     }
 
     /// Whether anything is still moving.
