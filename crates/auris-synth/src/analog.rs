@@ -1,6 +1,6 @@
-//! The subtractive synthesiser behind `auris.synth.supersaw` and its six siblings.
+//! The subtractive synthesiser behind `auris.synth.supersaw` and its nine siblings.
 //!
-//! One engine, seven patches. Every patch is a separate instrument in the browser — a person
+//! One engine, ten patches. Every patch is a separate instrument in the browser — a person
 //! looking for "a pad" should find a pad, not a synthesiser and a manual — but they all share
 //! one parameter set, so any of them can be turned into any other by its knobs, and a project
 //! that names `auris.synth.pad` stores nothing a SuperSaw could not also hold.
@@ -10,9 +10,26 @@
 //! ```text
 //!  unison stack (1–7 detuned saws, pulses or triangles, panned left and right)
 //!  + sub oscillator (a square an octave down)            ─┐
-//!  + white noise                                          ├─ soft saturation ─ 24 dB low-pass ─ amp
-//!  pulse width ← PWM LFO, cutoff ← filter envelope · key ─┘        (per channel)
+//!  + white noise                                          ├─ soft saturation ─ 24 dB low-pass ─┐
+//!  pulse width ← PWM LFO, cutoff ← filter envelope · key ─┘        (per channel)              │
+//!                                        cutoff ← tempo-synced filter LFO                     │
+//!                                                                                             │
+//!  ┌─ drive ─ 12 dB low cut ─ + sine sub (clean, at the note) ─ amp ◄─────────────────────────┘
 //! ```
+//!
+//! Every stage after the filter is off at its knob's zero, and a patch that leaves them there
+//! renders exactly what it did before they existed.
+//!
+//! # Bass house
+//!
+//! The last three patches are the stages after the filter put to work. A bass house bass is two
+//! sounds played as one: a sine an octave below anything else that carries the weight, and a
+//! driven saw above it whose low harmonics are cut away so the two never fight. The drive comes
+//! *after* the filter, so a stab whose filter has snapped shut still has its grit; the pitch
+//! envelope drops each note into place from a few semitones up; and FM with the tempo-synced
+//! filter LFO make the saw talk. The patches were set against a club track at 130 BPM, whose bass
+//! measured a sine fundamental near 40 Hz, a hollow between 60 and 100 Hz, and a peak of upper
+//! harmonics between 200 and 600 Hz that fell away within a sixteenth note.
 //!
 //! The stack is the SuperSaw's: a centre oscillator at the note and side copies spread over
 //! `±detune` semitones with a small, deliberate asymmetry, so the beating between them never
@@ -86,6 +103,56 @@ const P_VIBRATO_RATE: u32 = 24;
 const P_VIBRATO: u32 = 25;
 const P_MOD_DEPTH: u32 = 26;
 const P_LEVEL: u32 = 27;
+const P_DRIVE: u32 = 28;
+const P_LOW_CUT: u32 = 29;
+const P_SINE_SUB: u32 = 30;
+const P_PITCH_ENV: u32 = 31;
+const P_PITCH_DECAY: u32 = 32;
+const P_FM: u32 = 33;
+const P_FM_RATIO: u32 = 34;
+const P_FILTER_LFO: u32 = 35;
+const P_LFO_RATE: u32 = 36;
+
+/// Gain the drive stage reaches at full drive, in decibels.
+const MAX_DRIVE_DB: f32 = 36.0;
+
+/// The peak the drive stage's makeup holds level at: about where a filtered stack sits.
+const DRIVE_REFERENCE: f32 = 0.5;
+
+/// The low cut at or below which the high-pass is simply not run, so a patch that does not ask
+/// for one renders exactly as it did before the stage existed.
+const LOW_CUT_OFF_HZ: f32 = 20.5;
+
+/// Phase deviation of every stack copy at full FM depth, in cycles: an index of 2π, where a
+/// saw has turned into a snarl but the note still has a pitch.
+const MAX_FM_CYCLES: f32 = 1.0;
+
+/// The filter LFO's tempo divisions as `(label, beats per cycle)`, in parameter order.
+const LFO_DIVISIONS: [(&str, f32); 8] = [
+    ("1/1", 4.0),
+    ("1/2", 2.0),
+    ("1/4", 1.0),
+    ("1/8", 0.5),
+    ("1/16", 0.25),
+    ("1/4T", 2.0 / 3.0),
+    ("1/8T", 1.0 / 3.0),
+    ("1/16T", 1.0 / 6.0),
+];
+
+/// Labels for the LFO rate choice, in the order of [`LFO_DIVISIONS`].
+const LFO_DIVISION_CHOICES: &[Cow<'static, str>] = &[
+    Cow::Borrowed("1/1"),
+    Cow::Borrowed("1/2"),
+    Cow::Borrowed("1/4"),
+    Cow::Borrowed("1/8"),
+    Cow::Borrowed("1/16"),
+    Cow::Borrowed("1/4T"),
+    Cow::Borrowed("1/8T"),
+    Cow::Borrowed("1/16T"),
+];
+
+/// Tempo the filter LFO follows until the host reports one.
+const DEFAULT_BPM: f32 = 120.0;
 
 /// Widest pitch bend followed, in semitones.
 const MAX_BEND_SEMITONES: f32 = 24.0;
@@ -149,11 +216,18 @@ pub enum AnalogPatch {
     Brass,
     /// A short filter envelope over a percussive amp: plucks and arpeggios.
     Pluck,
+    /// The bass house stab: a driven, low-cut saw whose filter snaps shut on every note, over a
+    /// clean sine sub.
+    HouseBass,
+    /// A frequency-modulated, driven saw whose filter talks in eighth notes.
+    GrowlBass,
+    /// Detuned saws beating against each other, driven, over a clean sine sub.
+    ReeseBass,
 }
 
 impl AnalogPatch {
     /// Every patch, in the order the browser lists them.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 10] = [
         Self::SuperSaw,
         Self::Pad,
         Self::Lead,
@@ -161,7 +235,15 @@ impl AnalogPatch {
         Self::PwmStrings,
         Self::Brass,
         Self::Pluck,
+        Self::HouseBass,
+        Self::GrowlBass,
+        Self::ReeseBass,
     ];
+
+    /// Whether the patch's default settings put the same signal in both channels.
+    pub fn is_mono(self) -> bool {
+        self.defaults().width <= 0.0
+    }
 
     /// Stable plugin id stored in a project.
     pub const fn id(self) -> &'static str {
@@ -173,6 +255,9 @@ impl AnalogPatch {
             Self::PwmStrings => "auris.synth.pwm_strings",
             Self::Brass => "auris.synth.brass",
             Self::Pluck => "auris.synth.pluck",
+            Self::HouseBass => "auris.synth.house_bass",
+            Self::GrowlBass => "auris.synth.growl_bass",
+            Self::ReeseBass => "auris.synth.reese_bass",
         }
     }
 
@@ -190,6 +275,9 @@ impl AnalogPatch {
             Self::PwmStrings => "PWM Strings",
             Self::Brass => "Synth Brass",
             Self::Pluck => "Synth Pluck",
+            Self::HouseBass => "House Bass",
+            Self::GrowlBass => "Growl Bass",
+            Self::ReeseBass => "Reese Bass",
         }
     }
 
@@ -204,6 +292,11 @@ impl AnalogPatch {
             Self::PwmStrings => "Pulse-width-modulated stack: the lush string machine sound",
             Self::Brass => "Saws behind a slowly opening filter: swelling synth brass",
             Self::Pluck => "Short filter envelope over a percussive amp: plucks and arpeggios",
+            Self::HouseBass => {
+                "Driven saw stab with a snapping filter over a clean sine sub: bass house"
+            }
+            Self::GrowlBass => "FM saw through a driven, tempo-synced talking filter: growls",
+            Self::ReeseBass => "Detuned beating saws, driven, over a clean sine sub: reese bass",
         }
     }
 
@@ -355,6 +448,80 @@ impl AnalogPatch {
                 level: -4.0,
                 ..base
             },
+            // Set against a bass house drop at 130 BPM, measured between its sixteenth-note hats
+            // on stabs of the same note: a spectral centroid of 414 Hz (this patch 427), 1–4 kHz
+            // 16.8 dB under 150 Hz–1 kHz (14.4), and the sine's 30–55 Hz 2.6 dB over that
+            // (2.5). The low cut is what makes the hollow between the sine and the saw's peak.
+            Self::HouseBass => Defaults {
+                unison: 2.0,
+                detune: 0.08,
+                mix: 0.8,
+                width: 0.0,
+                cutoff: 220.0,
+                resonance: 0.45,
+                filter_env: 36.0,
+                key_track: 0.5,
+                filter_velocity: 0.4,
+                filter_attack: 0.001,
+                filter_decay: 0.25,
+                filter_sustain: 0.35,
+                filter_release: 0.08,
+                attack: 0.001,
+                decay: 0.3,
+                sustain: 0.75,
+                release: 0.05,
+                drive: 0.6,
+                low_cut: 300.0,
+                sine_sub: 0.22,
+                pitch_env: 7.0,
+                pitch_decay: 0.02,
+                level: -5.65,
+                ..base
+            },
+            Self::GrowlBass => Defaults {
+                unison: 2.0,
+                detune: 0.1,
+                mix: 0.8,
+                width: 0.0,
+                cutoff: 300.0,
+                resonance: 0.6,
+                filter_env: 12.0,
+                key_track: 0.5,
+                filter_velocity: 0.3,
+                filter_attack: 0.001,
+                filter_decay: 0.2,
+                filter_sustain: 0.4,
+                filter_release: 0.1,
+                attack: 0.002,
+                decay: 0.3,
+                sustain: 0.9,
+                release: 0.08,
+                drive: 0.7,
+                low_cut: 140.0,
+                sine_sub: 0.55,
+                fm: 0.35,
+                filter_lfo: 36.0,
+                level: -13.2,
+                ..base
+            },
+            Self::ReeseBass => Defaults {
+                unison: 3.0,
+                detune: 0.25,
+                mix: 1.0,
+                width: 0.35,
+                cutoff: 900.0,
+                resonance: 0.25,
+                key_track: 0.4,
+                attack: 0.005,
+                decay: 0.5,
+                sustain: 1.0,
+                release: 0.15,
+                drive: 0.4,
+                low_cut: 80.0,
+                sine_sub: 0.3,
+                level: -13.1,
+                ..base
+            },
         }
     }
 }
@@ -390,6 +557,15 @@ struct Defaults {
     vibrato: f32,
     mod_depth: f32,
     level: f32,
+    drive: f32,
+    low_cut: f32,
+    sine_sub: f32,
+    pitch_env: f32,
+    pitch_decay: f32,
+    fm: f32,
+    fm_ratio: f32,
+    filter_lfo: f32,
+    lfo_rate: f32,
 }
 
 impl Default for Defaults {
@@ -423,6 +599,16 @@ impl Default for Defaults {
             vibrato: 0.0,
             mod_depth: crate::chiptune::DEFAULT_MOD_DEPTH,
             level: -8.0,
+            drive: 0.0,
+            low_cut: 20.0,
+            sine_sub: 0.0,
+            pitch_env: 0.0,
+            pitch_decay: 0.03,
+            fm: 0.0,
+            fm_ratio: 1.0,
+            filter_lfo: 0.0,
+            // Eighth notes.
+            lfo_rate: 3.0,
         }
     }
 }
@@ -460,6 +646,40 @@ impl Svf {
         self.ic1 = 2.0 * v1 - self.ic1;
         self.ic2 = 2.0 * v2 - self.ic2;
         v2
+    }
+
+    /// High-pass output for one input sample, from the same section.
+    fn highpass(&mut self, input: f32, c: SvfCoefficients, k: f32) -> f32 {
+        let v3 = input - self.ic2;
+        let v1 = c.a1 * self.ic1 + c.a2 * v3;
+        let v2 = self.ic2 + c.a2 * self.ic1 + c.a3 * v3;
+        self.ic1 = 2.0 * v1 - self.ic1;
+        self.ic2 = 2.0 * v2 - self.ic2;
+        input - k * v1 - v2
+    }
+}
+
+/// The drive stage: `tanh` after a gain of up to [`MAX_DRIVE_DB`], brought back down so that a
+/// signal peaking at [`DRIVE_REFERENCE`] still peaks where it did undriven. Turning the knob then
+/// changes the tone of a full-level note far more than its level; a quiet one comes up, which is
+/// what driving anything into a clipper does.
+#[derive(Clone, Copy, Debug)]
+struct Drive {
+    gain: f32,
+    makeup: f32,
+}
+
+impl Drive {
+    fn new(amount: f32) -> Self {
+        let gain = db_to_gain(amount.clamp(0.0, 1.0) * MAX_DRIVE_DB);
+        Self {
+            gain,
+            makeup: DRIVE_REFERENCE.tanh() / (DRIVE_REFERENCE * gain).tanh(),
+        }
+    }
+
+    fn process(self, x: f32) -> f32 {
+        (x * self.gain).tanh() * self.makeup
     }
 }
 
@@ -538,6 +758,15 @@ struct AnalogVoice {
     envelope: Adsr,
     filter_envelope: Adsr,
     filters: [Filter; 2],
+    /// The low cut after the drive, one per channel.
+    highpass: [Svf; 2],
+    /// Semitones the note still sits above itself, falling to nothing after note on.
+    pitch_offset: f32,
+    /// The FM modulator's and the sine sub's place in their cycles.
+    fm_phase: f32,
+    sine_phase: f32,
+    /// The filter LFO's place in its cycle, restarted at note on so it lands on the beat.
+    wobble_phase: f32,
     pitch: f32,
     frequency: f32,
     target: f32,
@@ -574,6 +803,11 @@ impl AnalogVoice {
             envelope,
             filter_envelope,
             filters: [Filter::default(); 2],
+            highpass: [Svf::default(); 2],
+            pitch_offset: 0.0,
+            fm_phase: 0.0,
+            sine_phase: 0.0,
+            wobble_phase: 0.0,
             pitch: 69.0,
             frequency: 440.0,
             target: 440.0,
@@ -592,6 +826,9 @@ impl AnalogVoice {
         self.noise = self.seed;
         self.vibrato.reset();
         self.filters = [Filter::default(); 2];
+        self.highpass = [Svf::default(); 2];
+        self.fm_phase = 0.0;
+        self.sine_phase = 0.0;
     }
 }
 
@@ -630,6 +867,21 @@ pub struct Analog {
     channel_volume: f32,
     vibrato_depth: f32,
     output_gain: f32,
+    /// The drive knob, 0 to 1; at 0 the stage is not run at all.
+    drive: f32,
+    low_cut: f32,
+    sine_sub: f32,
+    pitch_env: f32,
+    /// What the pitch offset is multiplied by every sample.
+    pitch_fall: f32,
+    /// FM depth in cycles of phase deviation, and the modulator's ratio to the note.
+    fm_cycles: f32,
+    fm_ratio: f32,
+    /// How far the filter LFO opens the cutoff, in semitones, and its cycle in beats.
+    filter_lfo: f32,
+    lfo_beats: f32,
+    /// The tempo the host last reported.
+    bpm: f32,
     last_voice: Option<usize>,
     observer: Observer,
 }
@@ -663,6 +915,16 @@ impl Analog {
             channel_volume: 1.0,
             vibrato_depth: 0.0,
             output_gain: 1.0,
+            drive: 0.0,
+            low_cut: 20.0,
+            sine_sub: 0.0,
+            pitch_env: 0.0,
+            pitch_fall: 0.0,
+            fm_cycles: 0.0,
+            fm_ratio: 1.0,
+            filter_lfo: 0.0,
+            lfo_beats: 0.5,
+            bpm: DEFAULT_BPM,
             last_voice: None,
             observer: Observer::default(),
         };
@@ -701,6 +963,18 @@ impl Analog {
         self.key_track = self.params.at(P_KEY_TRACK);
         self.filter_velocity = self.params.at(P_FILTER_VELOCITY);
         self.output_gain = db_to_gain(self.params.at(P_LEVEL));
+        self.drive = self.params.at(P_DRIVE);
+        self.low_cut = self.params.at(P_LOW_CUT);
+        self.sine_sub = self.params.at(P_SINE_SUB);
+        self.pitch_env = self.params.at(P_PITCH_ENV);
+        self.pitch_fall =
+            (-1.0 / (self.params.at(P_PITCH_DECAY) * self.sample_rate).max(1.0)).exp();
+        self.fm_cycles = self.params.at(P_FM) * MAX_FM_CYCLES;
+        self.fm_ratio = self.params.at(P_FM_RATIO);
+        self.filter_lfo = self.params.at(P_FILTER_LFO);
+        let division =
+            (self.params.at(P_LFO_RATE).round().max(0.0) as usize).min(LFO_DIVISIONS.len() - 1);
+        self.lfo_beats = LFO_DIVISIONS[division].1;
         self.vibrato_depth =
             self.params.at(P_VIBRATO) + self.params.at(P_MOD_DEPTH) * self.modulation;
         let glide = self.params.at(P_GLIDE);
@@ -765,6 +1039,8 @@ impl Analog {
         voice.velocity = velocity;
         voice.target = target;
         voice.frequency = start;
+        voice.pitch_offset = self.pitch_env;
+        voice.wobble_phase = 0.0;
         voice.envelope.trigger();
         voice.filter_envelope.trigger();
         self.last_voice = Some(assignment.index);
@@ -1032,6 +1308,52 @@ fn descriptors(patch: AnalogPatch) -> Vec<ParamDescriptor> {
             .with_unit(ParamUnit::Semitones)
             .with_curve(ParamValueCurve::Power(2.0)),
         ParamDescriptor::decibels(P_LEVEL, "level", "Level", -60.0, 6.0, d.level),
+        ParamDescriptor::percent(P_DRIVE, "drive", "Drive", d.drive),
+        ParamDescriptor::new(P_LOW_CUT, "low_cut", "Low Cut", 20.0, 2_000.0, d.low_cut)
+            .with_unit(ParamUnit::Hertz)
+            .with_curve(ParamValueCurve::Logarithmic),
+        ParamDescriptor::percent(P_SINE_SUB, "sine_sub", "Sine Sub", d.sine_sub),
+        ParamDescriptor::new(
+            P_PITCH_ENV,
+            "pitch_env",
+            "Pitch Envelope",
+            0.0,
+            48.0,
+            d.pitch_env,
+        )
+        .with_unit(ParamUnit::Semitones)
+        .with_curve(ParamValueCurve::Power(2.0)),
+        ParamDescriptor::new(
+            P_PITCH_DECAY,
+            "pitch_decay",
+            "Pitch Decay",
+            0.001,
+            1.0,
+            d.pitch_decay,
+        )
+        .with_unit(ParamUnit::Seconds)
+        .with_curve(ParamValueCurve::Power(3.0)),
+        ParamDescriptor::percent(P_FM, "fm", "FM Depth", d.fm),
+        ParamDescriptor::new(P_FM_RATIO, "fm_ratio", "FM Ratio", 0.5, 4.0, d.fm_ratio)
+            .with_steps(8),
+        ParamDescriptor::new(
+            P_FILTER_LFO,
+            "filter_lfo",
+            "Filter LFO",
+            0.0,
+            72.0,
+            d.filter_lfo,
+        )
+        .with_unit(ParamUnit::Semitones),
+        ParamDescriptor::new(
+            P_LFO_RATE,
+            "lfo_rate",
+            "LFO Rate",
+            0.0,
+            (LFO_DIVISIONS.len() - 1) as f32,
+            d.lfo_rate,
+        )
+        .with_choices(LFO_DIVISION_CHOICES),
     ]
 }
 
@@ -1120,6 +1442,17 @@ impl SegmentRenderer for Analog {
         let bend = self.bend;
         let vibrato_depth = self.vibrato_depth;
         let glide_coeff = self.glide_coeff;
+        let drive = (self.drive > 0.0).then(|| Drive::new(self.drive));
+        let (floor, ceiling) = cutoff_bounds(rate);
+        let low_cut = (self.low_cut > LOW_CUT_OFF_HZ).then(|| {
+            let g = (PI * self.low_cut.clamp(floor, ceiling) / rate).tan();
+            SvfCoefficients::new(g, SQRT_2)
+        });
+        let sine_sub = self.sine_sub;
+        let pitch_fall = self.pitch_fall;
+        let (fm_cycles, fm_ratio) = (self.fm_cycles, self.fm_ratio);
+        let lfo_semitones = self.filter_lfo / 12.0;
+        let lfo_step = self.bpm / 60.0 / self.lfo_beats / rate;
 
         for index in 0..self.voices.len() {
             if !self.voices[index].envelope.is_active() {
@@ -1131,7 +1464,6 @@ impl SegmentRenderer for Analog {
             let fixed = self.cutoff_for(pitch, velocity, 0.0);
             let velocity_scale = 1.0 - self.filter_velocity + self.filter_velocity * velocity;
             let sweep = self.filter_env_semitones * velocity_scale / 12.0;
-            let (floor, ceiling) = cutoff_bounds(rate);
             let voice = &mut self.voices[index];
             voice.target = pitch_to_hz(pitch + bend);
 
@@ -1144,7 +1476,22 @@ impl SegmentRenderer for Analog {
                         1.0
                     }
                 };
-                let frequency = voice.frequency * swing;
+                let mut frequency = voice.frequency * swing;
+                if voice.pitch_offset != 0.0 {
+                    frequency *= (voice.pitch_offset / 12.0).exp2();
+                    voice.pitch_offset *= pitch_fall;
+                    if voice.pitch_offset.abs() < 1e-4 {
+                        voice.pitch_offset = 0.0;
+                    }
+                }
+                let modulation = if fm_cycles > 0.0 {
+                    let deviation = (voice.fm_phase * TAU).sin() * fm_cycles;
+                    voice.fm_phase += frequency * fm_ratio / rate;
+                    voice.fm_phase -= voice.fm_phase.floor();
+                    deviation
+                } else {
+                    0.0
+                };
                 let wobble = voice.pwm.next() * pwm_depth;
                 let (mut l, mut r) = (0.0f32, 0.0f32);
                 for slot in 0..unison {
@@ -1153,7 +1500,11 @@ impl SegmentRenderer for Analog {
                     if pulse {
                         oscillator.set_pulse_width(pulse_width + wobble * signs[slot]);
                     }
-                    let sample = oscillator.next(waveform);
+                    let sample = if fm_cycles > 0.0 {
+                        oscillator.next_modulated(waveform, modulation)
+                    } else {
+                        oscillator.next(waveform)
+                    };
                     l += sample * gains[slot].0;
                     r += sample * gains[slot].1;
                 }
@@ -1167,14 +1518,38 @@ impl SegmentRenderer for Analog {
                 }
 
                 let envelope = voice.filter_envelope.process();
-                let cutoff = (fixed * (sweep * envelope).exp2()).clamp(floor, ceiling);
+                let mut opening = sweep * envelope;
+                if lfo_semitones > 0.0 {
+                    // From closed, up to the depth and back: a note's first wobble starts where
+                    // the cutoff knob is, on the beat the note was struck.
+                    opening += lfo_semitones * 0.5 * (1.0 - (voice.wobble_phase * TAU).cos());
+                    voice.wobble_phase += lfo_step;
+                    voice.wobble_phase -= voice.wobble_phase.floor();
+                }
+                let cutoff = (fixed * opening.exp2()).clamp(floor, ceiling);
                 voice.cutoff = cutoff;
                 let g = (PI * cutoff / rate).tan();
                 let resonant = SvfCoefficients::new(g, resonant_damping);
                 let plain = SvfCoefficients::new(g, SQRT_2);
                 let amp = voice.envelope.process() * velocity;
-                let l = voice.filters[0].process(saturate(l + centre), resonant, plain) * amp;
-                let r = voice.filters[1].process(saturate(r + centre), resonant, plain) * amp;
+                let mut l = voice.filters[0].process(saturate(l + centre), resonant, plain);
+                let mut r = voice.filters[1].process(saturate(r + centre), resonant, plain);
+                if let Some(drive) = drive {
+                    l = drive.process(l);
+                    r = drive.process(r);
+                }
+                if let Some(low_cut) = low_cut {
+                    l = voice.highpass[0].highpass(l, low_cut, SQRT_2);
+                    r = voice.highpass[1].highpass(r, low_cut, SQRT_2);
+                }
+                if sine_sub > 0.0 {
+                    let sine = (voice.sine_phase * TAU).sin() * sine_sub;
+                    voice.sine_phase += frequency / rate;
+                    voice.sine_phase -= voice.sine_phase.floor();
+                    l += sine;
+                    r += sine;
+                }
+                let (l, r) = (l * amp, r * amp);
                 match right.as_deref_mut() {
                     Some(right) => {
                         left[frame] += l;
@@ -1247,6 +1622,12 @@ impl Instrument for Analog {
 
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
         let frames = ctx.block_frames.min(out.frame_count());
+        let bpm = ctx.bpm as f32;
+        self.bpm = if bpm.is_finite() && bpm > 0.0 {
+            bpm.min(1_000.0)
+        } else {
+            DEFAULT_BPM
+        };
         render_segments(self, events, out, frames);
         downmix_to_extra_channels(out, 0, frames);
         if self.observer.due(frames, self.sample_rate) {
@@ -1309,7 +1690,7 @@ mod tests {
             .iter()
             .map(|p| p.key.to_string())
             .collect();
-        assert_eq!(reference.len(), 28);
+        assert_eq!(reference.len(), 37);
         for patch in AnalogPatch::ALL {
             let synth = Analog::new(patch);
             assert_eq!(synth.descriptor().id, patch.id());
@@ -1559,6 +1940,134 @@ mod tests {
                 peak(&rendered)
             );
         }
+    }
+
+    #[test]
+    fn drive_adds_harmonics_without_moving_the_level_far() {
+        // A triangle's third harmonic is a ninth of its fundamental; clipping squares it off.
+        fn third_over_first(drive: f32) -> (f64, f32) {
+            let mut rig = plain();
+            rig.set_param("drive", drive);
+            let rendered = rig.render(24_000, &[on(0, 57)]);
+            let tail = &rendered[4_096..];
+            let ratio = goertzel(tail, RATE, 660.0) / goertzel(tail, RATE, 220.0);
+            (ratio, gain_to_db_f(rms(tail)))
+        }
+        let (clean, clean_level) = third_over_first(0.0);
+        let (driven, driven_level) = third_over_first(0.8);
+        assert!(clean < 0.13, "clean third/first {clean}");
+        assert!(
+            driven > clean * 2.5,
+            "driven {driven} against clean {clean}"
+        );
+        assert!(
+            (driven_level - clean_level).abs() < 6.0,
+            "{clean_level:.1} dB → {driven_level:.1} dB"
+        );
+    }
+
+    #[test]
+    fn the_low_cut_hollows_the_stack_and_the_sine_sub_fills_the_bottom() {
+        fn at(low_cut: f32, sine_sub: f32, hz: f64) -> f64 {
+            let mut rig = plain();
+            rig.set_param("waveform", 0.0);
+            rig.set_param("low_cut", low_cut);
+            rig.set_param("sine_sub", sine_sub);
+            let rendered = rig.render(48_000, &[on(0, 33)]);
+            goertzel(&rendered[8_192..], RATE, hz)
+        }
+        let a1 = pitch_to_hz(33.0) as f64;
+        let open = at(20.0, 0.0, a1);
+        let cut = at(300.0, 0.0, a1);
+        // Two and a half octaves under a 12 dB/octave corner: about 29 dB down.
+        assert!(cut < open * 0.05, "cut {cut} against open {open}");
+        // The eighth harmonic, at the corner, is barely touched.
+        assert!(at(300.0, 0.0, 8.0 * a1) > at(20.0, 0.0, 8.0 * a1) * 0.5);
+        // The sine comes after the low cut, so it is the whole of the fundamental again.
+        let filled = at(300.0, 0.5, a1);
+        assert!(filled > cut * 20.0, "filled {filled}");
+        assert!(at(300.0, 0.5, 2.0 * a1) < filled * 0.1, "the sine is clean");
+    }
+
+    #[test]
+    fn the_pitch_envelope_drops_the_note_into_place() {
+        let mut rig = plain();
+        rig.set_param("pitch_env", 12.0);
+        rig.set_param("pitch_decay", 0.02);
+        let rendered = rig.render(24_000, &[on(0, 57)]);
+        let early = zero_crossing_hz(&rendered[..480], RATE);
+        let settled = zero_crossing_hz(&rendered[9_600..], RATE);
+        assert!(early > 330.0, "the first 10 ms sit at {early:.1} Hz");
+        assert!((settled / 220.0 - 1.0).abs() < 0.01, "{settled:.2} Hz");
+    }
+
+    #[test]
+    fn fm_spreads_a_triangle_into_sidebands() {
+        fn upper(fm: f32) -> f64 {
+            let mut rig = plain();
+            rig.set_param("fm", fm);
+            let rendered = rig.render(24_000, &[on(0, 57)]);
+            let tail = &rendered[4_096..];
+            // A triangle has no even harmonics; FM at the note's own frequency brings them in.
+            goertzel(tail, RATE, 440.0) / goertzel(tail, RATE, 220.0).max(1e-9)
+        }
+        assert!(upper(0.0) < 0.01, "{}", upper(0.0));
+        assert!(upper(0.5) > 0.2, "{}", upper(0.5));
+    }
+
+    #[test]
+    fn the_filter_lfo_follows_the_tempo_from_the_note_on() {
+        // At 120 BPM a quarter-note LFO is 2 Hz: closed on every half second from the note on,
+        // open a quarter of a second after each.
+        let mut rig = plain();
+        rig.set_param("waveform", 0.0);
+        rig.set_param("cutoff", 200.0);
+        rig.set_param("filter_lfo", 48.0);
+        rig.set_param("lfo_rate", 2.0);
+        let rendered = rig.render(72_000, &[on(0, 45)]);
+        // Windowed, so the loud low harmonics do not leak into the one being read.
+        let bright = |centre: usize| {
+            let span = 2_400;
+            let windowed: Vec<f32> = rendered[centre - span / 2..centre + span / 2]
+                .iter()
+                .enumerate()
+                .map(|(at, sample)| sample * (PI * at as f32 / span as f32).sin().powi(2))
+                .collect();
+            goertzel(&windowed, RATE, 1_760.0)
+        };
+        for cycle in 1..=2 {
+            let at = cycle * 24_000;
+            let (closed, open) = (bright(at), bright(at + 12_000));
+            assert!(
+                open > closed * 10.0,
+                "cycle {cycle}: open {open}, closed {closed}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_house_bass_is_a_sine_under_a_hollowed_peak() {
+        // The shape the patch was set to: the sine carries the fundamental, the second harmonic
+        // is cut away, and the saw's harmonics come back a few hundred hertz up.
+        let mut rig = rig(AnalogPatch::HouseBass);
+        let rendered = rig.render(9_600, &[on(0, 27)]);
+        let held = &rendered[2_400..9_600];
+        let f0 = pitch_to_hz(27.0) as f64;
+        let level = |harmonic: f64| goertzel(held, RATE, harmonic * f0);
+        // Power in whole harmonics, so the beating of the two saws averages out.
+        let power = |harmonics: std::ops::RangeInclusive<u32>| -> f64 {
+            harmonics.map(|h| level(f64::from(h)).powi(2)).sum()
+        };
+        assert!(
+            level(1.0) > level(2.0) * 4.0,
+            "{} vs {}",
+            level(1.0),
+            level(2.0)
+        );
+        // 60–120 Hz against 250–500 Hz: the hollow measured in the reference is wider than this,
+        // but the shape is the one the patch is for.
+        let (hollow, peak) = (power(2..=3), power(7..=12));
+        assert!(peak > hollow * 4.0, "peak {peak}, hollow {hollow}");
     }
 
     #[test]

@@ -32,7 +32,7 @@ pub(crate) const FM2: &str = "auris.synth.fm2";
 pub(crate) const CHIPTUNE: &str = "auris.synth.chiptune";
 
 /// The subtractive synthesiser's patches, every one the same engine with its own defaults.
-pub(crate) const ANALOG: [&str; 7] = [
+pub(crate) const ANALOG: [&str; 10] = [
     "auris.synth.supersaw",
     "auris.synth.pad",
     "auris.synth.lead",
@@ -40,6 +40,9 @@ pub(crate) const ANALOG: [&str; 7] = [
     "auris.synth.pwm_strings",
     "auris.synth.brass",
     "auris.synth.pluck",
+    "auris.synth.house_bass",
+    "auris.synth.growl_bass",
+    "auris.synth.reese_bass",
 ];
 
 /// Whether `id` is one of the subtractive patches.
