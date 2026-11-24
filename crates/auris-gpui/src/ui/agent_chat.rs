@@ -5971,7 +5971,7 @@ mod tests {
         )
         .unwrap();
         auris_agent::load_history_background(path.to_path_buf(), false)
-            .recv_timeout(std::time::Duration::from_secs(5))
+            .recv_timeout(crate::harness::HANG_GUARD)
             .unwrap()
             .unwrap()
     }
@@ -7415,7 +7415,7 @@ mod tests {
                 .receiver
         });
         receiver
-            .recv_timeout(std::time::Duration::from_secs(5))
+            .recv_timeout(crate::harness::HANG_GUARD)
             .expect("the background history read finishes before cleanup")
             .expect("a project without saved conversation history loads as empty");
         crate::harness::remove_project_folder(&app, cx, &root);
@@ -9067,7 +9067,7 @@ mod tests {
         // Cancelling the synthetic history load lets the final paint start conversation storage.
         // Until initialization returns there is no active transcript for Flush to wait for, and
         // its worker can still be writing into the directory that cleanup is about to remove.
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + crate::harness::HANG_GUARD;
         loop {
             let initialized = app.update(cx, |this, cx| {
                 this.initialize_conversations();
@@ -9085,7 +9085,7 @@ mod tests {
             std::thread::yield_now();
         }
         if let Some(complete) = app.update(cx, |this, _| this.flush_conversation_storage()) {
-            complete.recv_timeout(Duration::from_secs(10)).unwrap();
+            complete.recv_timeout(crate::harness::HANG_GUARD).unwrap();
         }
         root.close().unwrap();
     }

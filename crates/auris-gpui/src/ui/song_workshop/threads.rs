@@ -281,20 +281,15 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness::{click, paint};
-
-    /// How long a test waits for the conversation owner to publish what a command asked for. The
-    /// owner answers every command it receives with a snapshot, so this guards against a hang,
-    /// not against a slow machine. The owner does its storage on a thread of its own, and a wait
-    /// that takes a quarter of a second on an idle machine was measured at 6.7 seconds beside
-    /// three other copies of this suite — and still ended with the snapshot it was waiting for.
-    const HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(60);
+    use crate::harness::{HANG_GUARD, click, paint};
 
     fn wait_for(
         app: &gpui::Entity<AurisApp>,
         cx: &mut gpui::VisualTestContext,
         ready: impl Fn(&SongWorkshop) -> bool,
     ) {
+        // The owner answers every command it receives with a snapshot, so this only ends in a
+        // failure when the owner has stopped.
         let deadline = std::time::Instant::now() + HANG_GUARD;
         loop {
             app.update(cx, |this, cx| this.poll_song_workshop(cx));
