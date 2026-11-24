@@ -320,7 +320,7 @@ impl Model {
             Self::Piano => 0.505,
             Self::HammeredDulcimer => 1.616,
             Self::Guitar => 0.806,
-            Self::ElectricGuitar => 0.821,
+            Self::ElectricGuitar => 0.733,
             Self::Bass => 0.776,
             Self::Violin => 1.345,
             Self::Mallet => 0.634,

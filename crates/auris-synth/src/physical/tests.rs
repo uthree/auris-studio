@@ -920,6 +920,9 @@ fn a_fast_string_is_let_go_sooner_and_sooner_still_when_it_is_plucked_hard() {
         let mut guitar = rig(model, 48_000.0);
         if model == Model::Guitar {
             guitar.set_param("body", 0.0);
+        } else {
+            // The coil and the cable out of the way: it is the string that is asked about.
+            guitar.set_param("tone", 12_000.0);
         }
         let audio = guitar.render(4_800, &[on(key, velocity)]);
         20.0 * (partial(&audio, hz(key), 12.0) / partial(&audio, hz(key), 1.0)).log10()
@@ -937,12 +940,20 @@ fn a_fast_string_is_let_go_sooner_and_sooner_still_when_it_is_plucked_hard() {
         soft < -12.0,
         "a soft first string kept {soft} dB more of its top"
     );
-    // An electric guitar's strings were set with one corner between them and keep it: its
-    // first string opens only as far as a harder pick opens any string.
+    // An electric guitar's first string is let go sooner than its sixth as well, by the same
+    // amount however hard it is picked: its recordings are at one dynamic. A hard stroke
+    // opens it only as far as a harder pick opens any string.
     let electric = top(Model::ElectricGuitar, 64, 0.95) - top(Model::ElectricGuitar, 64, 0.35);
     assert!(
         electric < 8.0 && electric < first * 0.5,
         "the electric's first string opened by {electric} dB, the guitar's by {first}"
+    );
+    // With one corner for both, the first string's twelfth partial, two octaves over the
+    // sixth's, would lie some 17 dB further under its fundamental.
+    let strings = top(Model::ElectricGuitar, 64, 0.8) - top(Model::ElectricGuitar, 40, 0.8);
+    assert!(
+        strings > -4.0,
+        "an electric's first string kept {strings} dB of its top against its sixth"
     );
 }
 

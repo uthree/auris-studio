@@ -136,7 +136,7 @@ const SNAP_AT: f32 = 0.65;
 
 pub(super) fn descriptors(model: Model) -> Vec<ParamDescriptor> {
     let (hardness, position, decay, damping, release) = match model {
-        Model::ElectricGuitar => (0.6, 0.13, 9.0, 0.03, 0.1),
+        Model::ElectricGuitar => (0.3, 0.13, 9.0, 0.03, 0.1),
         Model::Bass => (0.35, 0.16, 35.0, 0.12, 0.1),
         _ => (0.2, 0.26, 12.5, 0.5, 0.12),
     };
@@ -313,9 +313,15 @@ struct Build {
     /// guitar. Its sixth string holds what one corner for every string gives it, at every
     /// dynamic; its first, whose wave runs four times as fast, held 15 dB more than that
     /// above its eighth partial played softly, 22 dB at a middling pluck and 34 dB played
-    /// hard, and is within 10 dB of what these two numbers give it at all three. The electric
-    /// guitar and the bass were set against recordings of their own with one corner for every
-    /// string, and keep it.
+    /// hard, and is within 10 dB of what these two numbers give it at all three.
+    ///
+    /// The electric guitar's power is fitted with its other controls on a recorded
+    /// Stratocaster's clean notes, 48 of them, and read on 46 more at other pitches: with the
+    /// power free the fit lands on 1.3 and a soft pick, without it on the hardest pick there
+    /// is, and the error on the held-out notes is 5% lower with it. Those notes were played
+    /// at one dynamic, so nothing is said of what a harder stroke adds. The bass keeps one
+    /// corner for every string: its recordings could not tell a law from the combs its
+    /// pickups hear.
     snap: (f32, f32),
 }
 
@@ -332,7 +338,7 @@ impl Build {
                 glide: 9.0,
                 wound: (1.0, 1.0),
                 drive: 1.0,
-                snap: (0.0, 0.0),
+                snap: (1.4, 0.0),
             },
             Model::Bass => Self {
                 strings: &BASS_STRINGS,

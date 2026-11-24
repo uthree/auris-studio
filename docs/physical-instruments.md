@@ -366,16 +366,30 @@ had. What slapping does to a note moved by half a decibel or less, and the table
 read on this bass.
 
 Whether a bass's or an electric guitar's high strings are let go sooner than its low ones, as
-the guitar's are, was looked for on both and neither was changed. A magnet hears a comb of
-each string's partials, with its teeth at different frequencies on each string and on each
-recorded instrument, and that moves single bands by 20 dB. On the bass, with the guitar's law
-and without it, the model lies 7.8 dB rms from the recordings between strings. On the electric
-guitar's recorded neck pickup the first string is about 8 dB brighter against the sixth
-between 2.5 and 4 kHz than here, and the law takes most of that out; but on the instrument's
-own measure a law reads 0.135 where a harder pick on every string reads 0.136, and with the
-pickups a little off where a Stratocaster's are the law reads worse than none. That is not
-enough to tell a law from a pick. The same measure reads 0.140 with the pickups at a quarter
-and at 6.5% of the string and 0.162 where they were assumed before.
+the guitar's are, was looked for on both. A magnet hears a comb of each string's partials,
+with its teeth at different frequencies on each string and on each recorded instrument, which
+moves single bands by 20 dB, so the strings could not be compared band by band as the guitar's
+were. On the bass, with the guitar's law and without it, the model lies 7.8 dB rms from the
+recordings between strings, and the bass keeps one corner.
+
+The electric guitar was settled by fitting. All of its controls were fitted to 48 clean notes
+of a recorded Stratocaster, on both pickups, once with one corner for every string and once
+with the law's power free, and each fit was read on 46 notes at other pitches. Without the law
+the fit ends at the hardest pick there is; with it, at a soft pick and a power of 1.3, and the
+error on the held-out notes is 5% lower, 0.127 for 0.134, with the interval of the difference
+clear of zero. Both fits put the pickups at 24% and 7% of the string, where a Stratocaster has
+them and where the combs alone put them. The electric guitar has the law now, at a power of
+1.4, and a softer pick: **Contact Hardness** rests at 0.3 where it stood at 0.6. With its
+other controls as they were the held-out error is 0.145 where it was 0.150, and 33 of the 46
+notes are closer. Those notes were played at one dynamic, so a harder stroke adds nothing to
+the power here as it does on the guitar.
+
+Two things are left open on it. Read from the combs alone, the same recordings can also be
+told as a pick 3.5% of the string from the bridge and no law, 4.3 dB from the recorded
+partials where a pick further up with a law is 5.1 dB; the instrument puts a pick no nearer
+than 5%, and with it there the low strings are much too bright. And the same fits ask for
+more than the pluck: with **Damping** near 0.3, where it rests at 0.03, the held-out error is
+0.127, which is not taken up here.
 
 The slapped bass is read beside three recorded electric basses, each note played finger-style,
 with the thumb and popped. What is compared is what slapping does to a note: each measure less

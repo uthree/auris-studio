@@ -199,8 +199,8 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                         &[
                             ("tone", 1600.0),
                             ("pickup_position", 0.26),
-                            ("hardness", 0.25),
-                            ("level", -10.0),
+                            ("hardness", 0.12),
+                            ("level", -12.0),
                         ],
                     ),
                     (
@@ -208,11 +208,11 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                         &[
                             ("tone", 6500.0),
                             ("pickup_position", 0.08),
-                            ("hardness", 0.75),
+                            ("hardness", 0.4),
                             ("level", -10.0),
                         ],
                     ),
-                    ("Guitar harmonics", &[("technique", 1.0), ("level", -9.0)]),
+                    ("Guitar harmonics", &[("technique", 1.0), ("level", -8.0)]),
                 ],
             ),
             family(
