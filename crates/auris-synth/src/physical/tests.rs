@@ -2570,3 +2570,27 @@ fn a_reeds_breath_stays_under_its_tone_and_a_soft_note_speaks_without_a_hiss_or_
         );
     }
 }
+
+#[test]
+fn a_grands_lowest_strings_keep_their_top() {
+    use crate::test_support::band_amplitude;
+    // Ninety-six partials of the lowest C end at 3.1 kHz. A wound string does not, and its
+    // hammer strikes one string, which leaves room for half as many partials again.
+    let mut piano = whole(Model::Piano);
+    let audio = piano.render(24_000, &[on(24, 0.9)]);
+    let blow = &audio[480..9_600];
+    let (under, over) = (
+        band_amplitude(blow, 48_000.0, 2_500.0),
+        band_amplitude(blow, 48_000.0, 4_200.0),
+    );
+    let top = 20.0 * (over / under).log10();
+    assert!(top > -20.0, "above the old last partial: {top} dB");
+    // And the bass is voiced brighter than it was: G1's blow has its share of two to four
+    // kilohertz, where a recorded grand's has a good deal.
+    piano.instrument.reset();
+    let audio = piano.render(24_000, &[on(31, 0.9)]);
+    let blow = &audio[480..4_800];
+    let bright = 20.0
+        * (band_amplitude(blow, 48_000.0, 2_800.0) / band_amplitude(blow, 48_000.0, 400.0)).log10();
+    assert!(bright > -31.0, "G1's blow from 2 to 4 kHz: {bright} dB");
+}

@@ -249,7 +249,7 @@ smaller is closer.
 | Measure | Recorded | Reads | A model fitted to the same recordings |
 | --- | --- | --- | --- |
 | Piano, mel distance | Steinway B, C3–G4, 12 held-out notes | 0.162 | 0.152 |
-| Piano, partial decay and envelope | Steinway B, C1–C8 | 4.8 dB, 1.5 dB | 5.4 dB, 2.0 dB |
+| Piano, partial decay and envelope | Steinway B, C1–C8 | 4.9 dB, 1.4 dB | 5.4 dB, 2.0 dB |
 | Piano, partial balance, register level, knock | the same | 4.0 dB, 1.8 dB, 5.1 dB | 4.2 dB, 1.7 dB, 3.4 dB |
 | Guitar, mel distance | classical guitar, 44 held-out notes | 0.167, and 0.157 as Nylon guitar | 0.144 |
 | Strings, mel distance | solo violin, 39 held-out notes | 0.111 | 0.080 |
@@ -271,6 +271,16 @@ and 9.6 dB over.
 
 Key to key, a piano's notes are within 0.8 dB rms of the keys around them, and a guitar's and
 the strings' within 1.5 dB.
+
+The piano's bass was voiced again on 2026-11-24, against the same Steinway's G1, C2 and G2 as
+well as its Cs. The blow of a low note had 6 to 20 dB less than the recording's between one
+and eight kilohertz, and has within 11 dB of it now: the two lowest octaves' hammers are
+harder, and a hammer that strikes one string or two leaves room for 144 partials of each
+where there were 96, which had ended the lowest C at three kilohertz. The two planes of a
+wound string, and the strings of a low pair, lie a few hundredths of a hertz further apart
+than a treble unison's. Of the measures in the table the envelope moved from 1.5 to 1.4 dB
+and each partial's decay from 4.8 to 4.9 dB; the balance, the level and the knock are where
+they were, and no key above C3 changed.
 
 A clarinet's breath, read between the harmonics of the same recordings' settled notes, lies
 31 to 35 dB under the tone from pianissimo to fortissimo, and 33 to 35 dB here; it had been 21
