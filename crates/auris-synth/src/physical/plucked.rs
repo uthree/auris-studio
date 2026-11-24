@@ -35,6 +35,8 @@ use auris_core::{ParamDescriptor, ParamUnit};
 use auris_dsp::{Biquad, BiquadCoefficients};
 
 use super::body::{self, Radiator, seeded};
+use super::calibration::dial;
+use super::dials;
 use super::rotors::{Rotor, Rotors, decay_rate, pole};
 use super::slap::{self, Blow, Slap, Stroke, Technique};
 use super::strings::{
@@ -129,11 +131,14 @@ const PALM_GRIP: f32 = 30.0;
 /// of how much it does.
 const EVENING: f32 = 0.6;
 
+/// The velocity at which `Build::snap` is its first number: a middling pluck.
+const SNAP_AT: f32 = 0.65;
+
 pub(super) fn descriptors(model: Model) -> Vec<ParamDescriptor> {
     let (hardness, position, decay, damping, release) = match model {
         Model::ElectricGuitar => (0.6, 0.13, 9.0, 0.03, 0.1),
         Model::Bass => (0.35, 0.16, 7.0, 0.12, 0.1),
-        _ => (0.2, 0.26, 6.5, 0.1, 0.12),
+        _ => (0.2, 0.26, 12.5, 0.5, 0.12),
     };
     let mut descriptors = vec![
         ParamDescriptor::percent(P_HARDNESS, "hardness", "Contact Hardness", hardness),
@@ -151,10 +156,10 @@ pub(super) fn descriptors(model: Model) -> Vec<ParamDescriptor> {
             "decay",
             "Resonance Decay",
             0.1,
-            if model == Model::ElectricGuitar {
-                40.0
-            } else {
-                12.0
+            match model {
+                Model::ElectricGuitar => 40.0,
+                Model::Bass => 12.0,
+                _ => 20.0,
             },
             decay,
         )
@@ -273,6 +278,21 @@ struct Build {
     wound: f32,
     /// Loudness of one pluck before the instrument's own normalisation.
     drive: f32,
+    /// How much sooner a fast string leaves the finger than a slow one: the power of how many
+    /// times faster the wave runs on a string than on the lowest by which its pluck's corner
+    /// is higher, at a pluck of middling force, and what a whole unit of velocity adds to
+    /// that power.
+    ///
+    /// A finger lets a string go over a time, and a light, taut string is away from under it
+    /// sooner than a heavy one; a hard pluck snaps it off a nail where a soft one rolls it off
+    /// the flesh beside it. The guitar's two numbers are measured on a recorded classical
+    /// guitar. Its sixth string holds what one corner for every string gives it, at every
+    /// dynamic; its first, whose wave runs four times as fast, held 15 dB more than that
+    /// above its eighth partial played softly, 22 dB at a middling pluck and 34 dB played
+    /// hard, and is within 10 dB of what these two numbers give it at all three. The electric
+    /// guitar and the bass were set against recordings of their own with one corner for every
+    /// string, and keep it.
+    snap: (f32, f32),
 }
 
 impl Build {
@@ -287,6 +307,7 @@ impl Build {
                 glide: 9.0,
                 wound: 1.0,
                 drive: 1.0,
+                snap: (0.0, 0.0),
             },
             Model::Bass => Self {
                 strings: &BASS_STRINGS,
@@ -296,6 +317,7 @@ impl Build {
                 glide: 12.0,
                 wound: 2.5,
                 drive: 1.0,
+                snap: (0.0, 0.0),
             },
             _ => Self {
                 strings: &GUITAR_STRINGS,
@@ -305,6 +327,7 @@ impl Build {
                 glide: 5.0,
                 wound: 1.0,
                 drive: 1.0,
+                snap: (1.175, 2.25),
             },
         }
     }
@@ -725,6 +748,20 @@ impl Engine for Plucked {
         let corner = match stroke {
             Stroke::Pop => 500.0 * 24.0_f32.powf(0.5 + 0.5 * hardness),
             _ => 500.0 * 24.0_f32.powf(hardness),
+        };
+        // A fast string is gone from under the finger sooner than a slow one, and the more
+        // so the harder it is plucked.
+        let (snap, harder) = self.build.snap;
+        let open = self.build.strings.get(string).copied();
+        let lowest = self.build.strings.first().copied();
+        let corner = match (open, lowest) {
+            (Some(open), Some(lowest)) => {
+                let faster = hertz(f32::from(open)) / hertz(f32::from(lowest));
+                let power = dial(dials::PLUCK_SNAP, snap)
+                    + dial(dials::PLUCK_HARDER, harder) * (note.velocity - SNAP_AT);
+                corner * faster.powf(power.max(0.0))
+            }
+            _ => corner,
         };
         let budget = match quality {
             Quality::Draft => 40,

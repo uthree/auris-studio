@@ -319,7 +319,7 @@ impl Model {
         match self {
             Self::Piano => 0.505,
             Self::HammeredDulcimer => 1.616,
-            Self::Guitar => 0.919,
+            Self::Guitar => 0.806,
             Self::ElectricGuitar => 0.821,
             Self::Bass => 0.927,
             Self::Violin => 1.345,
@@ -667,6 +667,10 @@ pub(crate) mod dials {
     /// bow could not go becomes weight.
     pub(crate) const BOW_NEAREST: usize = 94;
     pub(crate) const BOW_LEAN: usize = 95;
+    /// The guitar's pluck: the power of a string's speed its corner rises by at a middling
+    /// pluck, and what a unit of velocity adds to that power.
+    pub(crate) const PLUCK_SNAP: usize = 96;
+    pub(crate) const PLUCK_HARDER: usize = 97;
 }
 
 /// A dial for each C from C1 to C8, read at a pitch between them along straight lines.

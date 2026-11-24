@@ -254,7 +254,7 @@ smaller is closer.
 | Piano, mel distance | Steinway B, C3–G4, 12 held-out notes | 0.162 | 0.152 |
 | Piano, partial decay and envelope | Steinway B, C1–C8 | 4.9 dB, 1.4 dB | 5.4 dB, 2.0 dB |
 | Piano, partial balance, register level, knock | the same | 4.0 dB, 1.8 dB, 5.1 dB | 4.2 dB, 1.7 dB, 3.4 dB |
-| Guitar, mel distance | classical guitar, 44 held-out notes | 0.167, and 0.157 as Nylon guitar | 0.144 |
+| Guitar, mel distance | classical guitar, 44 held-out notes | 0.160, and 0.154 as Nylon guitar | 0.144 |
 | Strings, mel distance | solo violin, 39 held-out notes | 0.111 | 0.080 |
 | Reeds, mel distance | B♭ clarinet, held-out pitches | 0.041 | 0.054 |
 | Whistles, mel distance of the settled tone | tin whistle scale | 0.017 | 0.018 |
@@ -312,12 +312,39 @@ note played plainly, and lies about 6 dB under it. A guitar's harmonics were eve
 the note of the string they are played on and not the note heard: they are within 1.8 dB rms
 of the harmonics beside them where they were within 2.9.
 
-Two things were found and left. A recorded classical guitar's first string has about 17 dB
-less between two and four kilohertz than at its fundamental in a note's first half second, and
-35 dB less here; its wound strings match. Letting the plain strings go more quickly closes
-that, and makes the mel distance of the table above worse by six in a hundred, because the
-second partial of those notes is already too strong. And the lowest notes of a bowed bass,
-E1 and F1, are rougher than a recorded one's a third above them.
+One thing was found and left: the lowest notes of a bowed bass, E1 and F1, are rougher than a
+recorded one's a third above them.
+
+A recorded classical guitar's first string was found then to have about 17 dB less between two
+and four kilohertz than at its fundamental in a note's first half second, where these had
+35 dB less, and letting the plain strings go more quickly made the mel distance of the table
+worse. The guitar was read again the same day, partial by partial against that recording: the
+level of each of a note's first sixteen partials over its first tenth of a second, and how
+fast each falls. Three things were out, and were put right together.
+
+- **The pluck.** Every string had been let go alike. The recorded sixth string agrees with
+  that; the first, whose wave runs four times as fast, had 15 dB more above its eighth partial
+  played softly, 22 dB at a middling pluck and 34 dB played hard. A string is now let go
+  sooner the faster it is, and sooner still the harder it is plucked.
+- **The strings' losses.** The recorded partials fall faster the higher they are, the first
+  string's sixteenth at about 200 dB a second; these fell at under 50. The guitar's
+  **Damping** rests at a half now, where its strings lose what that guitar's lose, and its
+  **Decay** at 12.5 s so that the fundamental lasts as it did.
+- **The box.** Against its level from 150 to 350 Hz the recorded guitar is about 5 dB quieter
+  from 400 Hz to 1.5 kHz than this box was, which is what had made a high note's second
+  partial too strong; and it has no trough between its air resonance and its top plate's.
+  The bridge radiates by itself only up to 500 Hz, the plates' modes above 350 Hz are lower,
+  and the air resonance is broader and weaker.
+
+Over every string and dynamic the partials' levels are 3.6 dB from the recording's where they
+were 6.3 dB, and their falls 10 dB a second from it where they were 21. The mel distance of
+the table went from 0.167 to 0.160, and from 0.157 to 0.154 as Nylon guitar. The first string
+has 8 dB less than the recording between two and four kilohertz in a note's first half second
+where it had 18 dB less, and the open sixth string's fundamental is still 12 dB stronger than
+the recording's. The electric guitar and the bass were set against recordings of their own and
+did not change. A guitar saved with its controls written out keeps the damping and decay it
+had, and with them a brighter top that rings as long as it did. The Body effect's guitar is
+this box and changed with it.
 
 The slapped bass is read beside three recorded electric basses, each note played finger-style,
 with the thumb and popped. What is compared is what slapping does to a note: each measure less

@@ -165,12 +165,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     ("Acoustic guitar", &[]),
                     (
                         "Nylon guitar",
-                        &[
-                            ("hardness", 0.06),
-                            ("position", 0.28),
-                            ("damping", 0.12),
-                            ("level", -10.5),
-                        ],
+                        &[("hardness", 0.06), ("position", 0.28), ("level", -12.0)],
                     ),
                     (
                         "Steel guitar",
@@ -179,7 +174,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("position", 0.22),
                             ("decay", 5.5),
                             ("damping", 0.08),
-                            ("level", -12.5),
+                            ("level", -11.5),
                         ],
                     ),
                     (
@@ -189,10 +184,10 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("damping", 0.8),
                             ("decay", 0.55),
                             ("release", 0.06),
-                            ("level", -0.5),
+                            ("level", 0.5),
                         ],
                     ),
-                    ("Piezo guitar", &[("pickup", 1.0), ("level", -14.0)]),
+                    ("Piezo guitar", &[("pickup", 1.0), ("level", -15.5)]),
                 ],
             ),
             family(

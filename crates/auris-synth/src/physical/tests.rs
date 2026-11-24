@@ -890,11 +890,12 @@ fn where_and_how_a_string_is_plucked_is_heard_without_moving_its_pitch() {
     let mut guitar = rig(Model::Guitar, 48_000.0);
     guitar.set_param("position", 0.2);
     guitar.set_param("hardness", 0.0);
-    // The open top string, which is as long as the control's fraction measures.
-    let soft = guitar.render(8_000, &[controller(0, 20, 0.2), on(64, 0.8)]);
+    // The open top string, which is as long as the control's fraction measures, plucked
+    // softly: a hard pluck snaps the first string off a thumb nearly as fast as off a pick.
+    let soft = guitar.render(8_000, &[controller(0, 20, 0.2), on(64, 0.3)]);
     guitar.instrument.reset();
     guitar.set_param("hardness", 1.0);
-    let hard = guitar.render(8_000, &[controller(0, 20, 0.2), on(64, 0.8)]);
+    let hard = guitar.render(8_000, &[controller(0, 20, 0.2), on(64, 0.3)]);
     let at = |audio: &[f32], n: f64| partial(audio, hz(64), n);
     assert!(
         at(&hard, 9.0) > at(&soft, 9.0) * 4.0,
@@ -909,6 +910,40 @@ fn where_and_how_a_string_is_plucked_is_heard_without_moving_its_pitch() {
         let cents = peak_cents(&audio[2_400..], 48_000.0, hz(64), -200..=200);
         assert!(cents.abs() < 6.0, "the pluck moved the note {cents} cents");
     }
+}
+
+#[test]
+fn a_fast_string_is_let_go_sooner_and_sooner_still_when_it_is_plucked_hard() {
+    // How far an open string's twelfth partial lies under its fundamental at the bridge, in
+    // decibels, over the note's first tenth of a second.
+    let top = |model: Model, key: u8, velocity: f32| {
+        let mut guitar = rig(model, 48_000.0);
+        if model == Model::Guitar {
+            guitar.set_param("body", 0.0);
+        }
+        let audio = guitar.render(4_800, &[on(key, velocity)]);
+        20.0 * (partial(&audio, hz(key), 12.0) / partial(&audio, hz(key), 1.0)).log10()
+    };
+    // The first string's wave runs four times as fast as the sixth's. A hard pluck opens it
+    // by much more than it opens the sixth, whose corner moves only as the finger's does.
+    let first = top(Model::Guitar, 64, 0.95) - top(Model::Guitar, 64, 0.35);
+    let sixth = top(Model::Guitar, 40, 0.95) - top(Model::Guitar, 40, 0.35);
+    assert!(first > 12.0, "the first string opened by {first} dB");
+    assert!(sixth.abs() < 4.0, "the sixth string opened by {sixth} dB");
+    // Played softly the two are let go nearly alike, a sixth string's twelfth partial being
+    // two octaves under a first's.
+    let soft = top(Model::Guitar, 64, 0.1) - top(Model::Guitar, 40, 0.1);
+    assert!(
+        soft < -12.0,
+        "a soft first string kept {soft} dB more of its top"
+    );
+    // An electric guitar's strings were set with one corner between them and keep it: its
+    // first string opens only as far as a harder pick opens any string.
+    let electric = top(Model::ElectricGuitar, 64, 0.95) - top(Model::ElectricGuitar, 64, 0.35);
+    assert!(
+        electric < 8.0 && electric < first * 0.5,
+        "the electric's first string opened by {electric} dB, the guitar's by {first}"
+    );
 }
 
 /// How far each key's first third of a second is from the keys around it, in decibels.

@@ -835,12 +835,21 @@ pub(crate) const SOUNDBOARD: BodySpec = BodySpec {
 };
 
 /// A flat-top guitar: the air in the box, the top plate, and the plates' higher modes.
+///
+/// Its levels are read off a recorded classical guitar: the level of every partial of its
+/// notes below 1.5 kHz, less what the bare string gives that partial, with one offset fitted
+/// out of each note. Against the level between 150 and 350 Hz that guitar stands about 5 dB
+/// lower from 400 Hz to 1.5 kHz, which is why the bridge radiates by itself only up to
+/// 500 Hz here and the plates' modes above 350 Hz are as low as they are; and it has no
+/// trough between its air resonance and its top plate's, which a narrow air mode would dig.
+/// Its lowest two notes are weaker still than this box makes them, by 12 dB at the open
+/// sixth string's fundamental.
 pub(crate) const GUITAR: BodySpec = BodySpec {
     signature: &[
         Signature {
-            hz: 102.0,
-            q: 20.0,
-            db: 7.0,
+            hz: 109.0,
+            q: 10.0,
+            db: 0.0,
             lean: 0.0,
         },
         Signature {
@@ -864,25 +873,25 @@ pub(crate) const GUITAR: BodySpec = BodySpec {
         Signature {
             hz: 392.0,
             q: 32.0,
-            db: 3.0,
+            db: -2.0,
             lean: -0.3,
         },
         Signature {
             hz: 468.0,
             q: 35.0,
-            db: 0.0,
+            db: -5.0,
             lean: 0.4,
         },
         Signature {
             hz: 545.0,
             q: 35.0,
-            db: 2.0,
+            db: -3.0,
             lean: -0.5,
         },
         Signature {
             hz: 610.0,
             q: 38.0,
-            db: 0.0,
+            db: -5.0,
             lean: 0.3,
         },
     ],
@@ -897,14 +906,15 @@ pub(crate) const GUITAR: BodySpec = BodySpec {
         (70.0, -14.0),
         (95.0, -2.0),
         (180.0, 0.0),
-        (700.0, 0.0),
-        (1_500.0, -2.0),
+        (400.0, 0.0),
+        (800.0, -5.0),
+        (1_600.0, -6.0),
         (3_000.0, -6.0),
         (6_000.0, -13.0),
     ],
     direct_db: -5.0,
-    direct_span: (170.0, 2_500.0),
-    floor_hz: 88.0,
+    direct_span: (170.0, 500.0),
+    floor_hz: 100.0,
     reference: (100.0, 3_000.0),
 };
 
@@ -1150,21 +1160,38 @@ mod tests {
         let mut body = prepared(&GUITAR, 1.0, 48_000.0);
         let (mid, _) = impulse(&mut body, 48_000, 0.0, 0.0);
         let at = |hz: f64| goertzel(&mid, 48_000.0, hz);
+        // The air resonance is a broad one, and stands over what lies either side of it.
         assert!(
-            at(102.0) > at(140.0) * 2.5,
+            at(109.0) > at(140.0) * 2.0,
             "air {} vs {}",
-            at(102.0),
+            at(109.0),
             at(140.0)
         );
+        assert!(at(109.0) > at(82.0) * 2.5, "{} vs {}", at(109.0), at(82.0));
         assert!(at(204.0) > at(150.0) * 2.5);
         assert!(
-            at(102.0) > at(50.0) * 12.0,
+            at(109.0) > at(50.0) * 8.0,
             "nothing radiates below the air mode"
+        );
+        // From 400 Hz to 1.5 kHz the box is quieter than from 150 to 350 Hz, and not silent.
+        let level = |from: f64, to: f64| -> f64 {
+            let steps = 24;
+            let power: f64 = (0..steps)
+                .map(|step| {
+                    at(from * (to / from).powf((f64::from(step) + 0.5) / f64::from(steps))).powi(2)
+                })
+                .sum();
+            (power / f64::from(steps)).sqrt()
+        };
+        let (low, middle) = (level(150.0, 350.0), level(400.0, 1_500.0));
+        assert!(
+            middle < low * 0.75 && middle > low * 0.3,
+            "150 to 350 Hz {low}, 400 Hz to 1.5 kHz {middle}"
         );
         // The knock of the box: a tap rings for a good part of a second, low.
         let late = &mid[4_800..9_600];
         assert!(rms(late) > 1.0e-5);
-        assert!(goertzel(late, 48_000.0, 102.0) > goertzel(late, 48_000.0, 2_000.0) * 5.0);
+        assert!(goertzel(late, 48_000.0, 204.0) > goertzel(late, 48_000.0, 2_000.0) * 5.0);
     }
 
     #[test]
