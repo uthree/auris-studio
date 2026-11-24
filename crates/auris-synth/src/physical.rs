@@ -661,6 +661,12 @@ pub(crate) mod dials {
     pub(crate) const REED_ROUGH_HZ: usize = 90;
     pub(crate) const REED_ROUGH: usize = 91;
     pub(crate) const REED_KICK: usize = 92;
+    /// Cents the hardest breath sends a reed's note sharp, which the player takes out.
+    pub(crate) const REED_SHARP: usize = 93;
+    /// The bow: the nearest the bridge a string holds its motion, and how much of the way a
+    /// bow could not go becomes weight.
+    pub(crate) const BOW_NEAREST: usize = 94;
+    pub(crate) const BOW_LEAN: usize = 95;
 }
 
 /// A dial for each C from C1 to C8, read at a pitch between them along straight lines.

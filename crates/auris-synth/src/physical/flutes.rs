@@ -43,7 +43,7 @@ const JET_CORNER: f32 = 2.0;
 /// How much of the breath a tongued note's first puff puts into the pipe at once.
 const PUFF: f32 = 0.2;
 /// How much of the reflection filter's delay the pipe is shortened by to stay on pitch.
-const FILTER_SHARE: f32 = 0.94;
+const FILTER_SHARE: f32 = 0.988;
 
 pub(super) fn descriptors() -> Vec<ParamDescriptor> {
     vec![

@@ -140,9 +140,12 @@ upper partials first, so at the bottom a note is its pick's click and a short, d
 reaches notes already sounding, and the open strings too. Above the middle it does nothing.
 Letting a key go is the fretting hand easing off: the note stops within **Release**.
 CC74, brightness, also rests at its middle; on the strings it is where the bow is drawn. Above
-the middle the bow moves toward the bridge, as near as a third of **Bow Position** (sul
-ponticello, glassy). Below it the bow goes out over the end of the fingerboard, up to twice as
-far, with a lighter stroke (sul tasto, veiled). CC65 turns portamento on for the strings, reeds
+the middle the bow is asked nearer the bridge, as near as a third of **Bow Position** (sul
+ponticello). It goes as near as the string still holds its note, which is about where a bow is
+usually drawn, and leans harder for the rest of the way: the note is brighter, as loud as it
+was and on its pitch. A **Bow Position** set nearer the bridge than that does the same. Below
+the middle the bow goes out over the end of the fingerboard, up to twice as far, with a lighter
+stroke (sul tasto, veiled). CC65 turns portamento on for the strings, reeds
 and whistles: a slurred note slides to the next instead of moving the finger at once, taking the
 time CC5 gives, from a fiftieth of a second to a second and a half. Pitch bend is not slowed.
 On everything struck or plucked (the pianos, guitars, bass, mallets and bells), CC74 is how hard
@@ -287,6 +290,34 @@ A clarinet's breath, read between the harmonics of the same recordings' settled 
 to 31 dB, an even hiss that stood over the harmonics above two kilohertz. A pianissimo note
 takes 134 ms to rise from a tenth of its level to nine tenths in the recordings and 131 ms
 here, where it had taken 277 ms. The reeds' row above was read again on 2026-11-24.
+
+Every instrument was played across its range on 2026-11-24, at three dynamics and at the ends
+of its controls, and read for its pitch, for what lies between its harmonics and for how
+evenly it speaks. Four things were out and were put right.
+
+With the bow asked three times nearer the bridge than it is usually drawn, which is the top of
+controller 74, 172 of 185 bowed notes were hoarse and 148 were more than five cents off their
+pitch, by as much as 88. The least force that holds a bowed string's motion grows as the
+square of how near the bridge the bow is, and the most this string takes was found not to
+grow at all, so there no force does both; and a player who pressed until the string stopped
+whistling crushed the note. The bow now stops where the string holds and leans harder for the
+rest. Four of the 185 are hoarse and 13 are off their pitch, nearly all of those from A♯6 up,
+where a leaning bow still pulls the note flat. With the bow where it is usually drawn nothing
+changed.
+
+A clarinet blown at nine tenths of its breath pressure sounded up to 8 cents sharp, and a
+whistle's top notes 4 cents flat; both are within a cent and a half now at every pressure. A
+soft note under a flutter-tongue had kept little but its breath, 13 to 28 dB under the same
+note played plainly, and lies about 6 dB under it. A guitar's harmonics were evened against
+the note of the string they are played on and not the note heard: they are within 1.8 dB rms
+of the harmonics beside them where they were within 2.9.
+
+Two things were found and left. A recorded classical guitar's first string has about 17 dB
+less between two and four kilohertz than at its fundamental in a note's first half second, and
+35 dB less here; its wound strings match. Letting the plain strings go more quickly closes
+that, and makes the mel distance of the table above worse by six in a hundred, because the
+second partial of those notes is already too strong. And the lowest notes of a bowed bass,
+E1 and F1, are rougher than a recorded one's a third above them.
 
 The slapped bass is read beside three recorded electric basses, each note played finger-style,
 with the thumb and popped. What is compared is what slapping does to a note: each measure less

@@ -101,8 +101,17 @@ struct Settings {
 /// How much a rolled tongue takes away at each roll: of the pressure the breath has over what
 /// the note needs to sound at all, and of that pressure itself. Nearly all of the first and
 /// very little of the second, or the reed would stop between rolls and have to start again.
+/// Cents sharp a note above `BLOWN_SHARP_HZ` sounds with the breath at its hardest, before the
+/// player brings it down; it goes as the fourth power of the breath, and a low note, whose
+/// reed is shut for less of its long period, goes sharp by less. Measured on this bore.
+const BLOWN_SHARP: f32 = 24.0;
+const BLOWN_SHARP_HZ: f32 = 500.0;
 const FLUTTER: f32 = 0.9;
 const FLUTTER_UNDER: f32 = 0.04;
+/// The most of what the breath has over the note's threshold that a roll takes the pressure
+/// under it by. A soft breath has very little over, and a tongue that went as far under as it
+/// does for a loud one left the reed at rest for most of every roll: the note was its breath.
+const FLUTTER_SPARE: f32 = 0.3;
 
 /// What a voice needs for one control tick.
 #[derive(Clone, Copy, Debug, Default)]
@@ -402,12 +411,12 @@ impl Reeds {
             // let go at the full playing pressure began each one with a bark.
             voice.mouth = TONGUED * threshold;
         }
+        let under = (FLUTTER_UNDER * threshold).min(FLUTTER_SPARE * over) * (1.0 - roll) / FLUTTER;
         voice.wind = Wind {
             // The breath controller blows over the threshold, as the pedal does, until at the
             // bottom of its travel there is no breath left to reach it.
             mouth: if voice.held {
-                (threshold * (1.0 - FLUTTER_UNDER * (1.0 - roll) / FLUTTER) + over * roll)
-                    * performance.speaking()
+                (threshold - under + over * roll) * performance.speaking()
             } else {
                 0.0
             },
@@ -422,9 +431,15 @@ impl Reeds {
             air: lowpass_pole(7_000.0, internal),
             gain: (REGISTER_HZ / fundamental).powf(0.35).clamp(0.5, 2.5),
         };
+        // A reed blown hard is shut for part of every period and gives the wave back early: the
+        // note goes sharp, and the player lets the jaw down by as much as they hear.
+        let sharp = dial(dials::REED_SHARP, BLOWN_SHARP)
+            * breath.powi(4)
+            * (fundamental / BLOWN_SHARP_HZ).powf(0.85).min(1.0);
+        let played = fundamental * (-sharp / 1200.0).exp2();
         // A closed pipe sounds the note whose half period is one trip down the bore and back.
         // The open end's two filter stages take a little of that time themselves.
-        let wanted = (internal / (2.0 * fundamental) - 2.0 * lowpass_delay(pole, turn))
+        let wanted = (internal / (2.0 * played) - 2.0 * lowpass_delay(pole, turn))
             .clamp(3.0, voice.bore.reach());
         if start || voice.delay == 0.0 {
             voice.delay = wanted;

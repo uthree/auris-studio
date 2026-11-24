@@ -45,6 +45,8 @@ use auris_core::{ParamDescriptor, ParamUnit};
 use auris_dsp::DcBlocker;
 
 use super::body::{self, Radiator, seeded};
+use super::calibration::dial;
+use super::dials;
 use super::waveguide::{Decimator, Line, Noise, lowpass_delay, lowpass_gain, lowpass_pole};
 use super::{Engine, Mute, Note, Performance, Quality, TICK, harmonics, hertz, touch_position};
 use crate::ParamBank;
@@ -75,6 +77,16 @@ const KNEE: f32 = 0.05;
 /// strings go a tenth of a semitone flat.
 const LIGHTEST: f32 = 0.12;
 const HEAVIEST: f32 = 0.6;
+/// The nearest the bridge, as a share of the sounding string, that this string holds
+/// Helmholtz's motion under any bow. The least force that holds it grows as the square of how
+/// near the bow is, and the most the string takes was measured not to grow at all nearer than
+/// the place a bow is usually drawn: nearer than this there is no force that does both. A
+/// player asked for more goes this far and leans on the bow for the rest, which is the
+/// greater part of what playing by the bridge is.
+const NEAREST_HELD: f32 = 0.09;
+/// How much of the way a bow could not go becomes weight: the power of how many times nearer
+/// the bridge it was asked to be that the force is multiplied by.
+const LEAN: f32 = 0.5;
 /// The share a note is caught at, however lightly it is then played.
 const CATCH: f32 = 0.55;
 /// Periods over which that first firmness eases to the pressure asked for.
@@ -638,10 +650,12 @@ impl Bowed {
             voice.technique == Technique::Pizzicato,
             voice.technique == Technique::Tremolo,
         );
-        let position = if plucked {
-            voice.position
+        let (position, lean) = if plucked {
+            (voice.position, 1.0)
         } else {
-            (voice.position * stopped(voice.body, fundamental)).min(0.3)
+            let asked = (voice.position * stopped(voice.body, fundamental)).min(0.3);
+            let held = asked.max(dial(dials::BOW_NEAREST, NEAREST_HELD));
+            (held, (held / asked).powf(dial(dials::BOW_LEAN, LEAN)))
         };
         // The bow comes round to what evens the note out over a few hundredths of a second.
         voice.evening += 0.2 * (voice.evened - voice.evening);
@@ -658,7 +672,7 @@ impl Bowed {
         let limit = speed.max(0.02) / (position * (GRIP - SLIDE));
         let pressure =
             (settings.pressure + 0.2 * (voice.velocity - 0.5) - lightened).clamp(0.0, 1.0);
-        let asked = LIGHTEST * (HEAVIEST / LIGHTEST).powf(pressure);
+        let asked = (LIGHTEST * (HEAVIEST / LIGHTEST).powf(pressure) * lean).min(HEAVIEST);
         let ease = (EASE_PERIODS / fundamental).clamp(0.05, 0.4);
         // A tremolo's strokes are too short to ease into: each is played at the pressure asked
         // for from its start.
@@ -1043,7 +1057,13 @@ impl Engine for Bowed {
             let scale = if voice.technique == Technique::Pizzicato {
                 PLUCK_DRIVE
             } else {
-                DRIVE * (voice.position / 0.09).sqrt()
+                // A bow moves the bridge further the nearer it is drawn, and is heard evenly
+                // by that much: from where it is drawn, which is not always where it was asked.
+                let reach = stopped(voice.body, hertz(voice.pitch).max(LOWEST_HZ));
+                let drawn = voice
+                    .position
+                    .max(dial(dials::BOW_NEAREST, NEAREST_HELD) / reach);
+                DRIVE * (drawn / 0.09).sqrt()
             } / (voice.count as f32).sqrt();
             let bow = voice.bow;
             used[voice.body] = true;

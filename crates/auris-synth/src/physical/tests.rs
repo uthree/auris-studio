@@ -1912,8 +1912,11 @@ fn controller_74_draws_the_bow_toward_the_bridge_or_over_the_fingerboard() {
         top(&plain),
         top(&bowed(&[controller(0, 74, 1.0)])),
     );
+    // Toward the bridge the note is brighter by what a string that still sounds its note
+    // can be. It read half as bright again while a bow drawn there crushed the note, and
+    // most of that was the noise of the crushing.
     assert!(
-        tasto < normal * 0.9 && normal * 1.5 < ponticello,
+        tasto < normal * 0.9 && normal * 1.2 < ponticello,
         "centroid sul tasto {tasto}, ordinario {normal}, sul ponticello {ponticello} harmonics"
     );
 }
@@ -2593,4 +2596,106 @@ fn a_grands_lowest_strings_keep_their_top() {
     let bright = 20.0
         * (band_amplitude(blow, 48_000.0, 2_800.0) / band_amplitude(blow, 48_000.0, 400.0)).log10();
     assert!(bright > -31.0, "G1's blow from 2 to 4 kHz: {bright} dB");
+}
+
+#[test]
+fn a_soft_breath_still_sounds_its_note_under_a_rolled_tongue() {
+    // A soft breath has little over what the note needs, and a tongue that took the pressure
+    // as far under as it does a loud one's left only the breath: a fifth of the level.
+    for pitch in [50_u8, 62, 74, 86] {
+        let take = |technique: f32| {
+            let mut clarinet = played(Model::Clarinet, technique);
+            clarinet.set_param("vibrato", 0.0);
+            clarinet.render(72_000, &[on(pitch, 0.15)])[36_000..].to_vec()
+        };
+        let (plain, fluttered) = (take(0.0), take(1.0));
+        let level = level_db(&fluttered) - level_db(&plain);
+        assert!((-10.0..0.5).contains(&level), "{pitch}: {level} dB");
+        let cents = peak_cents(&fluttered, 48_000.0, hz(pitch), -300..=300);
+        assert!(cents.abs() < 5.0, "{pitch}: {cents} cents");
+    }
+}
+
+#[test]
+fn the_winds_stay_on_the_note_however_hard_they_are_blown() {
+    // A reed blown hard is shut for part of every period and went eight cents sharp; a
+    // whistle's pipe was a little long for its top notes, and they were four cents flat.
+    for (model, pitches) in [
+        (Model::Clarinet, [50_u8, 62, 74, 86]),
+        (Model::TinWhistle, [62, 74, 86, 105]),
+    ] {
+        for pressure in [0.2, 0.5, 0.9] {
+            for pitch in pitches {
+                let mut wind = rig(model, 48_000.0);
+                wind.set_param("vibrato", 0.0);
+                wind.set_param("pressure", pressure);
+                let audio = wind.render(60_000, &[on(pitch, 0.9)]);
+                let cents = peak_cents(&audio[24_000..], 48_000.0, hz(pitch), -150..=150);
+                assert!(
+                    cents.abs() < 2.5,
+                    "{model:?} {pitch} at pressure {pressure}: {cents} cents"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_harmonic_is_evened_against_the_note_that_is_heard() {
+    // The hand learns which notes the box favours from what it hears, and a harmonic is
+    // heard an octave over the string it is played on. Evened against the string's own note,
+    // one harmonic stood seven decibels under the two beside it.
+    let level = |pitch: u8| {
+        let mut guitar = played(Model::Guitar, 1.0);
+        level_db(&guitar.render(48_000, &[on(pitch, 0.6)]))
+    };
+    let levels: Vec<f64> = (52_u8..=84).map(level).collect();
+    for (index, pitch) in (53_u8..=83).enumerate() {
+        let apart = levels[index + 1] - (levels[index] + levels[index + 2]) / 2.0;
+        assert!(
+            apart.abs() < 6.0,
+            "{pitch}: {apart:+.1} dB from its neighbours"
+        );
+    }
+}
+
+#[test]
+fn a_bow_asked_nearer_the_bridge_than_the_string_holds_leans_and_stays_on_the_note() {
+    // Three times nearer the bridge than a bow is usually drawn, no force this string takes
+    // holds Helmholtz's motion: drawn there, these notes were 7 to 48 cents flat and hoarse.
+    // The bow goes as near as the string holds and leans for the rest.
+    let near = |position: f32, brightness: Option<f32>, pitch: u8| {
+        let mut violin = rig(Model::Violin, 48_000.0);
+        violin.set_param("players", 1.0);
+        violin.set_param("vibrato", 0.0);
+        violin.set_param("position", position);
+        let mut events = vec![on(pitch, 0.6)];
+        if let Some(value) = brightness {
+            events.insert(0, controller(0, 74, value));
+        }
+        violin.render(84_000, &events)[36_000..].to_vec()
+    };
+    for pitch in [38_u8, 46, 57, 62, 64, 66, 76] {
+        let usual = near(0.09, None, pitch);
+        let cents = peak_cents(&usual, 48_000.0, hz(pitch), -600..=600);
+        assert!(
+            cents.abs() < 5.0,
+            "{pitch} at the usual place: {cents} cents"
+        );
+        // The bow moved by the control, and by controller 74 from where it usually is.
+        for (position, brightness) in [(0.03, None), (0.05, None), (0.09, Some(1.0))] {
+            let audio = near(position, brightness, pitch);
+            let cents = peak_cents(&audio, 48_000.0, hz(pitch), -600..=600);
+            assert!(
+                cents.abs() < 8.0,
+                "{pitch} at {position} ({brightness:?}): {cents} cents"
+            );
+            // Heard as evenly as a bow in its usual place, which is where it is.
+            let level = level_db(&audio) - level_db(&usual);
+            assert!(
+                level.abs() < 3.0,
+                "{pitch} at {position} ({brightness:?}): {level:+.1} dB"
+            );
+        }
+    }
 }

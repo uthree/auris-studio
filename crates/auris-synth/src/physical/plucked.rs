@@ -735,10 +735,11 @@ impl Engine for Plucked {
         let (acoustic, magnetic) = (self.acoustic(), self.magnetic());
         let glide = self.build.glide * note.velocity * note.velocity;
         // A note the box favours is plucked a little more gently, and one it refuses a
-        // little harder: what a player's hand learns of an instrument.
+        // little harder: what a player's hand learns of an instrument. It is the note heard
+        // that the hand learns, and a harmonic is heard an octave over its string.
         let evened = if acoustic > 0.0 {
             self.body
-                .favour(fundamental)
+                .favour(hertz(note.pitch))
                 .powf(-EVENING * acoustic)
                 .clamp(0.6, 1.5)
         } else {
