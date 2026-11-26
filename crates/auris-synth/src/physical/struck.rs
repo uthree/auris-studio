@@ -111,14 +111,22 @@ const BRIDGE_SLOPE: f32 = -0.1426;
 /// Internal friction of the partials above the fundamental, in decibels per second per
 /// kilohertz squared.
 const FRICTION: f32 = 0.9172;
+/// Where that friction stops growing as the square of frequency, in kilohertz, and levels
+/// off towards what it is at the knee. The square was fitted to partials below four
+/// kilohertz; carried on up, it had the eight-to-twelve-kilohertz band of every note from A3
+/// to A5 dying at 55 to 90 dB a second, where the recorded Steinway's dies at 10 to 30.
+const FRICTION_KNEE: f32 = 5.0;
 /// How the hammers are voiced, for each C from C1 to C8: decades by which their felt is
 /// softer or stiffer than the published measurements, at half a millimetre of compression.
 /// A technician needles a grand's hammers until it sounds as it should, and these are needled
-/// against the same Steinway: softest where the ear is keenest, in the fifth octave, and
-/// nearly as measured at either end. The two lowest were needled again against the blows of
-/// its G1, C2 and G2, which had 6 to 20 dB more than these hammers gave between one and eight
-/// kilohertz; they give within 11 dB of it now, at no cost to how each partial stands.
-const FELT: [f32; 8] = [-0.4, -0.5, -0.7, -1.3, -1.7, -1.4, -0.7, -0.3];
+/// against the same Steinway: softest where the ear is keenest, in the fifth and sixth
+/// octaves, and nearly as measured at either end. The two lowest were needled again against
+/// the blows of its G1, C2 and G2, which had 6 to 20 dB more than these hammers gave between
+/// one and eight kilohertz; they give within 11 dB of it now, at no cost to how each partial
+/// stands. The middle was needled at its Cs alone at first, and the Steinway's C4 and C5
+/// happen to be its two dullest keys there: against fifty-five of its notes from C3 to E6 the
+/// partials above two kilohertz stood 13 dB short, and they stand within 4 dB now.
+const FELT: [f32; 8] = [-0.4, -0.5, -0.5, -0.9, -1.1, -1.1, -0.7, -0.3];
 /// How much more steeply than measured the voiced felt stiffens as it is driven in, added to
 /// the exponent of its force law. It is what makes a soft blow so much rounder than a hard one.
 const FELT_SHAPE: f32 = 0.4;
@@ -126,8 +134,10 @@ const FELT_SHAPE: f32 = 0.4;
 const FELT_PIVOT: f32 = 5.0e-4;
 /// What each register is brought up by against the same recorded grand, in decibels: how far
 /// the bridge moves follows from how fast the strings decay, but not all of how well the
-/// soundboard then turns the treble's short strokes into sound.
-const REGISTER: [f32; 8] = [2.0, 1.0, 1.0, 1.0, 4.0, 5.0, 8.0, 11.0];
+/// soundboard then turns the treble's short strokes into sound. A harder hammer gives the
+/// strings more, and the middle was brought down again by what its revoicing added at
+/// mezzo-forte, so that its registers stand where they were fitted.
+const REGISTER: [f32; 8] = [2.0, 1.0, 0.8, 0.1, 2.4, 3.1, 8.0, 11.0];
 /// Damper time relative to the release control: bass dampers take longer to stop their strings.
 const DAMPER: [f32; 8] = [2.5, 2.0, 1.4, 1.0, 0.8, 0.7, 0.6, 0.6];
 /// Unison mistuning the hertz bound below applies to, in cents: a freshly tuned piano.
@@ -827,7 +837,11 @@ impl Struck {
             let scale = NATURAL_DECAY / settings.decay.max(0.01) * (1.0 + 6.0 * settings.damping);
             let (khz, low) = (hz * 1.0e-3, fundamental * 1.0e-3);
             let friction = FRICTION * dial(dials::FRICTION, 1.0);
-            (aftersound(key) + friction * (khz * khz - low * low).max(0.0)) * scale * NEPERS_PER_DB
+            let knee = dial(dials::FRICTION_KNEE, FRICTION_KNEE);
+            let grown = |khz: f32| khz * khz / (1.0 + (khz / knee).powi(4)).sqrt();
+            (aftersound(key) + friction * (grown(khz) - grown(low)).max(0.0))
+                * scale
+                * NEPERS_PER_DB
         } else {
             let (friction, bending) = material(0.05);
             let target = decay_rate(settings.decay) * (fundamental / 293.66).powf(0.4);

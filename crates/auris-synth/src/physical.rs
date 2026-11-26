@@ -645,6 +645,8 @@ pub(crate) mod dials {
     pub(crate) const BRIDGE_SLOPE: usize = 69;
     /// Multiplies the internal friction of the partials above the fundamental.
     pub(crate) const FRICTION: usize = 70;
+    /// Where the internal friction stops growing as the square of frequency, in kilohertz.
+    pub(crate) const FRICTION_KNEE: usize = 71;
     /// The slapped bass: the force of a full pluck, the saddle's height, how far a pop pulls,
     /// the thumb's speed, its mass and its flesh's damping, what a fret gives back, and how
     /// many frets a string is held to.

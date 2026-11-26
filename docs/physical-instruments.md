@@ -251,9 +251,9 @@ smaller is closer.
 
 | Measure | Recorded | Reads | A model fitted to the same recordings |
 | --- | --- | --- | --- |
-| Piano, mel distance | Steinway B, C3–G4, 12 held-out notes | 0.162 | 0.152 |
+| Piano, mel distance | Steinway B, C3–G4, 12 held-out notes | 0.170 | 0.152 |
 | Piano, partial decay and envelope | Steinway B, C1–C8 | 4.9 dB, 1.4 dB | 5.4 dB, 2.0 dB |
-| Piano, partial balance, register level, knock | the same | 4.0 dB, 1.8 dB, 5.1 dB | 4.2 dB, 1.7 dB, 3.4 dB |
+| Piano, partial balance, register level, knock | the same | 4.3 dB, 1.7 dB, 5.2 dB | 4.2 dB, 1.7 dB, 3.4 dB |
 | Guitar, mel distance | classical guitar, 44 held-out notes | 0.160, and 0.154 as Nylon guitar | 0.144 |
 | Strings, mel distance | solo violin, 39 held-out notes | 0.111 | 0.080 |
 | Reeds, mel distance | B♭ clarinet, held-out pitches | 0.041 | 0.054 |
@@ -268,8 +268,8 @@ close a note is to one recording, not how it sounds. The recordings, what each m
 compares and the commands behind every row are in
 [physical instruments against real recordings](physical-copy-synthesis.md).
 
-From C3 to G4 the piano's pianissimo lies 12.7 dB under its mezzo-forte and its fortissimo
-7.0 dB over, at velocities of 0.35, 0.65 and 0.95; the recorded Steinway's lie 13.3 dB under
+From C3 to G4 the piano's pianissimo lies 12.1 dB under its mezzo-forte and its fortissimo
+6.8 dB over, at velocities of 0.35, 0.65 and 0.95; the recorded Steinway's lie 13.3 dB under
 and 9.6 dB over.
 
 Key to key, a piano's notes are within 0.8 dB rms of the keys around them, and a guitar's and
@@ -284,6 +284,21 @@ wound string, and the strings of a low pair, lie a few hundredths of a hertz fur
 than a treble unison's. Of the measures in the table the envelope moved from 1.5 to 1.4 dB
 and each partial's decay from 4.8 to 4.9 dB; the balance, the level and the knock are where
 they were, and no key above C3 changed.
+
+The middle was voiced again on 2026-11-26, against fifty-five of the same Steinway's notes
+from C3 to E6 at three dynamics rather than its Cs alone. Its C4 and C5 turn out to be the two
+dullest keys of that stretch, and hammers needled to them had left every note around them
+dull: the partials above two kilohertz stood 13 dB short of the recording on average, and from
+eight to twelve kilohertz the model had almost nothing, because the strings' internal
+friction, fitted below four kilohertz as the square of frequency, was carried on up and had
+that band dying at 55 to 90 dB a second where the recording's dies at 10 to 30. The hammers
+from C3 to C6 are harder now, the friction levels off above five kilohertz, and the registers
+there were brought down by what the harder hammers added at mezzo-forte. The partials above
+two kilohertz stand within 4 dB of the recording on average, and the second to eighth partials
+of a pianissimo note are 10.5 dB from it where they were 14.2. What it cost is in the table:
+the balance read at the Cs alone went from 4.0 to 4.3 dB, and the mel distance from 0.162 to
+0.170, all of it in the pianissimo notes. Decay, envelope and key-to-key evenness did not
+move.
 
 A clarinet's breath, read between the harmonics of the same recordings' settled notes, lies
 31 to 35 dB under the tone from pianissimo to fortissimo, and 33 to 35 dB here; it had been 21
