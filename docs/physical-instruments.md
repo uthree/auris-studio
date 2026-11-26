@@ -251,9 +251,9 @@ smaller is closer.
 
 | Measure | Recorded | Reads | A model fitted to the same recordings |
 | --- | --- | --- | --- |
-| Piano, mel distance | Steinway B, C3–G4, 12 held-out notes | 0.170 | 0.152 |
+| Piano, mel distance | Steinway B, C3–G4, 12 held-out notes | 0.171 | 0.152 |
 | Piano, partial decay and envelope | Steinway B, C1–C8 | 4.9 dB, 1.4 dB | 5.4 dB, 2.0 dB |
-| Piano, partial balance, register level, knock | the same | 4.3 dB, 1.7 dB, 5.2 dB | 4.2 dB, 1.7 dB, 3.4 dB |
+| Piano, partial balance, register level, knock | the same | 4.5 dB, 1.8 dB, 5.2 dB | 4.2 dB, 1.7 dB, 3.4 dB |
 | Guitar, mel distance | classical guitar, 44 held-out notes | 0.160, and 0.154 as Nylon guitar | 0.144 |
 | Strings, mel distance | solo violin, 39 held-out notes | 0.111 | 0.080 |
 | Reeds, mel distance | B♭ clarinet, held-out pitches | 0.041 | 0.054 |
@@ -268,8 +268,8 @@ close a note is to one recording, not how it sounds. The recordings, what each m
 compares and the commands behind every row are in
 [physical instruments against real recordings](physical-copy-synthesis.md).
 
-From C3 to G4 the piano's pianissimo lies 12.1 dB under its mezzo-forte and its fortissimo
-6.8 dB over, at velocities of 0.35, 0.65 and 0.95; the recorded Steinway's lie 13.3 dB under
+From C3 to G4 the piano's pianissimo lies 11.3 dB under its mezzo-forte and its fortissimo
+10.3 dB over, at velocities of 0.35, 0.65 and 0.95; the recorded Steinway's lie 13.3 dB under
 and 9.6 dB over.
 
 Key to key, a piano's notes are within 0.8 dB rms of the keys around them, and a guitar's and
@@ -299,6 +299,14 @@ of a pianissimo note are 10.5 dB from it where they were 14.2. What it cost is i
 the balance read at the Cs alone went from 4.0 to 4.3 dB, and the mel distance from 0.162 to
 0.170, all of it in the pianissimo notes. Decay, envelope and key-to-key evenness did not
 move.
+
+The same day a key's velocity was given the recorded grand's range of touch. A hammer's speed
+had followed a power of velocity, fitted to the pianissimo, and it left the fortissimo 7 dB
+over the mezzo-forte where the Steinway's stands 11 dB over, with the bands from two to eight
+kilohertz rising 6 dB less than the recording's as the blow hardened. The speed now rises by
+the same number of decibels for each step of velocity, 32 across the whole range, and over
+forty-odd notes from C2 to C7 a fortissimo stands 11.2 dB over a mezzo-forte, the recording's
+11.3, and a pianissimo 13.6 dB under it, the recording's 12.7.
 
 A clarinet's breath, read between the harmonics of the same recordings' settled notes, lies
 31 to 35 dB under the tone from pianissimo to fortissimo, and 33 to 35 dB here; it had been 21

@@ -624,11 +624,12 @@ fn a_harder_blow_is_brighter_as_well_as_louder() {
         brightness(&soft),
         brightness(&loud)
     );
-    // And the level follows the same law the rest of the house's instruments keep.
+    // And the level follows the recorded grand's: its pianissimo lies 13 dB under its
+    // mezzo-forte and its fortissimo 11 dB over.
     let quieter = level_db(&soft) - level_db(&middle);
     let louder = level_db(&loud) - level_db(&middle);
-    assert!((-13.0..-4.0).contains(&quieter), "pp {quieter} dB");
-    assert!((2.5..9.0).contains(&louder), "ff {louder} dB");
+    assert!((-15.0..-9.0).contains(&quieter), "pp {quieter} dB");
+    assert!((8.0..13.0).contains(&louder), "ff {louder} dB");
 }
 
 #[test]

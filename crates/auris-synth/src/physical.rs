@@ -317,7 +317,7 @@ impl Model {
     /// does not also change how loud it is.
     const fn normalization(self) -> f32 {
         match self {
-            Self::Piano => 0.505,
+            Self::Piano => 0.438,
             Self::HammeredDulcimer => 1.616,
             Self::Guitar => 0.806,
             Self::ElectricGuitar => 0.733,
@@ -632,7 +632,7 @@ pub(crate) mod dials {
     pub(crate) const KNOCK: usize = 32;
     /// Decibels added to a body's tilt at 50 Hz and at each octave above it: ten of them.
     pub(crate) const TILT: usize = 40;
-    /// Hammer speed at full velocity, and the power of velocity it follows.
+    /// Hammer speed at full velocity, and the decibels of speed the range of velocity spans.
     pub(crate) const SPEED: usize = 50;
     pub(crate) const SPEED_LAW: usize = 51;
     /// The felt's hysteresis.

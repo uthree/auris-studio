@@ -79,12 +79,14 @@ const NATURAL_DECAY: f32 = 10.0;
 /// Hammer speed at full velocity, in metres per second: a fortissimo.
 const FULL_SPEED: f32 = 4.6;
 /// A piano hammer's speed at full velocity, in metres per second.
-const GRAND_SPEED: f32 = 5.6;
-/// The power of a key's velocity a piano hammer's speed follows. With [`GRAND_SPEED`] it is
-/// read off the recorded Steinway's three dynamics from C3 to G4, taken as velocities of 0.35,
-/// 0.65 and 0.95: its pianissimo lies 13 dB under its mezzo-forte and its fortissimo 10 dB
-/// over, and the piano's lie 12.7 dB under and 7.0 dB over.
-const TOUCH: f32 = 1.9;
+const GRAND_SPEED: f32 = 8.97;
+/// Decibels of hammer speed the whole range of a key's velocity spans: each step of velocity
+/// is the same number of decibels faster. With [`GRAND_SPEED`] it is read off the recorded
+/// Steinway's three dynamics from C2 to C7, taken as velocities of 0.35, 0.65 and 0.95. A power
+/// of velocity, which this replaced, cannot have them: the recording's fortissimo stands as
+/// far over its mezzo-forte as its pianissimo stands under, 11 and 13 dB, and a power fitted
+/// to the pianissimo left the fortissimo 7 dB over, with 2 to 8 kHz rising 6 dB too little.
+const TOUCH: f32 = 32.0;
 /// Brings a blow's impulse, in newton seconds, to the scale the rest of the instrument works at.
 const DRIVE: f32 = 60.0;
 /// How hard a blow knocks the case, against how hard it drives a string.
@@ -1190,10 +1192,12 @@ impl Engine for Struck {
             * FELT_PIVOT.powf(-shape)
             * if shifted { SHIFTED_FELT } else { 1.0 };
         // A felt hammer's blow grows a little faster than its speed, and a key's velocity
-        // is asked for nearly the square of the speed: together they are the range of touch
-        // a piano has, twice as wide in decibels as an instrument that is simply louder.
+        // spans thirty-odd decibels of speed: together they are the range of touch a piano
+        // has, wider than an instrument that is simply louder, and as wide above a
+        // mezzo-forte as below it.
         let speed = if piano {
-            dial(dials::SPEED, GRAND_SPEED) * note.velocity.powf(dial(dials::SPEED_LAW, TOUCH))
+            let span = dial(dials::SPEED_LAW, TOUCH);
+            dial(dials::SPEED, GRAND_SPEED) * 10.0_f32.powf(span * (note.velocity - 1.0) / 20.0)
         } else {
             FULL_SPEED * note.velocity
         };
