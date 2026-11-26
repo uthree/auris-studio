@@ -322,6 +322,48 @@ fn response(poles: &[Pole], direct: &Direct, hz: f32, rate: f32) -> (f64, f64) {
     (total_re, total_im)
 }
 
+/// The real half of the bridge's mobility on a logarithmic grid up to `limit`, each point
+/// divided by the mean over a third of an octave either side. Allocates.
+///
+/// Mobility is not radiation: a mode the board barely radiates still drains the strings that
+/// drive it. So every mode counts here as a resonance of unit peak, and the tilt and what the
+/// bridge radiates by itself — both of them about radiation — are left out.
+fn conductance_grid(modes: &[ModeSpec], limit: f32) -> Vec<f32> {
+    let points = ((limit / CONDUCTANCE_FROM).log2() * CONDUCTANCE_STEPS).max(0.0) as usize + 1;
+    let real: Vec<f64> = (0..points)
+        .map(|point| {
+            let hz = f64::from(CONDUCTANCE_FROM * (point as f32 / CONDUCTANCE_STEPS).exp2());
+            modes
+                .iter()
+                .map(|mode| {
+                    let centre = f64::from(mode.hz);
+                    let detuning = f64::from(mode.q) * (hz / centre - centre / hz);
+                    1.0 / (1.0 + detuning * detuning)
+                })
+                .sum::<f64>()
+        })
+        .collect();
+    // A running sum, so that every point's mean costs two lookups.
+    let mut sums = Vec::with_capacity(points + 1);
+    sums.push(0.0_f64);
+    for value in &real {
+        sums.push(sums.last().copied().unwrap_or(0.0) + value);
+    }
+    let reach = (CONDUCTANCE_SPAN * CONDUCTANCE_STEPS) as usize;
+    real.iter()
+        .enumerate()
+        .map(|(point, value)| {
+            let (from, to) = (point.saturating_sub(reach), (point + reach + 1).min(points));
+            let mean = (sums[to] - sums[from]) / (to - from) as f64;
+            if mean > 1.0e-12 {
+                (value / mean) as f32
+            } else {
+                1.0
+            }
+        })
+        .collect()
+}
+
 /// Brings the crowd's local average onto the tilt.
 ///
 /// The first guess takes each mode's neighbours to be evenly spaced and all alike. They are
@@ -417,7 +459,18 @@ pub(crate) struct Radiator {
     laid_scale: f32,
     /// What the bridge radiates by itself, before rescaling moved its band.
     laid_direct: f32,
+    /// The bridge's conductance against its own local average, on a logarithmic grid of
+    /// [`CONDUCTANCE_STEPS`] a octave from [`CONDUCTANCE_FROM`] hertz, at the scale `prepare`
+    /// laid the body out for.
+    conductance: Vec<f32>,
 }
+
+/// Lowest frequency the conductance grid starts at.
+const CONDUCTANCE_FROM: f32 = 20.0;
+/// Points of the conductance grid in an octave: a tenth of the narrowest mode's width.
+const CONDUCTANCE_STEPS: f32 = 240.0;
+/// Octaves either side over which the conductance is averaged to find its trend.
+const CONDUCTANCE_SPAN: f32 = 1.0 / 3.0;
 
 /// Silent control ticks after which a body's state is checked for having died away.
 const IDLE_TICKS: u32 = 16;
@@ -493,7 +546,32 @@ impl Radiator {
         self.laid_scale = scale;
         self.floor_pole = (-TAU * (spec.floor_hz * scale).min(rate * 0.2) / rate).exp();
         self.dry_gain = 1.0;
+        self.conductance = conductance_grid(&self.laid, limit);
         self.reset();
+    }
+
+    /// How readily the bridge takes energy at `hz`, against what it takes on average around
+    /// there: above one on a mode of the body, below it between modes.
+    ///
+    /// The bridge drains a partial through the real half of its mobility, which is made of the
+    /// same crowd of modes that radiates it. Where those modes stand apart — a few hertz wide
+    /// and tens of hertz from each other, as a board's low modes are — one partial falls on a
+    /// mode and dies quickly while its neighbour falls between two and rings on, and the
+    /// strings of a unison lock together on the one and beat on the other. Higher up the modes
+    /// overlap and the ratio stays near one. The trend is left to whoever calls this, which is
+    /// why it is a ratio. Looks up a table, so it may be asked for on the audio thread.
+    pub(crate) fn conductance(&self, hz: f32) -> f32 {
+        let moved = self.scale / self.laid_scale.max(1.0e-6);
+        let at = (hz / moved / CONDUCTANCE_FROM).max(1.0e-6).log2() * CONDUCTANCE_STEPS;
+        if at.is_nan() || at < 0.0 {
+            return 1.0;
+        }
+        let index = at as usize;
+        let frac = at - index as f32;
+        match (self.conductance.get(index), self.conductance.get(index + 1)) {
+            (Some(a), Some(b)) => a + (b - a) * frac,
+            _ => 1.0,
+        }
     }
 
     /// Modes laid out.
@@ -1131,6 +1209,29 @@ mod tests {
             side_out.extend_from_slice(&placed);
         }
         (mid_out, side_out)
+    }
+
+    #[test]
+    fn a_board_drains_a_low_partial_unevenly_and_a_high_one_alike() {
+        let board = prepared(&SOUNDBOARD, 1.0, 48_000.0);
+        let spread = |from: f32, to: f32| {
+            let values: Vec<f32> = (0..400)
+                .map(|step| board.conductance(from * (to / from).powf(step as f32 / 400.0)))
+                .collect();
+            let (low, high) = values.iter().fold((f32::MAX, 0.0_f32), |(low, high), v| {
+                (low.min(*v), high.max(*v))
+            });
+            let mean = values.iter().sum::<f32>() / values.len() as f32;
+            (low, high, mean)
+        };
+        // Below a hundred hertz the board's modes stand apart: a partial on one is drained
+        // several times as fast as the trend, one between two at a fifth of it.
+        let (low, high, mean) = spread(50.0, 100.0);
+        assert!(high > 3.0 && low < 0.3, "low {low}, high {high}");
+        assert!((0.8..1.25).contains(&mean), "mean {mean}");
+        // At a few kilohertz they overlap, and every partial is drained about alike.
+        let (low, high, _) = spread(3_000.0, 4_000.0);
+        assert!(low > 0.5 && high < 1.6, "low {low}, high {high}");
     }
 
     fn prepared(spec: &'static BodySpec, scale: f32, rate: f32) -> Radiator {

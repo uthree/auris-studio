@@ -251,9 +251,9 @@ smaller is closer.
 
 | Measure | Recorded | Reads | A model fitted to the same recordings |
 | --- | --- | --- | --- |
-| Piano, mel distance | Steinway B, C3–G4, 12 held-out notes | 0.171 | 0.152 |
-| Piano, partial decay and envelope | Steinway B, C1–C8 | 4.9 dB, 1.4 dB | 5.4 dB, 2.0 dB |
-| Piano, partial balance, register level, knock | the same | 4.5 dB, 1.8 dB, 5.2 dB | 4.2 dB, 1.7 dB, 3.4 dB |
+| Piano, mel distance | Steinway B, C3–G4, 12 held-out notes | 0.170 | 0.152 |
+| Piano, partial decay and envelope | Steinway B, C1–C8 | 5.1 dB, 1.5 dB | 5.4 dB, 2.0 dB |
+| Piano, partial balance, register level, knock | the same | 4.5 dB, 1.8 dB, 5.3 dB | 4.2 dB, 1.7 dB, 3.4 dB |
 | Guitar, mel distance | classical guitar, 44 held-out notes | 0.160, and 0.154 as Nylon guitar | 0.144 |
 | Strings, mel distance | solo violin, 39 held-out notes | 0.111 | 0.080 |
 | Reeds, mel distance | B♭ clarinet, held-out pitches | 0.041 | 0.054 |
@@ -318,6 +318,33 @@ drained four and a half times as fast as a unison's shared motion, the second at
 that, and each is heard by itself. Over those notes each partial's decay reads 6.9 dB from the
 recording where it read 7.4, and the envelope 1.6 dB where it read 2.3. From C2 up the strings
 come in pairs and nothing changed.
+
+The same day the piano was given what makes a grand's bass sound like wire and not like a
+coil spring. Three things were missing, each read off the recordings:
+
+* **The strings' longitudinal motion.** A string that swings is stretched, and its tension
+  carries the sums and differences of its partials into the modes along its length, which ring
+  at a frequency no transverse partial explains — 852 Hz on the recorded C2, 949 Hz on G1,
+  1,442 Hz on A1, the same whether the key is struck softly or hard. Between them and the
+  phantom partials they pass on, the recording has energy 12 to 35 dB under its partials off the
+  transverse series from A0 to A2, and the model had none at all. It has it now, worked out
+  sample by sample from the transverse partials, and within 3 dB of the recording at most of
+  those keys; it fades out by E3, above which the recording's lie under its noise.
+* **A board that drains each partial its own way.** The bridge took from every partial along a
+  smooth curve, so a low note's partials faded in step. It now takes from each through the
+  soundboard's modes: below a few hundred hertz a partial that falls on one dies quickly and one
+  that falls between two rings on.
+* **Strings that are not all the same wire.** The strings of a unison were drawn to one gauge,
+  so a tuner's unison stayed together at every partial and barely beat. Their stiffness now
+  differs by a few hundredths, the key's own, and their upper partials drift apart and beat
+  each at its own rate. The recording's partials swing 3 to 5 dB about their decay from C2 to
+  C6 and the model's swung 1 to 2 dB; at C4 they now swing 3.8.
+
+What it cost is in the table: each partial's decay went from 4.9 to 5.1 dB and the envelope
+from 1.3 to 1.5 dB, because beats of the model's own rarely fall where the recorded piano's
+do. The mel distance went from 0.171 to 0.170, and the keys stand within 0.8 dB of their
+neighbours at every dynamic. Still short of the recording: from A0 to E3 the band from 500 Hz
+to 1 kHz pulses with every period of the note about 10 dB more than the recording's does.
 
 A clarinet's breath, read between the harmonics of the same recordings' settled notes, lies
 31 to 35 dB under the tone from pianissimo to fortissimo, and 33 to 35 dB here; it had been 21

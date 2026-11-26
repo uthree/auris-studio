@@ -40,6 +40,7 @@ use super::body::{self, Radiator, seeded};
 use super::calibration::dial;
 use super::hammer::{Blow, Hammer, across_keys, grand};
 use super::rotors::{NEPERS_PER_DB, Rotor, Rotors, decay_rate, pole};
+use super::stretch::{self, Stretch};
 use super::strings::{Losses, material, partial_ratio};
 use super::unison::{Normal, STRINGS, normals};
 use super::{
@@ -175,6 +176,80 @@ const PLANE_HEARD: f64 = 1.3;
 /// first second and the third where the recording loses 3 to 7.
 const PLANE_FIRST: f64 = 4.5;
 /// Wave impedance of one dulcimer wire, in kilograms per second: a fifth of a piano's.
+/// How closely the bridge's loss of each partial follows the soundboard's modes: the power of
+/// the board's conductance, against its trend, that multiplies the loss. A board's low modes
+/// stand apart, so a bass partial on one dies quickly and locks its unison together while the
+/// partial beside it rings on and beats; with every partial drained alike, the partials of a
+/// low note fade in step and the note rings like a coil spring.
+const JAGGED: f32 = 0.5;
+
+/// How far the stiffness of the strings of one unison stands apart, as a share of it. No two
+/// lengths of wire are drawn to quite the same gauge, and stiffness goes as the fourth power of
+/// it: a tuner brings a unison's low partials together, and the strings' upper partials, which
+/// stiffness moves the most, drift apart and beat, each partial at its own rate. Which string
+/// of a key is the stiffer is the key's own and does not change from blow to blow.
+const SPREAD: f32 = 0.08;
+
+/// The first longitudinal mode of the strings of each key that has one worth hearing, and how
+/// loud it is, in decibels, against what the products of the transverse partials alone would
+/// make of it. Both are read off the recorded grand: the frequency as the peak that stands at
+/// the same place however hard the key is struck and belongs to no transverse partial, the
+/// level as the energy in every such peak against the energy in the partials. A wound string's
+/// winding adds mass and no stiffness, so its longitudinal mode lies far lower than a plain
+/// wire's would, and where it lies depends on how heavily each string is wound — which is why
+/// neither column is smooth.
+const LONGITUDINAL: [(f32, f32, f32); 9] = [
+    (21.0, 1_352.0, -7.0),
+    (24.0, 1_359.0, -15.0),
+    (28.0, 992.0, -9.0),
+    (31.0, 949.0, 14.0),
+    (33.0, 1_442.0, 12.5),
+    (36.0, 852.0, 7.5),
+    (40.0, 1_997.0, 19.0),
+    (45.0, 1_880.0, 27.0),
+    (52.0, 2_490.0, 27.0),
+];
+/// How loud the longitudinal motion is against the transverse, at a full blow.
+const STRETCH: f32 = 1.0e-5;
+/// Quality factor of the longitudinal modes.
+const STRETCH_Q: f32 = 40.0;
+/// How much less than the square of the hammer's speed the longitudinal motion grows. A
+/// string's stretch goes as the square of its swing, so the longitudinal ring should grow
+/// twice as fast as the note; on the recorded grand it grows only a few decibels faster from
+/// mezzo-forte to fortissimo, the felt hardening and the swing saturating as the blow grows.
+const STRETCH_TOUCH: f32 = 0.5;
+/// Keys over which the longitudinal ring fades out: from the last key it is full on to the last
+/// it is heard on. Above the bass the plain strings' longitudinal modes lie high and the
+/// recorded grand's are lost among its transverse partials.
+const STRETCH_FADE: (f32, f32) = (45.0, 52.0);
+
+/// First longitudinal mode of `key`'s strings, in hertz, and its level as a gain; a gain of
+/// zero for a key without one.
+fn longitudinal(key: f32) -> (f32, f32) {
+    let gain = |db: f32| 10.0_f32.powf(db / 20.0) * stretch_fade(key);
+    let (first, last) = (LONGITUDINAL[0], LONGITUDINAL[LONGITUDINAL.len() - 1]);
+    if key <= first.0 {
+        return (first.1, gain(first.2));
+    }
+    for pair in LONGITUDINAL.windows(2) {
+        let (low, high) = (pair[0], pair[1]);
+        if key <= high.0 {
+            let t = (key - low.0) / (high.0 - low.0);
+            return (
+                low.1 * (high.1 / low.1).powf(t),
+                gain(low.2 + (high.2 - low.2) * t),
+            );
+        }
+    }
+    (last.1, gain(last.2))
+}
+
+/// How much of the longitudinal ring `key` keeps, from one in the bass to none above it.
+fn stretch_fade(key: f32) -> f32 {
+    let (full, gone) = STRETCH_FADE;
+    (1.0 - (key - full) / (gone - full)).clamp(0.0, 1.0)
+}
+
 const WIRE: f32 = 0.45;
 
 /// Geometric interpolation of a C1..C8 curve at a fractional MIDI pitch.
@@ -388,6 +463,10 @@ struct Voice {
     last: f32,
     moving: f32,
     loudest: f32,
+    /// The strings' longitudinal motion.
+    stretch: Stretch,
+    /// How loud this blow makes the longitudinal motion against the square of its swing.
+    stretched: f32,
 }
 
 impl Voice {
@@ -908,10 +987,13 @@ impl Struck {
         }
     }
 
-    /// What the bridge takes from the shared motion of partial `order`, in nepers per second.
-    fn bridge_loss(&self, key: f32, order: f32) -> f32 {
+    /// What the bridge takes from the shared motion of partial `order`, at `hz`, in nepers per
+    /// second.
+    fn bridge_loss(&self, key: f32, order: f32, hz: f32) -> f32 {
         if self.is_piano() {
-            bridge(key) * order.powf(bridge_slope()) * NEPERS_PER_DB
+            let jagged = dial(dials::JAGGED, JAGGED);
+            let board = self.body.conductance(hz).clamp(0.05, 20.0).powf(jagged);
+            bridge(key) * order.powf(bridge_slope()) * board * NEPERS_PER_DB
         } else {
             (3.0 + 36.0 * self.settings.damping) * NEPERS_PER_DB
         }
@@ -966,17 +1048,33 @@ impl Struck {
         let strings = stringing.strings;
         let damper = self.damper(key) * damped;
         let drive = DRIVE / rate;
+        // Each string's stiffness against the unison's, about zero across the strings. A wound
+        // string's two planes are one wire, and stand together.
+        let gauge: [f64; STRINGS] = if stringing.planes || !self.is_piano() {
+            [0.0; STRINGS]
+        } else {
+            let spread = f64::from(dial(dials::SPREAD, SPREAD));
+            let drawn: [f64; STRINGS] = std::array::from_fn(|string| {
+                f64::from(seeded(u32::from(voice.key), 0x5EED + string as u32)) - 0.5
+            });
+            let mean = drawn[..strings].iter().sum::<f64>() / strings as f64;
+            std::array::from_fn(|string| 2.0 * spread * (drawn[string] - mean))
+        };
         for n in 0..partials {
             let order = (n + 1) as f32;
             let hz = fundamental * partial_ratio(order, stiffness);
             let own = self.own_loss(key, fundamental, hz, order, stiffness) + damper;
-            let bridge = self.bridge_loss(key, order);
+            let bridge = self.bridge_loss(key, order, hz);
             let give = self.give(key, fundamental, order);
             let detune: [f64; STRINGS] = std::array::from_fn(|string| {
                 let apart = (stringing.cents[string] / 1200.0).exp2() - 1.0;
+                // A stiffer string's partial stands further sharp, by the share of its
+                // stretch that stiffness brings.
+                let bent = f64::from(stiffness) * f64::from(order * order);
+                let stiffer = gauge[string] * bent / (2.0 * (1.0 + bent));
                 f64::from(TAU)
-                    * apart
-                    * (f64::from(hz) + (stringing.wide - 1.0) * f64::from(fundamental))
+                    * (apart * (f64::from(hz) + (stringing.wide - 1.0) * f64::from(fundamental))
+                        + stiffer * f64::from(hz))
             });
             let (found, count) = if stringing.planes {
                 planes(&detune, &stringing, f64::from(bridge))
@@ -1024,7 +1122,17 @@ impl Struck {
             }
         }
         let cents = self.bend_cents();
+        let (first, level) = longitudinal(key);
+        let quality = dial(dials::STRETCH_Q, STRETCH_Q);
         if let Some(voice) = self.voices.get_mut(index) {
+            voice.stretch.set(
+                first,
+                quality,
+                voice.stretched * level,
+                partials.min(stretch::PARTIALS),
+                strings,
+                rate,
+            );
             voice.strings = strings;
             voice.count = partials * strings;
             voice.retune(cents, rate);
@@ -1307,6 +1415,13 @@ impl Engine for Struck {
         voice.sounding = true;
         voice.moving = 0.0;
         voice.loudest = 0.0;
+        voice.stretch.reset();
+        voice.stretched = if piano {
+            dial(dials::STRETCH, STRETCH)
+                * (speed / GRAND_SPEED).powf(-dial(dials::STRETCH_TOUCH, STRETCH_TOUCH))
+        } else {
+            0.0
+        };
         let blow = if piano {
             // The published hammer is one string's share of it: a third of the mass and a
             // third of the felt, against one string of three. Thrown at every string of the
@@ -1465,12 +1580,22 @@ impl Engine for Struck {
             if voice.hammer.is_striking() {
                 let force = &mut force[..frames];
                 voice.hammer.strike(force);
-                voice.rotors.ring_driven(force, strings);
+                if voice.stretch.is_active() {
+                    let stretch = &mut voice.stretch;
+                    voice
+                        .rotors
+                        .ring_driven_with(force, strings, |im| stretch.step(im));
+                } else {
+                    voice.rotors.ring_driven(force, strings);
+                }
                 // What the blow does to the case, beside what it does to the strings.
                 for (sample, push) in knocks.iter_mut().zip(force.iter()) {
                     *sample += push * voice.knock;
                 }
                 knocked = true;
+            } else if voice.stretch.is_active() {
+                let stretch = &mut voice.stretch;
+                voice.rotors.ring_with(strings, |im| stretch.step(im));
             } else {
                 voice.rotors.ring(strings);
             }

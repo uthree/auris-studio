@@ -56,6 +56,7 @@ mod plucked;
 mod reeds;
 pub(crate) mod rotors;
 mod slap;
+mod stretch;
 pub(crate) mod strings;
 mod struck;
 mod unison;
@@ -653,6 +654,16 @@ pub(crate) mod dials {
     pub(crate) const PLANE_HEARD: usize = 73;
     /// What the bridge takes from a wound string's first plane against a unison's shared motion.
     pub(crate) const PLANE_FIRST: usize = 74;
+    /// The power of the soundboard's conductance, against its own trend, that the bridge's
+    /// loss of each partial follows: zero for a bridge that drains every partial alike.
+    pub(crate) const JAGGED: usize = 75;
+    /// How far the stiffness of the strings of one unison stands apart, as a share of it.
+    pub(crate) const SPREAD: usize = 76;
+    /// How loud a low string's longitudinal motion is, how sharp its modes are, and how much
+    /// less it grows than the square of the blow.
+    pub(crate) const STRETCH: usize = 77;
+    pub(crate) const STRETCH_Q: usize = 78;
+    pub(crate) const STRETCH_TOUCH: usize = 79;
     /// The slapped bass: the force of a full pluck, the saddle's height, how far a pop pulls,
     /// the thumb's speed, its mass and its flesh's damping, what a fret gives back, and how
     /// many frets a string is held to.
