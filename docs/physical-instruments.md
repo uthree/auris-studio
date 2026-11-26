@@ -305,7 +305,7 @@ had followed a power of velocity, fitted to the pianissimo, and it left the fort
 over the mezzo-forte where the Steinway's stands 11 dB over, with the bands from two to eight
 kilohertz rising 6 dB less than the recording's as the blow hardened. The speed now rises by
 the same number of decibels for each step of velocity, 32 across the whole range, and over
-forty-odd notes from C2 to C7 a fortissimo stands 11.2 dB over a mezzo-forte, the recording's
+twenty-two notes from C2 to C7 a fortissimo stands 11.2 dB over a mezzo-forte, the recording's
 11.3, and a pianissimo 13.6 dB under it, the recording's 12.7.
 
 A clarinet's breath, read between the harmonics of the same recordings' settled notes, lies
