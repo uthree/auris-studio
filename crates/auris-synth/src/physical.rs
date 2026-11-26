@@ -647,6 +647,12 @@ pub(crate) mod dials {
     pub(crate) const FRICTION: usize = 70;
     /// Where the internal friction stops growing as the square of frequency, in kilohertz.
     pub(crate) const FRICTION_KNEE: usize = 71;
+    /// What the bridge takes from a wound string's second plane against its first, and how
+    /// strongly that plane is heard against the first.
+    pub(crate) const PLANE_BRIDGE: usize = 72;
+    pub(crate) const PLANE_HEARD: usize = 73;
+    /// What the bridge takes from a wound string's first plane against a unison's shared motion.
+    pub(crate) const PLANE_FIRST: usize = 74;
     /// The slapped bass: the force of a full pluck, the saddle's height, how far a pop pulls,
     /// the thumb's speed, its mass and its flesh's damping, what a fret gives back, and how
     /// many frets a string is held to.

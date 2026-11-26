@@ -41,7 +41,7 @@ use super::calibration::dial;
 use super::hammer::{Blow, Hammer, across_keys, grand};
 use super::rotors::{NEPERS_PER_DB, Rotor, Rotors, decay_rate, pole};
 use super::strings::{Losses, material, partial_ratio};
-use super::unison::{STRINGS, normals};
+use super::unison::{Normal, STRINGS, normals};
 use super::{
     BODY_DISPLAY, Declick, Engine, Model, Mute, Note, Performance, Quality, TICK, dial_across,
     dials, hertz, touch_position,
@@ -139,7 +139,7 @@ const FELT_PIVOT: f32 = 5.0e-4;
 /// soundboard then turns the treble's short strokes into sound. A harder hammer gives the
 /// strings more, and the middle was brought down again by what its revoicing added at
 /// mezzo-forte, so that its registers stand where they were fitted.
-const REGISTER: [f32; 8] = [2.0, 1.0, 0.8, 0.1, 2.4, 3.1, 8.0, 11.0];
+const REGISTER: [f32; 8] = [3.0, 1.0, 0.8, 0.1, 2.4, 3.1, 8.0, 11.0];
 /// Damper time relative to the release control: bass dampers take longer to stop their strings.
 const DAMPER: [f32; 8] = [2.5, 2.0, 1.4, 1.0, 0.8, 0.7, 0.6, 0.6];
 /// Unison mistuning the hertz bound below applies to, in cents: a freshly tuned piano.
@@ -157,8 +157,23 @@ const BASS_HIGH: f64 = 98.0;
 /// How unequally the hammer strikes the strings of a unison.
 const UNEVEN: f64 = 0.5198;
 /// A single string's second polarisation: how it pulls on the bridge, how much of the blow it
-/// takes, and how far it is tuned from the first, in cents.
+/// takes, and how far the first is tuned from it, in cents.
 const POLARISATION: [f64; 3] = [0.7, 0.743, 0.392];
+/// What the bridge takes from a wound string's second plane, against what it takes from the
+/// first.
+const PLANE_BRIDGE: f64 = 0.05;
+/// How strongly a wound string's second plane is heard against its first, before
+/// [`POLARISATION`]'s pull and share.
+const PLANE_HEARD: f64 = 1.3;
+/// What the bridge takes from a wound string's first plane, against what [`BRIDGE`] says it
+/// takes from a unison's shared motion. [`BRIDGE`] was fitted to these notes when their two
+/// planes shared one direction and decayed as one; apart, the first falls this much faster.
+///
+/// The three are read off the recorded Steinway's A0, C1, E1, G1 and A1 at three dynamics,
+/// which fall 4 to 10 dB in their first second and then 2 or 3 dB a second. The planes as one
+/// motion fell 4 or 5 dB a second from the start, and lost a further 9 to 12 dB between the
+/// first second and the third where the recording loses 3 to 7.
+const PLANE_FIRST: f64 = 4.5;
 /// Wave impedance of one dulcimer wire, in kilograms per second: a fifth of a piano's.
 const WIRE: f32 = 0.45;
 
@@ -300,6 +315,43 @@ struct Stringing {
     wide: f64,
     weights: [f64; STRINGS],
     shares: [f64; STRINGS],
+    /// One wound string, whose two planes of motion meet the bridge in two directions rather
+    /// than one: the first is drained at the bridge's full rate, the second at a fraction of
+    /// it, and each is heard by itself.
+    planes: bool,
+}
+
+/// The two planes of one wound string, each its own motion. The bridge gives far less
+/// across the string than along the soundboard's normal, so the second plane loses to it at
+/// [`PLANE_BRIDGE`] of the first's rate. Rung together they are the two decays of a grand's
+/// lowest notes: the plane the bridge drains falls fast, and the other rings on under it for
+/// seconds. As one motion through one direction of the bridge, the second plane pulled
+/// against the first and was heard only where their tunings parted, which was too little to
+/// hold up the tail.
+fn planes(
+    detune: &[f64; STRINGS],
+    stringing: &Stringing,
+    bridge: f64,
+) -> ([Normal; STRINGS], usize) {
+    let first = f64::from(dial(dials::PLANE_FIRST, PLANE_FIRST as f32));
+    let across = f64::from(dial(dials::PLANE_BRIDGE, PLANE_BRIDGE as f32));
+    let heard = f64::from(dial(dials::PLANE_HEARD, PLANE_HEARD as f32)) * stringing.weights[1];
+    let total = stringing.weights[0] + heard;
+    let mut out = [Normal::default(); STRINGS];
+    out[0] = Normal {
+        decay: (bridge * first) as f32,
+        shift: detune[0] as f32,
+        heard: (
+            (stringing.weights[0] * stringing.shares[0] / total) as f32,
+            0.0,
+        ),
+    };
+    out[1] = Normal {
+        decay: (bridge * across) as f32,
+        shift: detune[1] as f32,
+        heard: ((heard * stringing.shares[1] / total) as f32, 0.0),
+    };
+    (out, 2)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -778,6 +830,7 @@ impl Struck {
             cents: [-apart, apart, 0.0],
             weights: [1.0, 1.0, 0.0],
             shares: [1.0 + uneven, 1.0 - uneven, 0.0],
+            planes: false,
         };
         let triple = Stringing {
             strings: 3,
@@ -785,6 +838,7 @@ impl Struck {
             cents: [-apart, 0.0, apart],
             weights: [1.0; 3],
             shares: [1.0 + uneven, 1.0, 1.0 - uneven],
+            planes: false,
         };
         if !self.is_piano() {
             return if fundamental < 110.0 { pair } else { triple };
@@ -798,14 +852,16 @@ impl Struck {
             triple
         };
         if fundamental < 65.0 {
-            // One wound string, and the plane it does not mostly move in.
+            // One wound string: the plane the hammer drives, and the one across it.
             let [weight, share, offset] = POLARISATION;
             Stringing {
                 strings: 2,
                 wide,
-                cents: [0.0, offset * detune / f64::from(TUNED), 0.0],
+                // The plane that rings on is the one a tuner hears, and tunes.
+                cents: [-offset * detune / f64::from(TUNED), 0.0, 0.0],
                 weights: [1.0, weight, 0.0],
                 shares: [1.0, share, 0.0],
+                planes: true,
             }
         } else if fundamental < 180.0 {
             pair
@@ -922,12 +978,16 @@ impl Struck {
                     * apart
                     * (f64::from(hz) + (stringing.wide - 1.0) * f64::from(fundamental))
             });
-            let (found, count) = normals(
-                &detune[..strings],
-                &stringing.weights[..strings],
-                &stringing.shares[..strings],
-                f64::from(bridge),
-            );
+            let (found, count) = if stringing.planes {
+                planes(&detune, &stringing, f64::from(bridge))
+            } else {
+                normals(
+                    &detune[..strings],
+                    &stringing.weights[..strings],
+                    &stringing.shares[..strings],
+                    f64::from(bridge),
+                )
+            };
             // The bridge is at the far end, where successive partials pull opposite ways.
             let sign = if n % 2 == 0 { give } else { -give };
             let struck = (PI * order * contact).sin() * drive;

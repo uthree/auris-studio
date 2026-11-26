@@ -308,6 +308,17 @@ the same number of decibels for each step of velocity, 32 across the whole range
 twenty-two notes from C2 to C7 a fortissimo stands 11.2 dB over a mezzo-forte, the recording's
 11.3, and a pianissimo 13.6 dB under it, the recording's 12.7.
 
+The lowest notes, those of one wound string, were given their two decays on 2026-11-26. The
+recorded Steinway's A0 to A1 fall 4 to 10 dB in their first second and then 2 or 3 dB a
+second for as long as they are measured; the piano's fell 4 or 5 dB a second from the start
+and lost 9 to 12 dB between the first second and the third, where the recording loses 3 to 7.
+A wound string moves in two planes, and they had shared one direction of the bridge, so the
+second only pulled against the first. They meet the bridge in two directions now: the first is
+drained four and a half times as fast as a unison's shared motion, the second at a twentieth of
+that, and each is heard by itself. Over those notes each partial's decay reads 6.9 dB from the
+recording where it read 7.4, and the envelope 1.6 dB where it read 2.3. From C2 up the strings
+come in pairs and nothing changed.
+
 A clarinet's breath, read between the harmonics of the same recordings' settled notes, lies
 31 to 35 dB under the tone from pianissimo to fortissimo, and 33 to 35 dB here; it had been 21
 to 31 dB, an even hiss that stood over the harmonics above two kilohertz. A pianissimo note
