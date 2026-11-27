@@ -1815,8 +1815,24 @@ fn the_soft_pedal_strikes_two_strings_of_three_with_softer_felt() {
 }
 
 #[test]
+fn the_single_line_instruments_slur_out_of_the_box() {
+    for model in [Model::Clarinet, Model::TinWhistle, Model::Violin] {
+        let mut line = rig(model, 48_000.0);
+        line.render(12_000, &[on(72, 0.8)]);
+        line.render(12_000, &[on(74, 0.8)]);
+        assert_eq!(
+            line.instrument.active_voices(),
+            1,
+            "{model:?}: a key over a held one should move the line, not start a second note"
+        );
+    }
+}
+
+#[test]
 fn the_legato_footswitch_slurs_only_while_it_is_down() {
     let mut clarinet = rig(Model::Clarinet, 48_000.0);
+    // The clarinet's own control slurs by default; off, only the footswitch can.
+    clarinet.set_param("legato", 0.0);
     // Struck before the footswitch: an ordinary note, which its own release stops.
     clarinet.render(12_000, &[on(60, 0.8), controller(6_000, 68, 1.0)]);
     let slurred = clarinet.render(12_000, &[on(64, 0.8)]);

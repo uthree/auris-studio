@@ -2,7 +2,7 @@
 
 use std::{error::Error, fs, path::PathBuf};
 
-use auris_core::{Note, ParamTarget, PresetRef, Ticks};
+use auris_core::{Note, PresetRef, Ticks};
 use auris_session::{Session, SessionOptions};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -24,16 +24,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 },
             )?;
         } else {
+            // The violin slurs by default, so its phrase needs no setting.
             session.set_track_instrument(track, &format!("auris.physical.{name}"))?;
-            if name == "violin" {
-                let param = session
-                    .instrument_descriptors(track)
-                    .iter()
-                    .find(|parameter| parameter.key == "legato")
-                    .ok_or("missing legato")?
-                    .id;
-                session.set_param(ParamTarget::Instrument { track, param }, 1.0);
-            }
         }
         let clip = session.add_midi_clip(track, name, Ticks::ZERO, Ticks::from_beats(12.0))?;
         let mut notes = Vec::new();

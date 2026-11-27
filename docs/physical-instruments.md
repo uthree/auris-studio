@@ -164,9 +164,9 @@ Pitch bend reaches sounding notes, up to two octaves either way. On the piano **
 the damper: the time it takes to remove 80 dB, longer in the bass, and the keys above F6 have
 none.
 
-With **Legato** on, the strings, reeds and whistles play one line: overlapping notes reuse the
-sounding string or pipe without a new attack, and letting the newest key go returns to the one
-still held.
+**Legato** is on by default for the strings, reeds and whistles, which then play one line:
+overlapping notes reuse the sounding string or pipe without a new attack, and letting the newest
+key go returns to the one still held. Turn it off to play two keys as two notes.
 
 **Live Quality** is what plays as you work and **Render Quality** what an export, a freeze or
 a bounce uses. Draft keeps about a third of the partials and runs the bowed and blown

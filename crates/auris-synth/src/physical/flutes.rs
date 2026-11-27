@@ -55,7 +55,7 @@ pub(super) fn descriptors() -> Vec<ParamDescriptor> {
         ParamDescriptor::new(P_RELEASE, "release", "Release", 0.01, 4.0, 0.1)
             .with_unit(ParamUnit::Seconds),
         ParamDescriptor::percent(P_VIBRATO, "vibrato", "Vibrato", 0.2),
-        ParamDescriptor::toggle(P_LEGATO, "legato", "Legato", false),
+        ParamDescriptor::toggle(P_LEGATO, "legato", "Legato", true),
         ParamDescriptor::new(P_TECHNIQUE, "technique", "Technique", 0.0, 1.0, 0.0)
             .with_choices(super::TONGUINGS),
     ]
