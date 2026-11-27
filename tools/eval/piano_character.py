@@ -20,6 +20,9 @@ level     each note's level against the mezzo-forte notes' mean, so the keyboard
           range of touch are both in it and the overall gain is not
 decay     how fast each octave band of partials falls in the first second and the next two
 spread    how unevenly the partials of one note fall: the spread of their first-second decays
+stages    how far the first partials fall in their first second and in the two after, the
+          median over the note's partials of each: a unison's prompt sound and its
+          aftersound, where a band's median slope averages the two into one
 wobble    how far a partial swings about its own decay, the beats of a unison and its planes
 metal     the energy in peaks that belong to no transverse partial (longitudinal modes and
           phantom partials), from A0 to A4
@@ -27,7 +30,12 @@ pulse     how strongly the bands from 500 Hz to 4 kHz pulse once a period, which
           coil spring's dispersion does and a struck wire's does not, from A0 to E4
 
 Every measure is in decibels; the score of each is the rms of model minus recording over every
-note it applies to, and the total is their mean. See docs/physical-copy-synthesis.md.
+note it applies to, divided by the rms the recordings reach against one another on it — each
+note against the nearest recorded note of the same dynamic. A measure that one key of the
+Steinway already misses its neighbour by ten decibels on is not ten times as telling as one it
+misses by one, and on the raw decibels the beats of a unison, which the ear is quick to, were
+outweighed by everything else. One is as far from the recording as its own neighbouring keys
+are; the total is the mean. See docs/physical-copy-synthesis.md.
 """
 
 import argparse
@@ -54,7 +62,10 @@ FRAME_RATE = RATE / HOP
 BANDS = [(125 * 2**i, 250 * 2**i) for i in range(7)]  # 125 Hz .. 16 kHz
 WINDOWS = {"attack": (0.0, 0.08), "tone": (0.08, 0.6), "late": (0.6, 2.0)}
 PULSE_BANDS = [(500, 1000), (1000, 2000), (2000, 4000)]
-METRICS = ("balance", "level", "decay", "spread", "wobble", "metal", "pulse")
+METRICS = ("balance", "level", "decay", "spread", "stages", "wobble", "metal", "pulse")
+STAGE_PARTIALS = 12
+# Where a partial's level is read for its two stages: the blow, a second on, three seconds on.
+STAGE_TIMES = ((0.05, 0.15), (0.9, 1.1), (2.8, 3.2))
 METAL_TOP = 69
 PULSE_TOP = 64
 PARTIALS = 24
@@ -258,6 +269,25 @@ def measure(x, pitch, noise=None):
         else [np.nan]
     )
 
+    # stages: each partial's fall over its first second and the two after, read from its power
+    # over a fifth of a second at each end so that one beat's trough does not decide it
+    stages = []
+    for p, db, clear in envelopes[:STAGE_PARTIALS]:
+        power_at = []
+        for a, b_ in STAGE_TIMES:
+            rows = (times >= a) & (times < b_)
+            held = clear[rows].mean() >= 0.5 if rows.any() else False
+            power_at.append(
+                10 * np.log10(np.mean(10 ** (db[rows] / 10))) if held else np.nan
+            )
+        stages.append((power_at[0] - power_at[1], power_at[1] - power_at[2]))
+    # The median over the partials: which partial meets a beat's trough at the moment it is
+    # read is one piano's and one blow's, and would otherwise decide the measure.
+    out["stages"] = [
+        float(np.nanmedian(column)) if np.isfinite(column).sum() >= 3 else np.nan
+        for column in np.array(stages, dtype=float).reshape(-1, 2).T
+    ]
+
     swings = []
     for p, db, clear in envelopes[:16]:
         rows = (times >= 0.2) & (times < 3.0) & clear
@@ -361,7 +391,35 @@ def relative_levels(stats, captures):
     return {c["path"]: stats[c["path"]]["level"][0] - middle for c in captures}
 
 
-def score_stats(recorded, rendered, captures):
+def neighbours(recorded, captures):
+    """Each note's nearest recorded note of the same dynamic, standing in for a render: how far
+    the Steinway stands from itself on every measure."""
+    standing = {}
+    for c in captures:
+        others = [
+            d
+            for d in captures
+            if d["dynamic"] == c["dynamic"] and d["path"] != c["path"]
+        ]
+        nearest = min(others, key=lambda d: (abs(d["pitch"] - c["pitch"]), d["pitch"]))
+        standing[c["path"]] = recorded[nearest["path"]]
+    return standing
+
+
+def score_stats(recorded, rendered, captures, scale=None):
+    """The rms of each measure over `captures`, divided by `scale` (the recordings' own, over
+    every locked note, when it is not given), and their mean as the total."""
+    if scale is None:
+        every = read_lock()
+        scale, _ = raw_scores(recorded, neighbours(recorded, every), every)
+    scores, per_note = raw_scores(recorded, rendered, captures)
+    for m in METRICS:
+        scores[m] /= scale[m]
+    scores["total"] = float(np.nanmean([scores[m] for m in METRICS]))
+    return scores, per_note
+
+
+def raw_scores(recorded, rendered, captures):
     errors = {metric: [] for metric in METRICS}
     per_note = {}
     rec_level, ren_level = (

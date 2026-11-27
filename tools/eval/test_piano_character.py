@@ -61,5 +61,40 @@ def test_a_note_scores_nothing_against_itself():
         "a": character.measure(string(65.4), 36),
         "b": character.measure(string(261.6, b=3e-4), 60),
     }
-    scores, _ = character.score_stats(stats, stats, captures)
+    unit = {m: 1.0 for m in character.METRICS}
+    scores, _ = character.score_stats(stats, stats, captures, unit)
     assert all(scores[m] == 0.0 for m in character.METRICS if np.isfinite(scores[m]))
+
+
+def test_a_note_as_far_as_its_neighbour_scores_one():
+    captures = [
+        {"path": "a", "pitch": 45, "dynamic": "mf"},
+        {"path": "b", "pitch": 47, "dynamic": "mf"},
+    ]
+    recorded = {
+        "a": character.measure(string(110.0), 45),
+        "b": character.measure(string(123.5, decays=lambda n: 3.0 + n), 47),
+    }
+    scale, _ = character.raw_scores(
+        recorded, character.neighbours(recorded, captures), captures
+    )
+    scores, _ = character.score_stats(
+        recorded, character.neighbours(recorded, captures), captures, scale
+    )
+    assert abs(scores["total"] - 1.0) < 1e-9
+
+
+def test_a_prompt_sound_and_an_aftersound_are_two_stages():
+    def fast_then_slow(t):
+        return 10 ** (-25 * np.minimum(t, 1.0) / 20) * 10 ** (
+            -4 * np.maximum(t - 1.0, 0) / 20
+        )
+
+    t = np.arange(int(character.SECONDS * RATE)) / RATE
+    x = sum(
+        1 / n * fast_then_slow(t) * np.sin(2 * np.pi * 110.0 * n * t)
+        for n in range(1, 13)
+    )
+    first, later = character.measure(x, 45)["stages"]
+    assert 20.0 < first < 28.0, first
+    assert 5.0 < later < 11.0, later

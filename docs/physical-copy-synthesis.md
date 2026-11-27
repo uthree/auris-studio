@@ -122,14 +122,22 @@ and the render, over 83 notes of the same Steinway from A0 to C8 at three dynami
 | level | Each note against the mean of the mezzo-forte notes: the keyboard and the range of touch, without the overall gain |
 | decay | The median fall of each octave band's partials over the first second and the next two |
 | spread | How unevenly one note's partials fall: the interquartile range of their first-second decays |
+| stages | How far the first twelve partials fall over their first second and over the two after, the median over the note's partials of each: a unison's prompt sound and its aftersound |
 | wobble | How far a partial swings about its own decay: the beats of a unison or of a wound string's planes |
 | metal | Energy in peaks off the transverse series against the energy on it, from A0 to A4 at mezzo-forte and fortissimo |
 | pulse | How strongly the bands from 500 Hz to 4 kHz pulse once a period, from A0 to E4 at mezzo-forte and fortissimo |
 
 Each recording's noise is the quietest tenth of its frames, bin by bin; a partial is followed
 only while it stands 15 dB clear of it. Each measure is the rms of model minus recording in
-decibels, and the total their mean, so it can be handed to a search. The recordings are measured
-once and kept beside them.
+decibels, divided by the rms the recordings reach against one another on it — each note
+against the nearest recorded note of the same dynamic — and the total is their mean, so it can
+be handed to a search. On that scale one is as far from the recording as its neighbouring keys
+are from each other. In decibels the decay of a band, on which neighbouring keys of the
+Steinway already differ by 10 dB, outweighed the beats of a unison, on which they differ by
+1 dB, and a search on the sum moved the middle of the keyboard away from what two blind
+listening rounds against the recording preferred. It still does by a little, which is why the
+stages are read as medians: read partial by partial, which partial meets a beat's trough at the
+moment it is read decided the measure. The recordings are measured once and kept beside them.
 
 ## B♭ clarinet
 
