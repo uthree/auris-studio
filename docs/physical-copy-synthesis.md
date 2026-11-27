@@ -108,6 +108,37 @@ one microphone position and three dynamic labels stand behind them, and there is
 for the dampers, the release or the pedal. These measures describe resemblance to recordings,
 not preference; listen.
 
+### What a note does, rather than what one take did
+
+Both measures above hold a rendered note to one recording frame by frame, which holds the model
+to the recorded piano's own beats: a unison that beats as much but at another moment reads as
+wrong. `piano_character.py` reads statistics of a note instead, the same way from the recording
+and the render, over 83 notes of the same Steinway from A0 to C8 at three dynamics, locked in
+[piano-character-captures.json](../tools/eval/references/piano-character-captures.json):
+
+| Measure | What it compares |
+| --- | --- |
+| balance | Octave bands against the note's total at the blow, in the tone and later, where the recording stands 10 dB clear of its noise |
+| level | Each note against the mean of the mezzo-forte notes: the keyboard and the range of touch, without the overall gain |
+| decay | The median fall of each octave band's partials over the first second and the next two |
+| spread | How unevenly one note's partials fall: the interquartile range of their first-second decays |
+| stages | How far the first twelve partials fall over their first second and over the two after, the median over the note's partials of each: a unison's prompt sound and its aftersound |
+| wobble | How far a partial swings about its own decay: the beats of a unison or of a wound string's planes |
+| metal | Energy in peaks off the transverse series against the energy on it, from A0 to A4 at mezzo-forte and fortissimo |
+| pulse | How strongly the bands from 500 Hz to 4 kHz pulse once a period, from A0 to E4 at mezzo-forte and fortissimo |
+
+Each recording's noise is the quietest tenth of its frames, bin by bin; a partial is followed
+only while it stands 15 dB clear of it. Each measure is the rms of model minus recording in
+decibels, divided by the rms the recordings reach against one another on it — each note
+against the nearest recorded note of the same dynamic — and the total is their mean, so it can
+be handed to a search. On that scale one is as far from the recording as its neighbouring keys
+are from each other. In decibels the decay of a band, on which neighbouring keys of the
+Steinway already differ by 10 dB, outweighed the beats of a unison, on which they differ by
+1 dB, and a search on the sum moved the middle of the keyboard away from what two blind
+listening rounds against the recording preferred. It still does by a little, which is why the
+stages are read as medians: read partial by partial, which partial meets a beat's trough at the
+moment it is read decided the measure. The recordings are measured once and kept beside them.
+
 ## B♭ clarinet
 
 The [University of Iowa Bb Clarinet MIS page](https://theremin.music.uiowa.edu/MISBbclarinet.html)
@@ -283,6 +314,12 @@ uv run tools/eval/piano_register.py target/piano-register prepare
 uv run tools/eval/piano_register.py target/piano-register evaluate \
   <before-worker> <after-worker> target/piano-register/evaluation.json
 
+uv run tools/eval/piano_character.py target/piano-character prepare
+uv run tools/eval/piano_character.py target/piano-character compare \
+  <before-worker> <after-worker> --json target/piano-character/compare.json
+uv run tools/eval/piano_character.py target/piano-character score <worker> \
+  --dials '{"77": 0}'
+
 uv run tools/eval/fetch_clarinet_reference.py target/physical-next/clarinet-reference \
   --lock tools/eval/references/clarinet-notes.json
 uv run tools/eval/clarinet_copy.py target/physical-next/clarinet-reference <after-worker> \
@@ -317,6 +354,7 @@ expecting an archived worker's hash.
 ```sh
 uv run --with numpy --with scipy --with soundfile --with pytest pytest \
   tools/eval/test_physical_mel.py tools/eval/test_piano_register.py \
+  tools/eval/test_piano_character.py \
   tools/eval/test_clarinet_copy.py tools/eval/test_fetch_clarinet_reference.py \
   tools/eval/test_fetch_folk_reference.py tools/eval/test_physical_ab.py \
   tools/eval/test_bass_slap.py

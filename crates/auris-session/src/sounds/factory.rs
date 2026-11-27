@@ -155,7 +155,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     ("Bright piano", &[("hardness", 0.9), ("position", 0.1)]),
                     (
                         "Honky-tonk piano",
-                        &[("detune", 7.0), ("hardness", 0.6), ("level", -9.5)],
+                        &[("detune", 7.0), ("hardness", 0.6), ("level", -10.9)],
                     ),
                 ],
             ),

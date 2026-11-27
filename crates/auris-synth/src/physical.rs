@@ -56,6 +56,7 @@ mod plucked;
 mod reeds;
 pub(crate) mod rotors;
 mod slap;
+mod stretch;
 pub(crate) mod strings;
 mod struck;
 mod unison;
@@ -317,7 +318,7 @@ impl Model {
     /// does not also change how loud it is.
     const fn normalization(self) -> f32 {
         match self {
-            Self::Piano => 0.505,
+            Self::Piano => 0.370,
             Self::HammeredDulcimer => 1.616,
             Self::Guitar => 0.806,
             Self::ElectricGuitar => 0.733,
@@ -632,7 +633,7 @@ pub(crate) mod dials {
     pub(crate) const KNOCK: usize = 32;
     /// Decibels added to a body's tilt at 50 Hz and at each octave above it: ten of them.
     pub(crate) const TILT: usize = 40;
-    /// Hammer speed at full velocity, and the power of velocity it follows.
+    /// Hammer speed at full velocity, and the decibels of speed the range of velocity spans.
     pub(crate) const SPEED: usize = 50;
     pub(crate) const SPEED_LAW: usize = 51;
     /// The felt's hysteresis.
@@ -645,6 +646,28 @@ pub(crate) mod dials {
     pub(crate) const BRIDGE_SLOPE: usize = 69;
     /// Multiplies the internal friction of the partials above the fundamental.
     pub(crate) const FRICTION: usize = 70;
+    /// Where the internal friction stops growing as the square of frequency, in kilohertz.
+    pub(crate) const FRICTION_KNEE: usize = 71;
+    /// What the bridge takes from a wound string's second plane against its first, and how
+    /// strongly that plane is heard against the first.
+    pub(crate) const PLANE_BRIDGE: usize = 72;
+    pub(crate) const PLANE_HEARD: usize = 73;
+    /// What the bridge takes from a wound string's first plane against a unison's shared motion.
+    pub(crate) const PLANE_FIRST: usize = 74;
+    /// The power of the soundboard's conductance, against its own trend, that the bridge's
+    /// loss of each partial follows: zero for a bridge that drains every partial alike.
+    pub(crate) const JAGGED: usize = 75;
+    /// How far the stiffness of the strings of one unison stands apart, as a share of it.
+    pub(crate) const SPREAD: usize = 76;
+    /// How loud a low string's longitudinal motion is, how sharp its modes are, and how much
+    /// less it grows than the square of the blow.
+    pub(crate) const STRETCH: usize = 77;
+    pub(crate) const STRETCH_Q: usize = 78;
+    pub(crate) const STRETCH_TOUCH: usize = 79;
+    /// The lowest fundamental, in hertz, whose key has three strings rather than two, and how
+    /// far a tuner leaves each string of a unison from where the others stand, in cents.
+    pub(crate) const TRIPLE_FROM: usize = 88;
+    pub(crate) const SCATTER: usize = 89;
     /// The slapped bass: the force of a full pluck, the saddle's height, how far a pop pulls,
     /// the thumb's speed, its mass and its flesh's damping, what a fret gives back, and how
     /// many frets a string is held to.

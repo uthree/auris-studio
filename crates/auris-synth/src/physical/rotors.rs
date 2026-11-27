@@ -52,7 +52,7 @@ pub(crate) struct Rotor {
     pub listen_im: f32,
 }
 
-type Lane = [f32; LANES];
+pub(crate) type Lane = [f32; LANES];
 
 /// One place on the body the phasors are the modes of: how far each of them moves there.
 ///
@@ -335,6 +335,14 @@ impl Rotors {
 
     /// Advances every live phasor through `out.len()` samples, adding what is heard to `out`.
     pub(crate) fn ring(&mut self, out: &mut [f32]) {
+        self.ring_with(out, |_| 0.0);
+    }
+
+    /// Like [`Rotors::ring`], and after every sample hands the displacement halves to `watch`,
+    /// adding what it returns to that sample: for whatever depends on the phasors' motion
+    /// together rather than on each alone.
+    #[inline]
+    pub(crate) fn ring_with(&mut self, out: &mut [f32], mut watch: impl FnMut(&[Lane]) -> f32) {
         let live = self.live;
         for sample in out {
             let mut heard = [0.0_f32; LANES];
@@ -351,13 +359,24 @@ impl Rotors {
                     heard[lane] += listen_re[lane] * turned + listen_im[lane] * im[lane];
                 }
             }
-            *sample += heard.iter().sum::<f32>();
+            *sample += heard.iter().sum::<f32>() + watch(&self.im[..live.min(self.im.len())]);
         }
     }
 
     /// Like [`Rotors::ring`], with `force` pushing every phasor by its own drive as it goes.
     /// `force` and `out` are the same length; the shorter decides otherwise.
     pub(crate) fn ring_driven(&mut self, force: &[f32], out: &mut [f32]) {
+        self.ring_driven_with(force, out, |_| 0.0);
+    }
+
+    /// [`Rotors::ring_driven`], watched as [`Rotors::ring_with`] is.
+    #[inline]
+    pub(crate) fn ring_driven_with(
+        &mut self,
+        force: &[f32],
+        out: &mut [f32],
+        mut watch: impl FnMut(&[Lane]) -> f32,
+    ) {
         let live = self.groups;
         self.live = live;
         for (push, sample) in force.iter().zip(out) {
@@ -376,7 +395,7 @@ impl Rotors {
                     heard[lane] += listen_re[lane] * turned + listen_im[lane] * im[lane];
                 }
             }
-            *sample += heard.iter().sum::<f32>();
+            *sample += heard.iter().sum::<f32>() + watch(&self.im[..live.min(self.im.len())]);
         }
     }
 
