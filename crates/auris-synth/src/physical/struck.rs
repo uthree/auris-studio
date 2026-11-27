@@ -108,7 +108,23 @@ const SILENT: f32 = 0.012;
 /// the rate of the aftersound.
 const AFTERSOUND: [f32; 8] = [1.839, 1.345, 1.495, 1.737, 2.614, 5.659, 14.08, 42.86];
 /// What the bridge takes from the motion a unison shares, in decibels per second.
-const BRIDGE: [f32; 8] = [1.499, 6.62, 10.05, 16.63, 9.688, 7.19, 9.785, 13.3];
+///
+/// C3 was fitted to the recorded Steinway at half what it is now, C4 at a third and C5 at
+/// half, and the partials of every note between came out falling evenly by ten decibels a
+/// second. The Steinway's fall by twenty or thirty in their first second and then hold or
+/// swell again, beating as they go: the whole of its C4 loses 31 dB a second between a tenth
+/// of a second and six tenths, and its C5 39, where these had 17 and 14. At these drains the
+/// unison's shared motion goes in that first second and leaves the motions the bridge does not
+/// feel to ring on. The measures that read a note's decay band by band, or partial by partial,
+/// preferred the old ones; two blind listening rounds against the recording preferred three
+/// times the old drain at C3 and C4, and the ear is what the measures are for. C3 then fell
+/// twice as fast as the Steinway's, whose E3 and G3 fall at 25 and 16 dB a second and C3 at
+/// 12, and it was brought back to twice.
+const BRIDGE: [f32; 8] = [1.499, 6.62, 20.1, 49.89, 19.38, 7.19, 9.785, 13.3];
+/// The loss the bridge's motion is scaled against: what a grand's middle C lost when the
+/// strings' levels were calibrated, so that draining one register harder does not move every
+/// other one.
+const SCALE_LOSS: f32 = 16.63 + 1.737;
 /// Exponent of the bridge's loss over partial number.
 const BRIDGE_SLOPE: f32 = -0.1426;
 /// Internal friction of the partials above the fundamental, in decibels per second per
@@ -139,8 +155,11 @@ const FELT_PIVOT: f32 = 5.0e-4;
 /// the bridge moves follows from how fast the strings decay, but not all of how well the
 /// soundboard then turns the treble's short strokes into sound. A harder hammer gives the
 /// strings more, and the middle was brought down again by what its revoicing added at
-/// mezzo-forte, so that its registers stand where they were fitted.
-const REGISTER: [f32; 8] = [3.0, 1.0, 0.8, 0.1, 2.4, 3.1, 8.0, 11.0];
+/// mezzo-forte, so that its registers stand where they were fitted. C3 to C5 are brought down
+/// once more, by most of what their stronger [`BRIDGE`] takes from the strings, which would
+/// otherwise move the bridge as much further: a note that falls faster must start louder to
+/// stand as loud over its first half second, which is where its level was fitted.
+const REGISTER: [f32; 8] = [3.0, 1.0, -2.82, -3.78, 0.05, 3.1, 8.0, 11.0];
 /// Damper time relative to the release control: bass dampers take longer to stop their strings.
 const DAMPER: [f32; 8] = [2.5, 2.0, 1.4, 1.0, 0.8, 0.7, 0.6, 0.6];
 /// Unison mistuning the hertz bound below applies to, in cents: a freshly tuned piano.
@@ -155,6 +174,14 @@ const TUNED_BEAT: f32 = 0.092_23;
 const BASS_APART: f64 = 3.5;
 const BASS_LOW: f64 = 65.4;
 const BASS_HIGH: f64 = 98.0;
+/// The lowest fundamental, in hertz, whose key has three strings rather than two: F2 and up,
+/// as on a concert grand. Two strings to F#3 left the third and fourth octaves a single beat
+/// where the Steinway has two.
+const TRIPLE_FROM: f32 = 85.0;
+/// How far a tuner leaves each string of a unison from where the others stand, in cents: a
+/// seeded draw for each key, about zero across its strings. Tuned exactly symmetrically, every
+/// unison of the keyboard beat in the same pattern.
+const SCATTER: f64 = 1.0;
 /// How unequally the hammer strikes the strings of a unison.
 const UNEVEN: f64 = 0.5198;
 /// A single string's second polarisation: how it pulls on the bridge, how much of the blow it
@@ -942,7 +969,7 @@ impl Struck {
                 shares: [1.0, share, 0.0],
                 planes: true,
             }
-        } else if fundamental < 180.0 {
+        } else if fundamental < dial(dials::TRIPLE_FROM, TRIPLE_FROM) {
             pair
         } else {
             triple
@@ -1011,14 +1038,13 @@ impl Struck {
         let strings = self.struck_strings(fundamental);
         if self.is_piano() {
             let taken = bridge(key) * order.powf(bridge_slope()) + aftersound(key);
-            let middle =
-                (bridge(60.0) + aftersound(60.0)) / (3.0 * across_keys(grand::IMPEDANCE, 60.0));
+            let middle = SCALE_LOSS / (3.0 * across_keys(grand::IMPEDANCE, 60.0));
             let brought = between(&REGISTER, key) + dial_across(dials::LEVEL, key, 0.0);
             let trim = 10.0_f32.powf(brought / 20.0);
             taken / (strings * self.impedance(key)) / middle * trim
         } else {
             // On the same scale: light wires move a bridge further for the same blow.
-            let middle = (BRIDGE[3] + AFTERSOUND[3]) / (3.0 * across_keys(grand::IMPEDANCE, 60.0));
+            let middle = SCALE_LOSS / (3.0 * across_keys(grand::IMPEDANCE, 60.0));
             (3.0 + 36.0 * self.settings.damping) / (strings * WIRE) / middle
         }
     }
@@ -1060,6 +1086,17 @@ impl Struck {
             let mean = drawn[..strings].iter().sum::<f64>() / strings as f64;
             std::array::from_fn(|string| 2.0 * spread * (drawn[string] - mean))
         };
+        // Where a tuner left each string of the unison, about zero across the strings.
+        let scatter: [f64; STRINGS] = if stringing.planes || !self.is_piano() {
+            [0.0; STRINGS]
+        } else {
+            let cents = f64::from(dial(dials::SCATTER, SCATTER as f32));
+            let drawn: [f64; STRINGS] = std::array::from_fn(|string| {
+                f64::from(seeded(u32::from(voice.key), 0x7E57 + string as u32)) - 0.5
+            });
+            let mean = drawn[..strings].iter().sum::<f64>() / strings as f64;
+            std::array::from_fn(|string| 2.0 * cents * (drawn[string] - mean))
+        };
         for n in 0..partials {
             let order = (n + 1) as f32;
             let hz = fundamental * partial_ratio(order, stiffness);
@@ -1067,7 +1104,7 @@ impl Struck {
             let bridge = self.bridge_loss(key, order, hz);
             let give = self.give(key, fundamental, order);
             let detune: [f64; STRINGS] = std::array::from_fn(|string| {
-                let apart = (stringing.cents[string] / 1200.0).exp2() - 1.0;
+                let apart = ((stringing.cents[string] + scatter[string]) / 1200.0).exp2() - 1.0;
                 // A stiffer string's partial stands further sharp, by the share of its
                 // stretch that stiffness brings.
                 let bent = f64::from(stiffness) * f64::from(order * order);

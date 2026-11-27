@@ -318,7 +318,7 @@ impl Model {
     /// does not also change how loud it is.
     const fn normalization(self) -> f32 {
         match self {
-            Self::Piano => 0.438,
+            Self::Piano => 0.370,
             Self::HammeredDulcimer => 1.616,
             Self::Guitar => 0.806,
             Self::ElectricGuitar => 0.733,
@@ -664,6 +664,10 @@ pub(crate) mod dials {
     pub(crate) const STRETCH: usize = 77;
     pub(crate) const STRETCH_Q: usize = 78;
     pub(crate) const STRETCH_TOUCH: usize = 79;
+    /// The lowest fundamental, in hertz, whose key has three strings rather than two, and how
+    /// far a tuner leaves each string of a unison from where the others stand, in cents.
+    pub(crate) const TRIPLE_FROM: usize = 88;
+    pub(crate) const SCATTER: usize = 89;
     /// The slapped bass: the force of a full pluck, the saddle's height, how far a pop pulls,
     /// the thumb's speed, its mass and its flesh's damping, what a fret gives back, and how
     /// many frets a string is held to.

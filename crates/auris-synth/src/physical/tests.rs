@@ -517,8 +517,10 @@ fn piano_octaves_lie_between_a_pure_two_to_one_and_a_pure_four_to_two() {
         // How far the lower note's partial is above the upper note's that it should meet.
         let two_one = at(&lower, hz(low) * 2.0) - at(&upper, hz(low) * 2.0);
         let four_two = at(&lower, hz(low) * 4.0) - at(&upper, hz(low) * 4.0);
+        // Each unison is left a cent or so out by its tuner, and what rings on is its strings
+        // apart: a partial's peak may stand that far from where the octave was set.
         assert!(
-            (-6.0..0.5).contains(&two_one) && (-0.5..6.0).contains(&four_two),
+            (-6.0..1.5).contains(&two_one) && (-1.5..6.0).contains(&four_two),
             "MIDI {low}: 2:1 {two_one:+.1} cents, 4:2 {four_two:+.1} cents"
         );
     }
@@ -588,7 +590,8 @@ fn a_piano_note_falls_fast_and_then_slow_and_longest_in_the_bass() {
         prompt > 2.5 * after,
         "prompt {prompt} dB/s, aftersound {after} dB/s"
     );
-    assert!((8.0..26.0).contains(&prompt), "prompt sound {prompt} dB/s");
+    // The recorded Steinway's middle C loses 31 dB a second over the same half second.
+    assert!((20.0..40.0).contains(&prompt), "prompt sound {prompt} dB/s");
     assert!(after > 0.5, "the aftersound must still decay: {after} dB/s");
     let mut decays = Vec::new();
     for pitch in [36, 84, 100] {
@@ -1738,7 +1741,9 @@ fn half_a_pedal_shortens_a_released_note_without_stopping_it() {
     };
     let (up, half, down) = (fall(0.0), fall(0.5), fall(1.0));
     assert!(up > 40.0, "with the pedal up the note fell {up} dB");
-    assert!(down < 15.0, "under the pedal the note fell {down} dB");
+    // Under the pedal it falls only as a struck middle C does: 31 dB a second at first, on the
+    // recorded Steinway.
+    assert!(down < 22.0, "under the pedal the note fell {down} dB");
     assert!(
         down + 10.0 < half && half < up - 10.0,
         "half a pedal fell {half} dB, between {down} and {up}"

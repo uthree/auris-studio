@@ -251,9 +251,9 @@ smaller is closer.
 
 | Measure | Recorded | Reads | A model fitted to the same recordings |
 | --- | --- | --- | --- |
-| Piano, mel distance | Steinway B, C3–G4, 12 held-out notes | 0.170 | 0.152 |
-| Piano, partial decay and envelope | Steinway B, C1–C8 | 5.1 dB, 1.5 dB | 5.4 dB, 2.0 dB |
-| Piano, partial balance, register level, knock | the same | 4.5 dB, 1.8 dB, 5.3 dB | 4.2 dB, 1.7 dB, 3.4 dB |
+| Piano, mel distance | Steinway B, C3–G4, 12 held-out notes | 0.193 | 0.152 |
+| Piano, partial decay and envelope | Steinway B, C1–C8 | 6.1 dB, 1.8 dB | 5.4 dB, 2.0 dB |
+| Piano, partial balance, register level, knock | the same | 4.4 dB, 2.0 dB, 5.1 dB | 4.2 dB, 1.7 dB, 3.4 dB |
 | Guitar, mel distance | classical guitar, 44 held-out notes | 0.160, and 0.154 as Nylon guitar | 0.144 |
 | Strings, mel distance | solo violin, 39 held-out notes | 0.111 | 0.080 |
 | Reeds, mel distance | B♭ clarinet, held-out pitches | 0.041 | 0.054 |
@@ -345,6 +345,30 @@ from 1.3 to 1.5 dB, because beats of the model's own rarely fall where the recor
 do. The mel distance went from 0.171 to 0.170, and the keys stand within 0.8 dB of their
 neighbours at every dynamic. Still short of the recording: from A0 to E3 the band from 500 Hz
 to 1 kHz pulses with every period of the note about 10 dB more than the recording's does.
+
+The middle of the keyboard was next, which still did not sound like a piano from C3 to C4 once
+the bass did. Its partials fell evenly, all of them about ten decibels a second, where the
+Steinway's fall by twenty or thirty in their first second and then hold or swell again, beating
+as they go; one note's partials differed in how fast they fell by a third as much as the
+recording's, and swung about their decay by half as much. Three things changed:
+
+* **A bridge that takes the shared motion quickly.** The bridge drains a unison's shared motion
+  twice as fast as before at C3, three times at C4 and twice at C5. The whole of the recorded
+  C4 loses 31 dB a second between a tenth of a second and six tenths, and C5 39; the model's
+  lost 17 and 14, and now loses 32 and 32. The registers were brought down by most of what the
+  bridge now takes, so that each note stands as loud over its first half second as it did.
+* **Three strings from F2.** Keys from C2 to F#3 had two strings; a concert grand has three
+  from about F2, and a pair has one beat where three strings have two.
+* **A tuner's unison.** The outer strings of every unison were tuned exactly symmetrically
+  about the middle one, so every key's unison beat in the same pattern. Each string is now
+  left up to a cent off, the key's own.
+
+Every measure that holds a note to one recording frame by frame moved away, as the table shows
+— the mel distance from 0.170, each partial's decay from 5.1 dB and the envelope from 1.5 dB —
+and so did the decay bands of `piano_character.py`, while its beats and spreads moved closer.
+Two blind listening rounds against the recorded phrase from C3 to E4 preferred this to what
+the measures preferred, both times. A model whose beats come at moments of its own is held to
+the recording's moments by those measures; the ear holds it to how much it beats.
 
 A clarinet's breath, read between the harmonics of the same recordings' settled notes, lies
 31 to 35 dB under the tone from pianissimo to fortissimo, and 33 to 35 dB here; it had been 21
