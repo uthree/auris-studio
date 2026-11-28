@@ -208,6 +208,10 @@ fn db_at(table: &[f32; BANDS], hz: f32) -> f32 {
     table[below] * (1.0 - fraction) + table[below + 1] * fraction
 }
 
+/// Sharpness of each of the stick's two bandpasses: the captured burst falls 12 dB half an
+/// octave either side of its centre.
+const STICK_Q: f32 = 2.0;
+
 /// A second decay this far down is no second decay at all.
 const NO_SECOND_DB: f32 = -100.0;
 
@@ -252,6 +256,13 @@ struct Hit {
     tail: f32,
     tail_loss: f32,
     noise_state: u32,
+    /// The stick: a windowed noise burst some milliseconds after the strike, apart from the
+    /// plate. Samples since the strike, where the window starts, how long it is, its filter.
+    stick_clock: u32,
+    stick_delay: u32,
+    stick_width: u32,
+    stick_gain: f32,
+    stick: [Biquad; 2],
     velocity: f32,
     contact: f32,
 }
@@ -369,6 +380,22 @@ impl Hit {
             noise_state: 1,
             velocity: 0.0,
             contact: 0.6,
+            stick_clock: 0,
+            stick_delay: (bands.stick_delay * sample_rate) as u32,
+            stick_width: (bands.stick_width * sample_rate).max(1.0) as u32,
+            stick_gain: if bands.stick_db <= NO_SECOND_DB || bands.stick_hz >= sample_rate * 0.45 {
+                0.0
+            } else {
+                // White noise of a fixed variance spreads thinner per hertz at a higher rate.
+                db_to_gain(bands.stick_db) * density
+            },
+            stick: std::array::from_fn(|_| {
+                Biquad::new(BiquadCoefficients::bandpass(
+                    f64::from(sample_rate),
+                    bands.stick_hz.min(sample_rate * 0.4),
+                    STICK_Q,
+                ))
+            }),
         }
     }
 
@@ -411,6 +438,20 @@ impl Hit {
                 * (gain * self.field_level[band] * (1.0 - self.bloom[band])
                     + second * self.second_level[band]);
             field += self.field[band].process_sample(drive);
+        }
+        if self.stick_gain > 0.0 {
+            let since = self.stick_clock.wrapping_sub(self.stick_delay);
+            let window = if self.stick_clock >= self.stick_delay && since < self.stick_width {
+                (std::f32::consts::PI * since as f32 / self.stick_width as f32)
+                    .sin()
+                    .powi(2)
+            } else {
+                0.0
+            };
+            // Kept running after the window so the filter rings down rather than stops.
+            let burst = self.stick[0].process_sample(noise * self.stick_gain * window);
+            field += self.stick[1].process_sample(burst);
+            self.stick_clock = self.stick_clock.saturating_add(1);
         }
         if !self.lines.is_empty() {
             let blooming = std::array::from_fn(|band| 1.0 - self.bloom[band]);
@@ -886,6 +927,20 @@ mod tests {
         };
         let ring = 20.0 * (level(0.2, 0.5) / level(0.0, 0.05)).log10();
         assert!((-55.0..-35.0).contains(&ring), "{ring} dB");
+    }
+
+    #[test]
+    fn a_crash_stick_lands_ten_milliseconds_after_the_strike() {
+        // The captured crashes hold a burst at 400-630 Hz from 9 to 16 ms, 15-20 dB over the
+        // lull between 4 and 8 ms; the plate alone fills that lull and misses the burst.
+        let crash = sound(49);
+        let level = |from: f64, to: f64| {
+            let window = &crash[(48.0 * from) as usize..(48.0 * to) as usize];
+            band_amplitude(window, 48_000.0, 480.0)
+        };
+        let burst = 20.0 * (level(9.0, 15.0) / level(3.0, 8.0)).log10();
+        // 14 dB with the stick, 6 without it.
+        assert!(burst > 10.0, "{burst} dB");
     }
 
     #[test]

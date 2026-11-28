@@ -28,6 +28,12 @@ pub(super) struct Acoustics {
     pub(super) second_t30: [f32; 9],
     /// Level of the second decay at the strike, in decibels against the first.
     pub(super) second_db: [f32; 9],
+    /// The stick: a noise burst under a Hann window `stick_width` seconds long, starting
+    /// `stick_delay` after the strike, through a bandpass at `stick_hz`, at `stick_db`.
+    pub(super) stick_delay: f32,
+    pub(super) stick_width: f32,
+    pub(super) stick_hz: f32,
+    pub(super) stick_db: f32,
 }
 
 pub(super) const KICK: Acoustics = Acoustics {
@@ -55,6 +61,10 @@ pub(super) const KICK: Acoustics = Acoustics {
         -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000,
         -120.0000,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };
 
 pub(super) const SNARE: Acoustics = Acoustics {
@@ -81,6 +91,10 @@ pub(super) const SNARE: Acoustics = Acoustics {
     second_db: [
         -42.3293, -39.1175, -41.9890, -22.1092, -18.9945, -29.3163, -26.5507, -31.0114, -31.0114,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };
 
 pub(super) const CLOSEDHAT: Acoustics = Acoustics {
@@ -108,6 +122,10 @@ pub(super) const CLOSEDHAT: Acoustics = Acoustics {
         -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000,
         -120.0000,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };
 
 pub(super) const OPENHAT: Acoustics = Acoustics {
@@ -134,6 +152,10 @@ pub(super) const OPENHAT: Acoustics = Acoustics {
     second_db: [
         -6.0000, -6.0000, 15.0022, 3.3585, -6.0233, -1.4879, 6.1916, 8.2466, 8.2466,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };
 
 pub(super) const CRASH: Acoustics = Acoustics {
@@ -161,6 +183,10 @@ pub(super) const CRASH: Acoustics = Acoustics {
         -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000,
         -120.0000,
     ],
+    stick_delay: 0.0085,
+    stick_width: 0.0080,
+    stick_hz: 480.0,
+    stick_db: 36.2191,
 };
 
 pub(super) const RIDE: Acoustics = Acoustics {
@@ -187,6 +213,10 @@ pub(super) const RIDE: Acoustics = Acoustics {
     second_db: [
         -6.0000, -6.0000, 19.8765, -5.1145, 1.2078, -2.0952, 0.8846, 3.6769, 3.6769,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };
 
 pub(super) const TOMLOW: Acoustics = Acoustics {
@@ -213,6 +243,10 @@ pub(super) const TOMLOW: Acoustics = Acoustics {
     second_db: [
         -120.0000, -22.5890, -25.5082, -20.6908, -29.6858, -60.0000, -60.0000, -50.4593, -50.4593,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };
 
 pub(super) const TOMHIGH: Acoustics = Acoustics {
@@ -239,4 +273,8 @@ pub(super) const TOMHIGH: Acoustics = Acoustics {
     second_db: [
         -120.0000, -120.0000, -10.0179, -17.1071, -14.5110, -29.4577, -29.3731, -29.5382, -29.5382,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };

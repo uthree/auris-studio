@@ -59,7 +59,7 @@ pub(super) fn profile(pad: Pad) -> Profile {
             position: 0.627,
             decay: 1.315,
             damping: 0.182,
-            normalization: 1.027223,
+            normalization: 0.996722,
             gains: [
                 -6.3, -6.3, -6.3, 6.3, -2.7, -6.3, -4.5, 0.0, -2.7, 0.0, 0.0, -2.7,
             ],
