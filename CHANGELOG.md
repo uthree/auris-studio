@@ -7,6 +7,40 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## 0.25.0 — 2026-11-28
+
+**An orchestra of physical instruments, and techniques that MIDI has no message for.** Brass,
+flutes, double reeds, harp and timpani join the physical models, the piano is voiced against a
+recorded Steinway, and the drum kit is recalibrated against recorded drums.
+
+### Physical instruments
+
+* **Add physical brass** (trumpet, horn, trombone, tuba), **flutes** (concert flute, piccolo),
+  **double reeds** (oboe, cor anglais, bassoon), a **harp** and **timpani** with a roll. General
+  MIDI programs 46, 47 and 56–73 play them, and each has factory presets.
+* **Playing techniques**: slap, thumb, pop and harmonics on the bass; harmonics on the guitars;
+  pizzicato and bowed tremolo on the strings; flutter-tongue on the reeds and whistles. They are
+  also sounds of their own — Slap bass, Pizzicato strings, Tremolo strings, Guitar harmonics — and
+  the matching General MIDI programs resolve to them.
+* **The piano is voiced against the Steinway**: a brighter middle, the two-stage decay of a real
+  unison, a bass that rings like wire, and three strings from F2.
+* **The drum kit is recalibrated against recorded drums**: every band rings at its measured decay,
+  cymbals ring on hundreds of split modes rather than noise, and the crash blooms after the stick.
+* The violin, clarinet and tin whistle slur out of the box: Legato now starts on.
+
+### Synthesiser
+
+* The subtractive synth gains drive after the filter, a low cut, a clean sine sub, a pitch
+  envelope, FM, and a filter LFO locked to the tempo; three new patches — House Bass, Growl Bass
+  and Reese Bass — use them.
+
+### Analysis
+
+* The drum kit analyzer reads recorded drums' roles correctly: snares, low toms, open hats and
+  crashes it used to confuse are told apart.
+
+Projects that never stored the violin's, clarinet's or whistle's Legato now slur on loading.
+
 ## 0.24.0 — 2026-11-23
 
 **Play a drum kit from your own audio files, and re-sing only what an edit touched.** The audio
