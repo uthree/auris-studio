@@ -13,7 +13,11 @@ pub(super) fn family(instrument: &InstrumentTrack, drum: bool) -> &'static str {
         "auris.physical.guitar" | "auris.physical.electric_guitar" => "guitar",
         "auris.physical.bass" => "bass",
         "auris.physical.violin" | "auris.physical.cello" => "bowed_strings",
-        "auris.physical.bell" | "auris.physical.mallet" => "pitched_percussion",
+        "auris.physical.bell" | "auris.physical.mallet" | "auris.physical.timpani" => {
+            "pitched_percussion"
+        }
+        // Plucked and left to ring, as a guitar's notes are; struck chords are its arpeggios.
+        "auris.physical.harp" => "guitar",
         "auris.physical.flute"
         | "auris.physical.clarinet"
         | "auris.physical.tin_whistle"
@@ -54,6 +58,8 @@ pub(super) fn capabilities(instrument: &InstrumentTrack, drum: bool) -> Value {
             | "auris.physical.violin"
             | "auris.physical.bell"
             | "auris.physical.mallet"
+            | "auris.physical.harp"
+            | "auris.physical.timpani"
     );
     let dulcimer = id == "auris.physical.hammered_dulcimer";
     let sampler = id == auris_sampler::SAMPLER_ID;

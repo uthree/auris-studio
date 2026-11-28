@@ -37,6 +37,8 @@ fn chord(model: Model, count: usize) -> Vec<u8> {
         Model::Clarinet => (50, 86),
         Model::TinWhistle => (72, 96),
         Model::Brass => (52, 82),
+        Model::Harp => (36, 96),
+        Model::Timpani => (40, 57),
     };
     (0..count)
         .map(|n| {

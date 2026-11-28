@@ -37,7 +37,7 @@ use auris_dsp::DcBlocker;
 
 use super::calibration::dial;
 use super::dials;
-use super::waveguide::{Decimator, Line, Noise, lowpass_pole};
+use super::waveguide::{Decimator, Ear, Line, Noise, lowpass_pole};
 use super::{Engine, Mute, Note, Performance, Quality, TICK, harmonics, hertz};
 use crate::ParamBank;
 
@@ -343,55 +343,6 @@ impl Carry {
     }
 }
 
-/// Times the periods of the buzz, from the upward zero crossings of its fundamental.
-#[derive(Clone, Copy, Debug, Default)]
-struct Ear {
-    /// A resonator tuned to the note, which keeps the fundamental and little else.
-    held: [f32; 2],
-    coefficient: f32,
-    damping: f32,
-    /// Samples since the last crossing, and the length of the last period heard.
-    since: f32,
-    period: f32,
-    /// Crossings heard since the note began, and whether a new period is waiting.
-    crossings: u32,
-    fresh: bool,
-}
-
-impl Ear {
-    fn tune(&mut self, hz: f32, internal: f32) {
-        let radius = (-PI * 0.5 * hz / internal).exp();
-        self.coefficient = 2.0 * radius * (TAU * hz / internal).cos();
-        self.damping = radius * radius;
-    }
-
-    fn clear(&mut self) {
-        *self = Self {
-            coefficient: self.coefficient,
-            damping: self.damping,
-            ..Self::default()
-        };
-    }
-
-    #[inline]
-    fn hear(&mut self, pressure: f32) {
-        let [last, before] = self.held;
-        let now = pressure + self.coefficient * last - self.damping * before;
-        self.held = [now, last];
-        self.since += 1.0;
-        if last <= 0.0 && now > 0.0 {
-            let fraction = -last / (now - last);
-            let crossed = self.since - 1.0 + fraction;
-            if self.crossings > 0 {
-                self.period = crossed;
-                self.fresh = true;
-            }
-            self.crossings = self.crossings.saturating_add(1);
-            self.since = 1.0 - fraction;
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 struct Voice {
     /// The wave on its way down the tube and back.
@@ -639,17 +590,14 @@ impl Brass {
         let cents = voice.drift + depth * (TAU * voice.vibrato).sin();
         let fundamental = hertz(voice.pitch + cents / 100.0).clamp(LOWEST_HZ, internal * 0.1);
         // The lips pull the note; the player hears by how much and lips it back.
-        if voice.ear.fresh && voice.ear.crossings > 3 && voice.level > 1.0e-4 {
-            voice.ear.fresh = false;
-            let heard = internal / voice.ear.period.max(1.0);
-            let off = 1200.0 * (heard / voice.aim).log2();
-            if off.is_finite() && off.abs() < 600.0 {
-                voice.trim = (voice.trim + dial(dials::BRASS_TRIM_GAIN, TRIM_GAIN) * off)
-                    .clamp(-TRIM_LIMIT, TRIM_LIMIT);
-            }
+        if voice.level > 1.0e-4 {
+            let gain = dial(dials::BRASS_TRIM_GAIN, TRIM_GAIN);
+            voice
+                .ear
+                .correct(&mut voice.trim, voice.aim, gain, TRIM_LIMIT, internal);
         }
         voice.aim = fundamental;
-        voice.ear.tune(fundamental, internal);
+        voice.ear.tune(fundamental, 0.5, internal);
         // The Breath Pressure control's middle plays a full velocity at the breath the
         // instrument is voiced for; its top blows past that.
         let breath = 2.0

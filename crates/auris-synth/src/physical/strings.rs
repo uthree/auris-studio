@@ -94,6 +94,31 @@ pub(crate) const GUITAR_STRINGS: [u8; 6] = [40, 45, 50, 55, 59, 64];
 /// Standard tuning of a four-string bass, low to high.
 pub(crate) const BASS_STRINGS: [u8; 4] = [28, 33, 38, 43];
 
+/// A concert harp's strings, C1 to G7: one for every note. A harp tunes its strings
+/// diatonically and sharpens them with its pedals, which comes to a string for each semitone.
+pub(crate) const HARP_STRINGS: [u8; 80] = {
+    let mut strings = [0; 80];
+    let mut index = 0;
+    while index < strings.len() {
+        strings[index] = 24 + index as u8;
+        index += 1;
+    }
+    strings
+};
+
+/// Inharmonicity of each of [`HARP_STRINGS`]: least in the middle, more in the wound bass and
+/// in the short, comparatively thick top strings.
+pub(crate) const HARP_STIFFNESS: [f32; 80] = {
+    let mut stiffness = [0.0; 80];
+    let mut index = 0;
+    while index < stiffness.len() {
+        let from_middle = (index as f32 - 36.0) / 44.0;
+        stiffness[index] = 2.0e-5 + 1.0e-4 * from_middle * from_middle;
+        index += 1;
+    }
+    stiffness
+};
+
 /// How much of partial `n` a pluck at `position` along the string leaves in it, relative to a
 /// pluck that excited every partial fully: the string held aside at one point is a triangle,
 /// and a triangle's `n`th harmonic is `sin(n π position) / n`.

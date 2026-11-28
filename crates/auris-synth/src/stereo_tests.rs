@@ -29,6 +29,8 @@ fn range(model: Model) -> (u8, u8) {
         Model::Clarinet => (55, 86),
         Model::TinWhistle => (76, 93),
         Model::Brass => (55, 82),
+        Model::Harp => (36, 91),
+        Model::Timpani => (40, 55),
     }
 }
 
@@ -67,12 +69,15 @@ fn every_note_sits_where_its_instrument_puts_it_at_every_width() {
                 // a single note a little off its seat; a pipe or a bar has no body to do it.
                 let tolerance = match model {
                     Model::Mallet
+                    | Model::Timpani
                     | Model::Clarinet
                     | Model::TinWhistle
                     | Model::Brass
                     | Model::ElectricGuitar => 0.01,
-                    // A bell's two halves are heard to either side, and seldom equally.
-                    Model::Bell => 0.2 * f64::from(width),
+                    // A bell's two halves are heard to either side, and seldom equally; a
+                    // harp's top strings meet its soundboard at the narrow end, which leans
+                    // their few resonances further off the seat.
+                    Model::Bell | Model::Harp => 0.2 * f64::from(width),
                     _ => 0.14 * f64::from(width),
                 };
                 assert!(

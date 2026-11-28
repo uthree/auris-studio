@@ -1448,7 +1448,9 @@ fn sound_artwork(
     } else {
         match id {
             "auris.physical.piano" => SoundIcon::Piano,
-            "auris.physical.guitar" | "auris.physical.electric_guitar" => SoundIcon::Guitar,
+            "auris.physical.guitar" | "auris.physical.electric_guitar" | "auris.physical.harp" => {
+                SoundIcon::Guitar
+            }
             "auris.physical.bass"
             | "auris.synth.boom_bass"
             | "auris.synth.kick_bass"
@@ -1461,6 +1463,7 @@ fn sound_artwork(
             | "auris.physical.hammered_dulcimer"
             | "auris.physical.bell" => SoundIcon::Bell,
             "auris.synth.drumkit"
+            | "auris.physical.timpani"
             | "auris.synth.noisedrum"
             | "auris.synth.electro_kit"
             | "auris.synth.edm_kit"

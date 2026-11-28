@@ -205,7 +205,11 @@ mod tests {
             );
             match model {
                 // A blow is a force that rises and falls and is never a pull.
-                Model::Piano | Model::HammeredDulcimer | Model::Mallet | Model::Bell => {
+                Model::Piano
+                | Model::HammeredDulcimer
+                | Model::Mallet
+                | Model::Bell
+                | Model::Timpani => {
                     assert!(
                         low == 0.0 && (0.05..1.5).contains(&high),
                         "{model:?}: {low}..{high}"
@@ -231,12 +235,16 @@ mod tests {
                 // A jet swings to both sides of the edge.
                 Model::TinWhistle => assert!(low < -0.3 && high > 0.2, "{low}..{high}"),
                 // A finger lets go and is gone.
-                Model::Guitar | Model::ElectricGuitar | Model::Bass => {
+                Model::Guitar | Model::ElectricGuitar | Model::Bass | Model::Harp => {
                     assert_eq!((low, high), (0.0, 0.0), "{model:?}");
                 }
             }
             match model {
-                Model::Piano | Model::HammeredDulcimer | Model::Guitar | Model::Violin => {
+                Model::Piano
+                | Model::HammeredDulcimer
+                | Model::Guitar
+                | Model::Harp
+                | Model::Violin => {
                     assert!(
                         (0.002..0.1).contains(&body),
                         "{model:?}: its body swings {body}"

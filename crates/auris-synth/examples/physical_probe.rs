@@ -108,6 +108,8 @@ fn pitches(model: Model) -> &'static [u8] {
         Model::Clarinet => &[50, 62, 74, 86],
         Model::TinWhistle => &[74, 86, 98],
         Model::Brass => &[48, 60, 72, 82],
+        Model::Harp => &[36, 48, 60, 72, 84, 96],
+        Model::Timpani => &[40, 45, 50, 55],
     }
 }
 

@@ -132,6 +132,8 @@ fn every_model_is_in_tune_across_its_playing_register() {
         (Model::Clarinet, [50, 67, 86]),
         (Model::TinWhistle, [74, 86, 98]),
         (Model::Brass, [55, 67, 82]),
+        (Model::Harp, [36, 60, 91]),
+        (Model::Timpani, [40, 48, 55]),
     ] {
         let mut rig = rig(model, 48_000.0);
         for pitch in pitches {
@@ -2415,6 +2417,8 @@ fn every_technique_control_starts_on_the_way_the_instrument_was_always_played() 
         (Model::Clarinet, 2),
         (Model::TinWhistle, 2),
         (Model::Brass, 2),
+        (Model::Harp, 2),
+        (Model::Timpani, 2),
     ] {
         let instrument = Physical::new(model);
         let technique = instrument.descriptor_for_key("technique").unwrap();
@@ -2919,4 +2923,137 @@ fn the_brass_instruments_sound_unlike_one_another_on_the_same_note() {
         horn < trombone && trombone < trumpet,
         "horn {horn}, trombone {trombone}, trumpet {trumpet}"
     );
+}
+
+/// The woodwinds that are not the default of their model, each across its own range:
+/// (model, instrument, lowest, highest).
+const WOODWINDS: [(Model, f32, u8, u8); 5] = [
+    (Model::TinWhistle, 1.0, 60, 96),
+    (Model::TinWhistle, 2.0, 74, 105),
+    (Model::Clarinet, 1.0, 58, 91),
+    (Model::Clarinet, 2.0, 52, 81),
+    (Model::Clarinet, 3.0, 34, 75),
+];
+
+fn woodwind(model: Model, instrument: f32) -> Rig {
+    let mut rig = rig(model, 48_000.0);
+    rig.set_param("instrument", instrument);
+    rig
+}
+
+#[test]
+fn every_flute_and_double_reed_speaks_in_tune_across_its_range_at_every_dynamic() {
+    for (model, instrument, low, high) in WOODWINDS {
+        for pitch in (low..=high).step_by(4) {
+            for velocity in [0.2_f32, 0.6, 1.0] {
+                let mut player = woodwind(model, instrument);
+                let audio = player.render(48_000, &[on(pitch, velocity)]);
+                let steady = &audio[19_200..45_600];
+                assert!(
+                    level_db(steady) > -70.0,
+                    "{model:?} {instrument} MIDI {pitch} at {velocity} does not speak"
+                );
+                let cents = peak_cents(steady, 48_000.0, hz(pitch), -300..=300);
+                assert!(
+                    cents.abs() < 5.0,
+                    "{model:?} {instrument} MIDI {pitch} at {velocity}: {cents} cents"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_double_reed_is_played_soft_with_the_lips_and_loud_by_letting_the_reed_open() {
+    // A cone jumps straight to a wave that shuts the reed every period, whatever the breath;
+    // its dynamics are the lips', and they still span what a player's do.
+    for (instrument, pitch) in [(1.0, 67), (2.0, 60), (3.0, 46)] {
+        let take = |velocity: f32| {
+            let mut player = woodwind(Model::Clarinet, instrument);
+            player.render(48_000, &[on(pitch, velocity)])[19_200..45_600].to_vec()
+        };
+        let span = level_db(&take(1.0)) - level_db(&take(0.2));
+        assert!(
+            (8.0..30.0).contains(&span),
+            "instrument {instrument}: {span} dB from pp to ff"
+        );
+    }
+}
+
+#[test]
+fn a_cone_sounds_every_harmonic_and_a_cylinder_mostly_the_odd_ones() {
+    let evenness = |instrument: f32, pitch: u8| {
+        let mut player = woodwind(Model::Clarinet, instrument);
+        let audio = player.render(48_000, &[on(pitch, 0.7)]);
+        let steady = &audio[19_200..45_600];
+        let at = |n: u32| windowed(steady, 48_000.0, hz(pitch) * f64::from(n));
+        // The second harmonic against its neighbours.
+        at(2) / (at(1) * at(3)).sqrt().max(1.0e-12)
+    };
+    let (clarinet, oboe) = (evenness(0.0, 55), evenness(1.0, 62));
+    assert!(clarinet < 0.3, "the clarinet's second harmonic: {clarinet}");
+    assert!(oboe > 0.5, "the oboe's second harmonic: {oboe}");
+}
+
+#[test]
+fn a_harp_and_a_timpano_ring_on_after_the_key_is_let_go() {
+    // Played short or held, a note a second on is where it would have been: the hand that
+    // stops it is the Release control's, and it rests off the strings and the head.
+    for model in [Model::Harp, Model::Timpani] {
+        let pitch = if model == Model::Harp { 60 } else { 45 };
+        let later = |events: &[NoteEvent]| {
+            let mut player = rig(model, 48_000.0);
+            level_db(&player.render(96_000, events)[48_000..57_600])
+        };
+        let (short, held) = (
+            later(&[on(pitch, 0.8), off(2_400, pitch)]),
+            later(&[on(pitch, 0.8)]),
+        );
+        assert!(
+            (short - held).abs() < 0.5,
+            "{model:?}: {short} dB played short, {held} dB held"
+        );
+        // Turned down, the control stops it.
+        let mut player = rig(model, 48_000.0);
+        player.set_param("release", 0.2);
+        let stopped =
+            level_db(&player.render(96_000, &[on(pitch, 0.8), off(2_400, pitch)])[48_000..57_600]);
+        assert!(
+            held - stopped > 20.0,
+            "{model:?}: {stopped} dB stopped against {held}"
+        );
+    }
+}
+
+#[test]
+fn a_timpano_is_heard_at_the_note_with_a_fifth_and_an_octave_over_it() {
+    let mut drum = rig(Model::Timpani, 48_000.0);
+    let audio = drum.render(48_000, &[on(45, 0.8)]);
+    let steady = &audio[4_800..28_800];
+    let at = |ratio: f64| windowed(steady, 48_000.0, hz(45) * ratio);
+    let (note, fifth, octave) = (at(1.0), at(1.5), at(1.99));
+    // Between the modes there is nothing.
+    let between = at(1.25).max(at(1.75));
+    assert!(note > fifth && fifth > octave, "{note} {fifth} {octave}");
+    assert!(
+        octave > 4.0 * between,
+        "{octave} against {between} between the modes"
+    );
+}
+
+#[test]
+fn a_held_timpani_roll_keeps_striking_and_stops_when_let_go() {
+    let mut drum = rig(Model::Timpani, 48_000.0);
+    drum.set_param("technique", 1.0);
+    let audio = drum.render(144_000, &[on(45, 0.7), off(96_000, 45)]);
+    // Two seconds in, a single stroke would have fallen by most of its level; the roll has not.
+    let start = level_db(&audio[2_400..12_000]);
+    let held = level_db(&audio[86_400..96_000]);
+    assert!(
+        start - held < 6.0,
+        "{start} dB at the start, {held} dB held"
+    );
+    // Let go, the strokes stop and the head rings down.
+    let after = level_db(&audio[134_400..144_000]);
+    assert!(held - after > 3.0, "{held} dB held, {after} dB after");
 }

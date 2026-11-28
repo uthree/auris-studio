@@ -335,6 +335,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             "hammered_dulcimer",
             "tin_whistle",
             "brass",
+            "harp",
+            "timpani",
             "drums",
             "choir",
             "chiptune",

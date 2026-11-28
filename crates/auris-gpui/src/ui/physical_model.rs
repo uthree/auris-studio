@@ -114,9 +114,10 @@ pub(crate) enum Gesture {
 impl Gesture {
     fn of(id: &str) -> Self {
         match id {
-            "auris.physical.guitar" | "auris.physical.electric_guitar" | "auris.physical.bass" => {
-                Self::Pluck
-            }
+            "auris.physical.guitar"
+            | "auris.physical.electric_guitar"
+            | "auris.physical.bass"
+            | "auris.physical.harp" => Self::Pluck,
             "auris.physical.piano" => Self::Key,
             "auris.physical.violin"
             | "auris.physical.clarinet"
@@ -1212,7 +1213,11 @@ impl Bodies {
     /// Whether the bodies sit side by side in square cells, as heads and bells do, rather
     /// than one lane under another.
     fn cells(&self) -> bool {
-        self.drums || self.resting == MotionGeometry::Shell
+        self.drums
+            || matches!(
+                self.resting,
+                MotionGeometry::Shell | MotionGeometry::Membrane
+            )
     }
 }
 
@@ -1242,7 +1247,7 @@ fn resting_geometry(id: &str, observed: MotionGeometry) -> MotionGeometry {
             MotionGeometry::Bore
         }
         "auris.physical.choir" => MotionGeometry::Tract,
-        "auris.synth.drumkit" => MotionGeometry::Membrane,
+        "auris.synth.drumkit" | "auris.physical.timpani" => MotionGeometry::Membrane,
         id if is_oscillator_model(id) => MotionGeometry::Oscillator,
         id if id.starts_with("auris.physical.") => MotionGeometry::String,
         _ => observed,

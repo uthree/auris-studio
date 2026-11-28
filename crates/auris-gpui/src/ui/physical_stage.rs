@@ -52,6 +52,8 @@ pub(crate) fn body_plate(id: &str) -> Option<f32> {
         "auris.physical.hammered_dulcimer" => Some(2.2),
         "auris.physical.guitar" | "auris.physical.bass" => Some(1.25),
         "auris.physical.violin" => Some(1.7),
+        // A harp's soundboard is long and narrow, running the length of its strings.
+        "auris.physical.harp" => Some(4.0),
         _ => None,
     }
 }
@@ -186,7 +188,9 @@ impl Exciter {
     pub(crate) fn of(id: &str) -> Option<Self> {
         match id {
             "auris.physical.piano" | "auris.physical.hammered_dulcimer" => Some(Self::Hammer),
-            "auris.physical.mallet" | "auris.physical.bell" => Some(Self::Mallet),
+            "auris.physical.mallet" | "auris.physical.bell" | "auris.physical.timpani" => {
+                Some(Self::Mallet)
+            }
             "auris.physical.violin" => Some(Self::Bow),
             "auris.physical.clarinet" => Some(Self::Reed),
             "auris.physical.tin_whistle" => Some(Self::Jet),
@@ -578,6 +582,8 @@ mod tests {
             ("auris.physical.clarinet", Some(Exciter::Reed)),
             ("auris.physical.tin_whistle", Some(Exciter::Jet)),
             ("auris.physical.brass", Some(Exciter::Lips)),
+            ("auris.physical.timpani", Some(Exciter::Mallet)),
+            ("auris.physical.harp", None),
             ("auris.physical.guitar", None),
             ("auris.physical.electric_guitar", None),
             ("auris.physical.bass", None),
@@ -609,6 +615,7 @@ mod tests {
             "auris.physical.hammered_dulcimer",
             "auris.physical.guitar",
             "auris.physical.bass",
+            "auris.physical.harp",
             "auris.physical.violin",
         ] {
             assert!(body_plate(id).is_some_and(|aspect| aspect >= 1.), "{id}");
@@ -620,6 +627,7 @@ mod tests {
             "auris.physical.clarinet",
             "auris.physical.tin_whistle",
             "auris.physical.brass",
+            "auris.physical.timpani",
             "auris.synth.fm2",
         ] {
             assert!(body_plate(id).is_none(), "{id}");

@@ -2,7 +2,7 @@
 
 [日本語](physical-copy-synthesis.ja.md)
 
-The physical piano, guitar, strings, reeds, whistles, hammered strings and brass are measured against
+The physical piano, guitar, strings, reeds, whistles, flute, hammered strings and brass are measured against
 frozen cohorts of **real recordings**. Each tool plays the recorded notes through the actual
 Rust instrument and reports how far the result lies from the recording. The instrument is
 played by the worker, `physical_fit_render`: freeze a copy of it before changing anything that
@@ -293,24 +293,34 @@ the fundamental's share, which depends on where each bass's pickup lies under ea
 are regression measurements of whether slapping changes a note as a hand does, not evidence
 that a slapped note sounds like any one bass.
 
-## Brass
+## Winds
 
-The [Iowa MIS](https://theremin.music.uiowa.edu/MIS.html) brass captures are chromatic phrases
-at *pp*, *mf* and *ff*: the B♭ trumpet without vibrato over C4–B5, the horn and the tenor
-trombone over C4–B4 and C3–B3, and the tuba over C2–B2 (its *pp* and *mf* captures yield one
-note each). `brass_profile.py` reads each note's first ten harmonics, in decibels under its
-strongest, from 0.25 to 0.85 s after its onset, and plays the same pitch at velocity 0.3, 0.65
-and 1.0 for the three dynamics, read from 0.3 to 0.8 s. The distance is the mean absolute
-difference of the ten, both floored at −60 dB. The lowest and highest note of each capture are
-fitted on; the middle one is held out. `fit` searches the brass dials of
-`auris_synth::physical::dials` by differential evolution (seed 20261128, eight candidates a
-dimension, thirty generations), with the softest breath kept at or above 0.055 so that every
-note of every instrument speaks.
+The [Iowa MIS](https://theremin.music.uiowa.edu/MIS.html) brass and woodwind captures are
+chromatic phrases at *pp*, *mf* and *ff*: the B♭ trumpet without vibrato over C4–B5, the horn
+and the tenor trombone over C4–B4 and C3–B3, the tuba over C2–B2, the flute without vibrato
+over B3–B4 and C6–B6, the oboe over C4–B5 and the bassoon over C2–B3. `wind_profile.py` cuts
+each capture into its notes and names each by what it sounds: a capture's quiet notes are
+sometimes missed and its long ones split, so the place of a note in the file is not its pitch.
+Each note is taken to be the last one again (a split) or up to three semitones over it, and
+the candidate whose harmonics stand furthest over the points between them wins. The tuba's
+*pp* capture still yields one note.
+
+It reads each note's first ten harmonics, in decibels under its strongest, from 0.25 to 0.85 s
+after its onset, and plays the same pitch at velocity 0.3, 0.65 and 1.0 for the three dynamics,
+read from 0.3 to 0.8 s. The distance is the mean absolute difference of the ten, both floored
+at −60 dB. The lowest and highest note of each capture are fitted on; the middle one is held
+out. `fit` searches the instrument's family of dials in `auris_synth::physical::dials` by
+differential evolution (seed 20261128, eight candidates a dimension, thirty generations). For
+the brass the softest breath is kept at or above 0.055, so that every note speaks; for the
+double reeds the lips' opening was then set by hand so that *pp* to *ff* spans what the Iowa
+players' does, twelve to sixteen decibels, which the envelopes cannot see. The cor anglais and
+the piccolo have no capture and were not fitted.
 
 The measure is a spectral envelope, not a timbre: it says nothing of the attack, and it is
 one player and one room for each instrument. It also does not see how much a note brightens
 from *pp* to *ff* beyond what the three envelopes show, and the horn and the trombone
-recordings brighten more than the model does.
+recordings brighten more than the model does. The oboe's held-out notes keep their strongest
+harmonics in the third and fourth, near a kilohertz, where the model's are in the first two.
 
 ## Running the measures
 
@@ -361,10 +371,10 @@ uv run tools/eval/bass_slap.py fetch target/slap-reference --fret 3 --fret 8
 uv run tools/eval/bass_slap.py measure target/slap-reference <after-worker> \
   target/slap-reference/measure-held-out.json --fret 3 --fret 8
 
-uv run tools/eval/brass_profile.py fetch target/brass-reference
-uv run tools/eval/brass_profile.py measure target/brass-reference <after-worker>
+uv run tools/eval/wind_profile.py fetch target/wind-reference
+uv run tools/eval/wind_profile.py measure target/wind-reference <after-worker>
 # Fitting needs a worker built with --features physical-calibration.
-uv run tools/eval/brass_profile.py fit target/brass-reference <calibration-worker> Trumpet
+uv run tools/eval/wind_profile.py fit target/wind-reference <calibration-worker> Oboe
 ```
 
 Pin the recorded dependency versions for exact extraction of the Iowa cohort: NumPy 2.5.3,

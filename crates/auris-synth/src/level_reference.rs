@@ -56,6 +56,8 @@ pub fn register(id: &str) -> u8 {
         | "auris.synth.kick_bass"
         | "auris.synth.sub_bass" => 36,
         "auris.physical.tin_whistle" => 74,
+        // Timpani are tuned between the D and the A under the bass clef's middle line.
+        "auris.physical.timpani" => 43,
         _ => 60,
     }
 }

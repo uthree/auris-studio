@@ -1,4 +1,5 @@
-//! Reed woodwinds: a clarinet's cylinder of air, closed at the reed.
+//! Reed woodwinds: a clarinet's cylinder of air, closed at the reed, and the cones of the
+//! double reeds.
 //!
 //! A reed is a valve the player's breath holds nearly shut. The pressure in the mouth pushes it
 //! toward the mouthpiece, the pressure inside the instrument pushes it back, and the air that
@@ -18,6 +19,15 @@
 //! octave below a flute of its length and has no even harmonics to speak of. It does not come
 //! back whole. Above about 1.5 kHz the row of open tone holes stops reflecting and lets the
 //! sound out instead, and that — what the reflection leaves behind — is what is heard.
+//!
+//! An oboe, a cor anglais and a bassoon are cones, and a cone is not a closed pipe: it sounds
+//! every harmonic of a note whose *half* wavelength fits its length, as an open pipe does.
+//! What makes it a cone at the reed is the tip that is missing — cut off where the reed and
+//! its staple go — and a truncated cone is, at the reed, the same as a cylinder with a short
+//! second tube beside it, open at its far end and as long as the part cut away. The reed
+//! drives both at once, the two trips together make one period, and the short one, which
+//! comes back the wrong way up every time its own trip is a whole period, takes the
+//! harmonics there out of the sound: the double reeds' nasal dip.
 
 use std::f32::consts::TAU;
 
@@ -27,7 +37,7 @@ use auris_dsp::DcBlocker;
 
 use super::calibration::dial;
 use super::dials;
-use super::waveguide::{Decimator, Line, Noise, lowpass_delay, lowpass_gain, lowpass_pole};
+use super::waveguide::{Decimator, Ear, Line, Noise, lowpass_delay, lowpass_gain, lowpass_pole};
 use super::{Engine, Mute, Note, Performance, Quality, TICK, harmonics, hertz};
 use crate::ParamBank;
 
@@ -39,6 +49,174 @@ const P_RELEASE: u32 = 4;
 const P_VIBRATO: u32 = 5;
 const P_LEGATO: u32 = 6;
 const P_TECHNIQUE: u32 = 7;
+const P_INSTRUMENT: u32 = 8;
+
+/// The instruments, in parameter-value order.
+const INSTRUMENTS: &[std::borrow::Cow<'static, str>] = &[
+    std::borrow::Cow::Borrowed("Clarinet"),
+    std::borrow::Cow::Borrowed("Oboe"),
+    std::borrow::Cow::Borrowed("Cor anglais"),
+    std::borrow::Cow::Borrowed("Bassoon"),
+];
+
+/// What sets one reed instrument's bore apart from another's.
+#[derive(Clone, Copy, Debug)]
+struct Cane {
+    /// Whether the bore is a cone, and the note at which the part of it cut off for the reed
+    /// is a whole period long: where the harmonics are taken out.
+    conical: bool,
+    tip_hz: f32,
+    /// Multiplies where the tone holes stop sending the sound back.
+    corner: f32,
+    /// How wide the reed's gap is at rest at the middle of the Reed Stiffness control.
+    embouchure: f32,
+    /// How far over the note's threshold a full breath blows, and the power of the breath
+    /// that goes as: a cone saturates sooner than a cylinder, and is played nearer its
+    /// threshold for longer.
+    over: f32,
+    over_law: f32,
+    /// How far open a double reed's lips leave it at the softest breath, against the loudest.
+    pinch: f32,
+    /// How loud the tongue's release rings a cone at its note, against the pressure the note
+    /// sounds at.
+    seed: f32,
+    /// What a round trip of the bore keeps at its lowest notes, and what more the walls take
+    /// of one at 150 Hz, which goes as the root of the period.
+    wall: f32,
+    loss: f32,
+    /// What the air leaves of the top of what is radiated.
+    air_hz: f32,
+    /// Gain that brings the instrument to the clarinet's loudness in its own register, and the
+    /// note that register is measured from.
+    level: f32,
+    register_hz: f32,
+}
+
+impl Cane {
+    fn of(instrument: usize) -> Self {
+        match instrument {
+            // The oboe and the bassoon are fitted to the first ten harmonics of the Iowa MIS
+            // recordings at pp, mf and ff.
+            1 => Self {
+                conical: true,
+                tip_hz: 2_792.0,
+                corner: 1.68,
+                embouchure: 0.46,
+                over: 0.158,
+                over_law: 2.0,
+                pinch: 0.12,
+                wall: 0.995,
+                loss: 0.0,
+                air_hz: 1_352.0,
+                seed: 0.21,
+                level: 0.380,
+                register_hz: 600.0,
+            },
+            // No recording of a cor anglais was fitted: it stands between the oboe and the
+            // bassoon, each of its numbers the geometric mean of theirs.
+            2 => Self {
+                conical: true,
+                tip_hz: 1_956.0,
+                corner: 0.88,
+                embouchure: 0.37,
+                over: 0.2,
+                over_law: 2.0,
+                pinch: 0.12,
+                wall: 0.995,
+                loss: 0.0,
+                air_hz: 2_863.0,
+                seed: 0.25,
+                level: 0.363,
+                register_hz: 450.0,
+            },
+            3 => Self {
+                conical: true,
+                tip_hz: 1_371.0,
+                corner: 0.46,
+                embouchure: 0.3,
+                over: 0.248,
+                over_law: 2.0,
+                pinch: 0.12,
+                wall: 0.995,
+                loss: 0.0,
+                air_hz: 6_064.0,
+                seed: 0.3,
+                level: 0.486,
+                register_hz: 180.0,
+            },
+            _ => Self {
+                conical: false,
+                tip_hz: 0.0,
+                corner: 1.0,
+                embouchure: 0.35,
+                over: 0.32,
+                over_law: 2.0,
+                pinch: 0.15,
+                seed: SEED,
+                wall: 0.975,
+                loss: 0.02,
+                air_hz: 7_000.0,
+                level: 1.0,
+                register_hz: REGISTER_HZ,
+            },
+        }
+    }
+
+    /// The bore with whatever a calibration run has dialled in.
+    fn dialled(instrument: usize) -> Self {
+        let cane = Self::of(instrument);
+        Self {
+            tip_hz: dial(dials::REED_TIP_HZ, cane.tip_hz),
+            corner: dial(dials::REED_CORNER, cane.corner),
+            embouchure: dial(dials::REED_EMBOUCHURE, cane.embouchure),
+            over: dial(dials::REED_OVER, cane.over),
+            over_law: dial(dials::REED_OVER_LAW, cane.over_law),
+            loss: dial(dials::REED_LOSS, cane.loss),
+            air_hz: dial(dials::REED_AIR_HZ, cane.air_hz),
+            pinch: dial(dials::REED_PINCH, cane.pinch),
+            seed: dial(dials::REED_SEED, cane.seed),
+            ..cane
+        }
+    }
+}
+
+impl Default for Cane {
+    fn default() -> Self {
+        Self::of(0)
+    }
+}
+
+/// What the open end of the missing tip sends back of a trip along it. Little is lost on so
+/// short a trip, and what is lost is lost many times over: at a low note the tip's reactance
+/// and the bore's very nearly cancel, and what is left is their losses.
+const TIP_REFLECTION: f32 = 0.998;
+/// How much of a period's measured error a cone's player takes out at once, and the most
+/// they move the note by, in cents.
+const TRIM_GAIN: f32 = 0.35;
+const TRIM_LIMIT: f32 = 150.0;
+/// How loud the tongue's release rings a cone at its note, against the pressure the note
+/// sounds at. A cone's low notes have their harmonics more strongly resonant than their
+/// fundamentals, and a reed left to find its own way squeals on one of them; a player's
+/// tongue starts the reed at the note fingered.
+const SEED: f32 = 0.3;
+/// How wide the ear's resonator is, as a share of the note: a double reed's low notes have
+/// their second and third harmonics well over the fundamental, and a wide one counts them.
+const EAR_WIDTH: f32 = 0.12;
+/// The most of a period the missing tip may take, which the highest notes of a short cone
+/// would otherwise give to it.
+const TIP_SHARE: f32 = 0.4;
+
+/// Input admittance of a tube, against its own, from what comes back of a wave sent into it.
+fn admittance(reflected: (f32, f32)) -> (f32, f32) {
+    let (re, im) = reflected;
+    let (top_re, top_im) = (1.0 - re, -im);
+    let (bottom_re, bottom_im) = (1.0 + re, im);
+    let size = bottom_re * bottom_re + bottom_im * bottom_im;
+    (
+        (top_re * bottom_re + top_im * bottom_im) / size,
+        (top_im * bottom_re - top_re * bottom_im) / size,
+    )
+}
 
 /// Lowest note the bore is long enough for.
 const LOWEST_HZ: f32 = 20.0;
@@ -83,6 +261,8 @@ pub(super) fn descriptors() -> Vec<ParamDescriptor> {
         ParamDescriptor::toggle(P_LEGATO, "legato", "Legato", true),
         ParamDescriptor::new(P_TECHNIQUE, "technique", "Technique", 0.0, 1.0, 0.0)
             .with_choices(super::TONGUINGS),
+        ParamDescriptor::new(P_INSTRUMENT, "instrument", "Instrument", 0.0, 3.0, 0.0)
+            .with_choices(INSTRUMENTS),
     ]
 }
 
@@ -96,6 +276,7 @@ struct Settings {
     vibrato: f32,
     /// Whether the tongue is rolled against the breath: a flutter-tongue.
     flutter: bool,
+    cane: Cane,
 }
 
 /// How much a rolled tongue takes away at each roll: of the pressure the breath has over what
@@ -128,6 +309,8 @@ struct Wind {
     reflection: f32,
     /// Pole of the gentle low-pass on what is radiated.
     air: f32,
+    /// Whether the reed also drives the missing tip of a cone.
+    conical: bool,
     /// Output gain for this note's register.
     gain: f32,
 }
@@ -136,6 +319,14 @@ struct Wind {
 struct Voice {
     /// The wave on its way down the bore and back.
     bore: Line,
+    /// The wave on its way along the missing tip of a cone and back.
+    tip: Line,
+    tip_delay: f32,
+    tip_step: f32,
+    /// The player's ear on a cone, and the cents they play under the note to stay on it.
+    ear: Ear,
+    trim: f32,
+    aim: f32,
     /// Two stages of the open end's reflection filter, as the reed meets what it sent back.
     low: [f32; 2],
     /// The same two stages where the wave meets the open end, half a trip sooner.
@@ -179,6 +370,12 @@ impl Default for Voice {
     fn default() -> Self {
         Self {
             bore: Line::default(),
+            tip: Line::default(),
+            tip_delay: 0.0,
+            tip_step: 0.0,
+            ear: Ear::default(),
+            trim: 0.0,
+            aim: 261.6,
             low: [0.0; 2],
             out: [0.0; 2],
             gain: 0.0,
@@ -254,6 +451,10 @@ fn reed_flow(embouchure: f32, unloaded: f32, guess: f32) -> (f32, f32) {
 impl Voice {
     fn clear(&mut self) {
         self.bore.clear();
+        self.tip.clear();
+        self.tip_delay = 0.0;
+        self.ear.clear();
+        self.trim = 0.0;
         self.low = [0.0; 2];
         self.out = [0.0; 2];
         self.across = 0.0;
@@ -278,13 +479,26 @@ impl Voice {
         // The open end sends the low part of the wave back upside down.
         let returning = -wind.reflection * *second;
         self.mouth += (wind.mouth - self.mouth) * wind.ramp;
-        let unloaded = self.mouth - 2.0 * returning;
         // Air through a narrow gap is turbulent: the breath in the tone.
         self.hiss += (1.0 - wind.rough) * (self.noise.next() - self.hiss);
         let hiss = 1.0 + wind.noise * self.hiss;
-        let (flow, across) = reed_flow(wind.embouchure * hiss, unloaded, self.across);
-        self.across = across;
-        self.bore.write(returning + flow);
+        if wind.conical {
+            // Two tubes meet at the reed, and the air it lets in divides between them: the
+            // pressure there is what both send back and half the flow.
+            self.tip_delay += self.tip_step;
+            let tip = -TIP_REFLECTION * self.tip.read(self.tip_delay);
+            let unloaded = self.mouth - returning - tip;
+            let (half, across) = reed_flow(0.5 * wind.embouchure * hiss, unloaded, self.across);
+            self.across = across;
+            self.bore.write(tip + half);
+            self.tip.write(returning + half);
+            self.ear.hear(returning + tip + half);
+        } else {
+            let unloaded = self.mouth - 2.0 * returning;
+            let (flow, across) = reed_flow(wind.embouchure * hiss, unloaded, self.across);
+            self.across = across;
+            self.bore.write(returning + flow);
+        }
         // What the tone holes do not send back they let out, there and then: a note is heard
         // a quarter of its period after the reed first moves, the time sound takes to get
         // down the instrument.
@@ -354,9 +568,10 @@ impl Reeds {
         voice.drift += (voice.noise.next() * 2.0 - voice.drift) * 0.02;
         let cents = voice.drift + depth * (TAU * voice.vibrato).sin();
         let fundamental = hertz(voice.pitch + cents / 100.0).max(LOWEST_HZ);
+        let cane = settings.cane;
         // The tone holes stop sending sound back near 1.5 kHz, and no lower than a note's own
         // third harmonic, or the top of the instrument would not speak at all.
-        let corner = 2_400.0_f32.max(3.2 * fundamental);
+        let corner = (2_400.0 * cane.corner).max(3.2 * fundamental);
         let pole = lowpass_pole(corner, internal);
         let breath = settings.pressure
             * (0.15 + 0.85 * voice.velocity)
@@ -381,9 +596,25 @@ impl Reeds {
         let rough = lowpass_pole(dial(dials::REED_ROUGH_HZ, ROUGH_HZ), internal);
         let rough_kept = (1.0 - rough) / (1.0 + rough);
         // A stiff reed stands closer to the lay and lets less through.
-        let embouchure = 0.48 - 0.26 * settings.reed;
+        let embouchure = cane.embouchure * (1.0 + 0.74 * (0.5 - settings.reed));
+        // A cone does not grow out of its threshold as a cylinder does: it jumps straight to a
+        // wave that shuts the reed every period, as loud, in units of the pressure that shuts
+        // the reed, at the softest breath that sounds it as at a harder one. A double reed is
+        // played soft with the lips, which pinch it nearly shut. A reed half as far open is
+        // shut by half the pressure, so everything in the bore is half as loud. It also lets
+        // through less air against that pressure, as the root of how far open it is; a player
+        // keeps a soft low note speaking by the jaw and the air, which are not modelled, so
+        // the reed's air is left as it is and only the pressures scale.
+        let opening = if cane.conical {
+            // Measured on the Iowa players, a double reed spans twelve to sixteen decibels
+            // from pp to ff, which takes the lips opening as the square of the breath.
+            cane.pinch + (1.0 - cane.pinch) * (2.0 * breath).min(1.0).powi(2)
+        } else {
+            1.0
+        };
+
         // The walls take a little of every round trip, more of it from a long narrow one.
-        let reflection = 0.975 - 0.02 * (150.0 / fundamental).sqrt().min(2.0);
+        let reflection = cane.wall - cane.loss * (150.0 / fundamental).sqrt().min(2.0);
         // Where this note begins to sound at all: the mouth pressure at which the reed gives
         // back just what a round trip of the bore loses. A lossless pipe starts at a third of
         // the pressure that shuts the reed; a real one needs a little more, and more the
@@ -392,11 +623,28 @@ impl Reeds {
         // and nearly a sine; it grows as the root of how far over the breath is, and half-way
         // to shutting the reed it is nearly square.
         let returned = reflection * lowpass_gain(pole, turn).powi(2);
-        let needed = (1.0 - returned) / (1.0 + returned);
+        // A cone's missing tip is a second tube the reed drives, and its trip is taken out of
+        // the period.
+        let tip = if cane.conical {
+            (internal / cane.tip_hz.max(1.0)).min(TIP_SHARE * internal / fundamental)
+        } else {
+            0.0
+        };
+        let needed = if cane.conical {
+            // At the note the two trips make a whole period, and the bore's conductance is
+            // what is left of the two tubes' admittances once their reactances cancel.
+            let angle = turn * tip;
+            let (bore_re, _) = admittance((-returned * angle.cos(), -returned * angle.sin()));
+            let (tip_re, _) =
+                admittance((-TIP_REFLECTION * angle.cos(), TIP_REFLECTION * angle.sin()));
+            bore_re + tip_re
+        } else {
+            (1.0 - returned) / (1.0 + returned)
+        };
         let root = (2.0 * needed + (4.0 * needed * needed + 12.0 * embouchure * embouchure).sqrt())
             / (6.0 * embouchure);
         let threshold = root * root;
-        let over = 0.006 + 0.32 * breath * breath;
+        let over = 0.006 + cane.over * breath.max(0.0).powf(cane.over_law);
         // A note is started with a little more breath than a soft one is held with, more of
         // it the lower the note, whose bore takes longer to answer.
         // Never so much more than the note is held with that it starts with an accent.
@@ -428,24 +676,48 @@ impl Reeds {
             rough,
             pole,
             reflection,
-            air: lowpass_pole(7_000.0, internal),
-            gain: (REGISTER_HZ / fundamental).powf(0.35).clamp(0.5, 2.5),
+            air: lowpass_pole(cane.air_hz, internal),
+            conical: cane.conical,
+            gain: cane.level
+                * opening
+                * (cane.register_hz / fundamental).powf(0.35).clamp(0.5, 2.5),
         };
         // A reed blown hard is shut for part of every period and gives the wave back early: the
         // note goes sharp, and the player lets the jaw down by as much as they hear.
         let sharp = dial(dials::REED_SHARP, BLOWN_SHARP)
             * breath.powi(4)
             * (fundamental / BLOWN_SHARP_HZ).powf(0.85).min(1.0);
-        let played = fundamental * (-sharp / 1200.0).exp2();
-        // A closed pipe sounds the note whose half period is one trip down the bore and back.
+        let played = if cane.conical {
+            // A cone's reed pulls its note by more than a player could leave; the player
+            // hears by how much and takes it out.
+            if voice.level > 1.0e-4 {
+                voice
+                    .ear
+                    .correct(&mut voice.trim, voice.aim, TRIM_GAIN, TRIM_LIMIT, internal);
+            }
+            voice.aim = fundamental;
+            voice.ear.tune(fundamental, EAR_WIDTH, internal);
+            fundamental * (-voice.trim / 1200.0).exp2()
+        } else {
+            fundamental * (-sharp / 1200.0).exp2()
+        };
+        // A closed pipe sounds the note whose half period is one trip down the bore and back;
+        // a cone, the note whose whole period is that trip and one along its missing tip.
         // The open end's two filter stages take a little of that time themselves.
-        let wanted = (internal / (2.0 * played) - 2.0 * lowpass_delay(pole, turn))
+        let trips = if cane.conical { 1.0 } else { 0.5 };
+        let tip = tip * fundamental / played.max(1.0);
+        let wanted = (trips * internal / played - tip - 2.0 * lowpass_delay(pole, turn))
             .clamp(3.0, voice.bore.reach());
+        let tip = tip.clamp(2.0, voice.tip.reach());
         if start || voice.delay == 0.0 {
             voice.delay = wanted;
             voice.delay_step = 0.0;
+            voice.tip_delay = tip;
+            voice.tip_step = 0.0;
         } else {
-            voice.delay_step = (wanted - voice.delay) / (TICK * voice.oversampling) as f32;
+            let steps = (TICK * voice.oversampling) as f32;
+            voice.delay_step = (wanted - voice.delay) / steps;
+            voice.tip_step = (tip - voice.tip_delay) / steps;
         }
     }
 }
@@ -454,11 +726,13 @@ impl Engine for Reeds {
     fn prepare(&mut self, rate: f32, voices: usize) {
         self.rate = rate;
         let internal = if rate >= 88_200.0 { rate } else { rate * 2.0 };
-        let longest = (internal / (2.0 * LOWEST_HZ)).ceil() as usize;
+        // A cone's whole period is one trip, where a cylinder's is two.
+        let longest = (internal / LOWEST_HZ).ceil() as usize;
         self.voices = (0..voices)
             .map(|_| {
                 let mut voice = Voice::default();
                 voice.bore.prepare(longest);
+                voice.tip.prepare((internal / 200.0).ceil() as usize);
                 voice
             })
             .collect();
@@ -487,6 +761,7 @@ impl Engine for Reeds {
             release: params.at(P_RELEASE),
             vibrato: params.at(P_VIBRATO),
             flutter: params.at(P_TECHNIQUE) >= 0.5,
+            cane: Cane::dialled(params.at(P_INSTRUMENT).round().clamp(0.0, 3.0) as usize),
         };
     }
 
@@ -520,6 +795,14 @@ impl Engine for Reeds {
         self.conduct(index, true);
         if let Some(voice) = self.voices.get_mut(index).filter(|_| !stolen) {
             voice.gain = voice.wind.gain;
+            if voice.wind.conical {
+                let seed = self.settings.cane.seed * voice.wind.mouth;
+                let period = voice.delay + voice.tip_delay;
+                let samples = (period.ceil() as usize + 4).min(voice.bore.reach() as usize);
+                for n in 0..samples {
+                    voice.bore.write(seed * (TAU * n as f32 / period).sin());
+                }
+            }
         }
     }
 
