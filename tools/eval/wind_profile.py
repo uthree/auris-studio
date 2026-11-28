@@ -7,7 +7,9 @@
 The reference is each note's first ten harmonics, in decibels under its strongest, read
 from the settled part of the note (0.25 to 0.85 s after its onset). The instrument plays the
 same pitch at a velocity for each dynamic and is read the same way, from 0.3 to 0.8 s; the
-distance is the mean absolute difference over the ten, with both floored at -60 dB.
+distance is the mean absolute difference over the ten, with both floored at -60 dB. For the
+brass it also takes in the octave bands at 2, 4, 8 and 16 kHz, in dB of the whole, floored at
+-70 dB: a brass wave steepens into fronts whose highest harmonics the first ten do not show.
 
     uv run tools/eval/wind_profile.py fetch target/wind-reference [Flute]
     uv run tools/eval/wind_profile.py measure target/wind-reference <worker>
@@ -64,7 +66,7 @@ VELOCITY = {"pp": 0.3, "mf": 0.65, "ff": 1.0}
 RATE = 48_000
 # Dial number, lowest and highest value searched, for each model.
 DIALS = {
-    "brass": [(100, 200.0, 1800.0), (101, 1500.0, 12000.0), (102, 0.0, 8e-3), (103, 0.055, 0.3),
+    "brass": [(100, 200.0, 1800.0), (101, 1500.0, 16000.0), (102, 0.0, 8e-3), (103, 0.055, 0.3),
               (104, 0.2, 2.0), (108, 0.5, 4.0), (105, 0.4, 0.95), (106, 1.5, 10.0),
               (107, 0.5, 10.0)],
     "tin_whistle": [(113, -0.6, 0.6), (114, 1500.0, 12000.0), (115, -0.3, 0.8),
@@ -100,6 +102,22 @@ def profile(samples, rate, fundamental):
     """The first ten harmonics in dB under the strongest of sixteen."""
     level = harmonics(samples, rate, fundamental)
     return 20 * np.log10(level / level.max() + 1e-9)[:10]
+
+
+# Octave bands over the tenth harmonic of most notes, read for the brass: their waves steepen
+# into fronts whose highest harmonics the first ten do not show.
+BANDS = (2000, 4000, 8000, 16000)
+BRIGHT = ("Trumpet", "Horn", "TenorTrombone", "Tuba")
+
+
+def bands(samples, rate):
+    """Each octave band in `BANDS`, in dB of everything from 30 Hz to 20 kHz."""
+    samples = samples - np.mean(samples)
+    power = np.abs(np.fft.rfft(samples * np.hanning(len(samples)), 1 << 16)) ** 2
+    hz = np.fft.rfftfreq(1 << 16, 1 / rate)
+    total = power[(hz > 30) & (hz < 20000)].sum()
+    return np.array([10 * math.log10(power[(hz >= b / math.sqrt(2)) & (hz < b * math.sqrt(2))]
+                                     .sum() / total + 1e-12) for b in BANDS])
 
 
 def notes(audio, rate):
@@ -190,7 +208,8 @@ def fetch(root, only=None):
                     continue
                 rows.append({"pitch": pitch, "cents": 1200 * math.log2(heard / written),
                              "harmonics_db": [round(float(x), 1)
-                                              for x in profile(settled, rate, heard)]})
+                                              for x in profile(settled, rate, heard)],
+                             "bands_db": [round(float(x), 1) for x in bands(settled, rate)]})
             reference[f"{instrument}.{dynamic}.{span}"] = {"instrument": instrument,
                                                          "dynamic": dynamic, "notes": rows}
             print(f"{path.name}: {len(rows)} notes", file=sys.stderr)
@@ -228,6 +247,9 @@ def distance(renderer, instrument, notes, dials=None, verbose=False):
                 continue
             heard = np.maximum(profile(settled, RATE, 440 * 2 ** ((row["pitch"] - 69) / 12)), -60)
             recorded = np.maximum(np.array(row["harmonics_db"]), -60)
+            if instrument in BRIGHT:
+                heard = np.r_[heard, np.maximum(bands(settled, RATE), -70)]
+                recorded = np.r_[recorded, np.maximum(np.array(row["bands_db"]), -70)]
             errors.append(float(np.mean(np.abs(heard - recorded))))
             if verbose:
                 print(f"  {instrument} {dynamic} {row['pitch']}: {errors[-1]:4.1f} dB  model "

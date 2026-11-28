@@ -307,7 +307,7 @@ measured against recordings.
 | Reeds, mel distance | B♭ clarinet, held-out pitches | 0.041 | 0.054 |
 | Whistles, mel distance of the settled tone | tin whistle scale | 0.017 | 0.018 |
 | Hammered Strings, mel distance | hammered dulcimer | 0.234 | 0.241 |
-| Brass, first ten harmonics | trumpet E3–B5, horn C2–B4, trombone E2–B3, tuba C1–B2, at *pp*, *mf*, *ff*; the middle note of each capture held out | 5.3, 3.4, 2.9, 2.9 dB | — |
+| Brass, first ten harmonics and the octave bands from 2 to 16 kHz | trumpet E3–B5, horn C2–B4, trombone E2–B3, tuba C1–B2, at *pp*, *mf*, *ff*; the middle note of each capture held out | 2.4, 3.0, 3.5, 4.0 dB | — |
 | Timpani, partials over time | five drums struck *forte*, 90–190 Hz | 2.0 dB | — |
 | Flute and double reeds, first ten harmonics | flute without vibrato, oboe, bassoon at *pp*, *mf*, *ff*; the middle note of each capture held out | 8.0, 10.7, 8.0 dB | — |
 

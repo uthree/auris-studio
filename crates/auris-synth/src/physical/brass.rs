@@ -62,7 +62,7 @@ const INSTRUMENTS: &[std::borrow::Cow<'static, str>] = &[
 /// Lowest note any of them is asked to play.
 const LOWEST_HZ: f32 = 20.0;
 /// Scale of bore pressure in the picture a frontend draws.
-const DISPLAY: f32 = 0.15;
+const DISPLAY: f32 = 0.09;
 /// Scale of what the instrument radiates.
 const DRIVE: f32 = 1.0;
 /// Pitch at which the radiated level is left as it is.
@@ -82,13 +82,21 @@ const KICK_SECONDS: f32 = 0.03;
 /// The most a sample's pressure can shorten its trip to the bell, in units of pressure: no
 /// louder wave than this is told apart.
 const STEEPEST: f32 = 1.5;
+/// How many one-pole stages round off what the bell radiates. The carried wave reaches the
+/// bell with fronts as sharp as a sample, whose harmonics fall by only six decibels an
+/// octave; a real tube's walls and the air after it round those fronts, and the Iowa
+/// recordings fall by twenty and more an octave over four kilohertz. With one stage the model
+/// had ten to thirty decibels too much from four to sixteen kilohertz, and was heard as a
+/// train of clicks.
+const AIR_STAGES: usize = 3;
 /// The room the trip to the bell is given, as a power of two.
 const CARRY: usize = 2_048;
 
 /// What makes one brass instrument sound unlike another.
 ///
 /// Fitted, not chosen: each instrument's numbers are the ones that bring the first ten
-/// harmonics of its notes nearest those of the University of Iowa recordings of it, at
+/// harmonics of its notes, and its octave bands from 2 to 16 kHz, nearest those of the
+/// University of Iowa recordings of it, at
 /// *pianissimo*, *mezzo forte* and *fortissimo* — every note the fit was not shown included,
 /// to within a few decibels a harmonic. The fit has to be shown the whole range: the bell's
 /// corner only reaches into the loop below a third of it, so a horn fitted on C4–B4 alone
@@ -129,55 +137,55 @@ impl Bore {
             // round, and brightens little. A trombone's long cylinder is where a wave steepens
             // most.
             1 => Self {
-                bell_hz: 557.0,
-                bell_q: 1.54,
-                air_hz: 2_476.0,
-                steepening: 1.2e-4,
+                bell_hz: 458.0,
+                bell_q: 1.34,
+                air_hz: 3_857.0,
+                steepening: 2.2e-4,
                 loss: 0.03,
-                softest: 0.128,
-                hardest: 1.597,
-                lip_tuning: 0.651,
-                lip_q: 6.99,
-                lip_area: 0.68,
-                level: 0.388,
+                softest: 0.075,
+                hardest: 1.58,
+                lip_tuning: 0.669,
+                lip_q: 4.26,
+                lip_area: 0.669,
+                level: 0.587,
             },
             2 => Self {
-                bell_hz: 504.0,
-                bell_q: 1.24,
-                air_hz: 5_331.0,
-                steepening: 5.5e-3,
+                bell_hz: 628.0,
+                bell_q: 0.632,
+                air_hz: 5_185.0,
+                steepening: 5.8e-4,
                 loss: 0.03,
-                softest: 0.059,
-                hardest: 0.595,
-                lip_tuning: 0.715,
-                lip_q: 9.71,
-                lip_area: 0.54,
-                level: 1.422,
+                softest: 0.098,
+                hardest: 1.32,
+                lip_tuning: 0.665,
+                lip_q: 7.69,
+                lip_area: 0.668,
+                level: 1.567,
             },
             3 => Self {
-                bell_hz: 469.0,
-                bell_q: 1.57,
-                air_hz: 8_297.0,
-                steepening: 4.9e-4,
+                bell_hz: 471.0,
+                bell_q: 1.83,
+                air_hz: 15_488.0,
+                steepening: 4.1e-4,
                 loss: 0.035,
-                softest: 0.063,
-                hardest: 1.043,
-                lip_tuning: 0.687,
-                lip_q: 5.37,
-                lip_area: 0.886,
-                level: 1.096,
+                softest: 0.099,
+                hardest: 0.998,
+                lip_tuning: 0.66,
+                lip_q: 6.04,
+                lip_area: 1.01,
+                level: 1.370,
             },
             _ => Self {
-                bell_hz: 1_209.0,
-                bell_q: 2.76,
-                air_hz: 1_726.0,
-                steepening: 3.5e-4,
+                bell_hz: 1_370.0,
+                bell_q: 2.07,
+                air_hz: 3_159.0,
+                steepening: 3.2e-4,
                 loss: 0.03,
-                softest: 0.057,
-                hardest: 0.847,
-                lip_tuning: 0.779,
-                lip_q: 3.27,
-                lip_area: 0.871,
+                softest: 0.069,
+                hardest: 1.44,
+                lip_tuning: 0.667,
+                lip_q: 5.4,
+                lip_area: 0.738,
                 level: 1.0,
             },
         }
@@ -248,7 +256,7 @@ struct Wind {
     bell: Biquad,
     /// Samples a unit of pressure shortens the trip to the bell by.
     steepening: f32,
-    /// Pole of the gentle low-pass on what is radiated.
+    /// Pole of each of the [`AIR_STAGES`] low-passes on what is radiated.
     air: f32,
     /// Output gain for this note's register.
     gain: f32,
@@ -368,7 +376,7 @@ struct Voice {
     steady: f32,
     gain: f32,
     mouth: f32,
-    air: f32,
+    air: [f32; AIR_STAGES],
     hiss: f32,
     delay: f32,
     delay_step: f32,
@@ -414,7 +422,7 @@ impl Default for Voice {
             steady: 0.0,
             gain: 0.0,
             mouth: 0.0,
-            air: 0.0,
+            air: [0.0; AIR_STAGES],
             hiss: 0.0,
             delay: 0.0,
             delay_step: 0.0,
@@ -470,7 +478,7 @@ impl Voice {
         self.inside = 0.0;
         self.steady = 0.0;
         self.mouth = 0.0;
-        self.air = 0.0;
+        self.air = [0.0; AIR_STAGES];
         self.hiss = 0.0;
         self.delay = 0.0;
         self.trim = 0.0;
@@ -515,9 +523,12 @@ impl Voice {
         let arriving = self.carry.step(leaving, trip - wind.steepening * swing);
         // The bell lets out what it does not send back: little of the low part of the wave,
         // and less the lower it is, as a mouth smaller than the wavelength radiates.
-        let radiated = wind.bell.run(&mut self.out, arriving);
-        self.air += (1.0 - wind.air) * (radiated - self.air);
-        self.air
+        let mut radiated = wind.bell.run(&mut self.out, arriving);
+        for stage in &mut self.air {
+            *stage += (1.0 - wind.air) * (radiated - *stage);
+            radiated = *stage;
+        }
+        radiated
     }
 }
 

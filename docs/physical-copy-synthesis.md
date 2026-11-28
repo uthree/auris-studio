@@ -303,7 +303,7 @@ C6–B6, the oboe over C4–B5 and the bassoon over C2–B3. The low octaves mat
 corner only reaches into the brass loop below a third of it, so a dial fitted on the middle of
 the range alone is never seen there. The horn fitted on C4–B4 played C2–B3 as little more than
 its first two harmonics, where the recordings have a dozen; refitted on all of it, the horn's
-held-out distance over the whole range went from 7.0 to 3.4 dB. `wind_profile.py` cuts
+held-out distance over the whole range went from 7.0 to 3.4 dB on the harmonics alone. `wind_profile.py` cuts
 each capture into its notes and names each by what it sounds: a capture's quiet notes are
 sometimes missed and its long ones split, so the place of a note in the file is not its pitch.
 Each note is taken to be the last one again (a split) or up to three semitones over it, and
@@ -314,7 +314,16 @@ horn's *mf* C2–B2 is left out: its notes break between registers and are not n
 It reads each note's first ten harmonics, in decibels under its strongest, from 0.25 to 0.85 s
 after its onset, and plays the same pitch at velocity 0.3, 0.65 and 1.0 for the three dynamics,
 read from 0.3 to 0.8 s. The distance is the mean absolute difference of the ten, both floored
-at −60 dB. The lowest and highest note of each capture are fitted on; the middle one is held
+at −60 dB. For the brass it also takes in the octave bands at 2, 4, 8 and 16 kHz, in decibels
+of the whole note and floored at −70 dB. Without them the measure never saw past the tenth
+harmonic, which is 1.3 kHz on a trombone's C3, and the model went unchecked where it was
+furthest off: the wave reaching its bell had fronts a sample sharp, rounded by a single
+one-pole stage, and it had ten to thirty decibels too much from 4 to 16 kHz — heard as a
+train of clicks. Three stages and a refit on the wider measure bring the bands to within a
+few decibels; the held-out distances, bands included, went from 6.2, 4.5, 5.7 and 3.5 dB for
+trumpet, horn, trombone and tuba to 2.4, 3.0, 3.5 and 4.0. The tuba's lips were then set a
+little nearer the note than the fit put them, 0.66 of it rather than 0.63, which costs 0.3 dB
+and keeps its soft high notes from sagging twenty cents flat. The lowest and highest note of each capture are fitted on; the middle one is held
 out. `fit` searches the instrument's family of dials in `auris_synth::physical::dials` by
 differential evolution (seed 20261128, eight candidates a dimension, thirty generations). For
 the brass the softest breath is kept at or above 0.055, so that every note speaks; for the

@@ -374,7 +374,7 @@ impl Model {
             Self::Bell => 0.329,
             Self::Clarinet => 2.481,
             Self::TinWhistle => 2.903,
-            Self::Brass => 1.334,
+            Self::Brass => 0.934,
             Self::Harp => 0.718,
             Self::Timpani => 0.473,
         }
