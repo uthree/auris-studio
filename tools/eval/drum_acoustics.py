@@ -49,6 +49,9 @@ MODAL_CEILING_DB = -30.0
 TRANSIENT_T30 = 0.04
 SECOND_WINDOWS = {True: ((0.0, 0.02), (0.08, 0.4)), False: ((0.15, 0.6), (0.0, 0.05))}
 NO_SECOND_DB = -120.0
+# Pads whose bloom is fitted with a depth: a crash's upper bands sound in full at the strike
+# and grow a little more, where starting them from silence cost 5-8 dB in its first 10 ms.
+BLOOM_DEPTH = {"Crash"}
 # A closed hat is all transient already; the captures and the kit agree on its envelope. A kick's
 # ring lifted its midrange 6-13 dB over the captures' between 30 and 200 ms, and a crash's
 # transient landed 15 dB over them in the first 10 ms, where the captured stick has yet to bloom.
@@ -195,6 +198,30 @@ def bloom(peak, t30, metal):
     return np.array(result)
 
 
+def bloom_shape(envs, t30):
+    """Rise time constant and depth of a band that is sounding at the strike and blooms on.
+
+    The envelope (1 - depth e^(-t/rise)) e^(-t/tau), fitted in dB over the first 0.6 s to the
+    median of the hits' envelopes; tau is the band's own decay. Depth one is a band that starts
+    from silence, the shape `bloom` assumes; zero is one that never blooms.
+    """
+    smooth = 10 * np.log10(np.median(10 ** (np.array(envs) / 10), axis=0) + 1e-14)
+    span = slice(0, int(0.6 * 200))
+    measured = smooth[span]
+    t = np.arange(len(measured)) / 200 + 0.5 / 200
+    keep = measured > measured.max() - 40
+    tau = t30 / (1.5 * np.log(10))
+    best = (np.inf, 0.0, 0.0)
+    for rise in np.geomspace(0.002, 0.4, 60):
+        for depth in np.linspace(0, 1, 41):
+            model = 20 * np.log10(np.maximum(1 - depth * np.exp(-t / rise), 1e-6)) - 8.686 * t / tau
+            offset = np.mean((measured - model)[keep])
+            error = np.mean(((measured - model - offset)[keep]) ** 2)
+            if error < best[0]:
+                best = (error, float(rise), float(depth))
+    return round(best[1], 4), round(best[2], 4)
+
+
 def extend(values):
     return np.array([*values, values[-1]])
 
@@ -288,6 +315,8 @@ def rust(tables):
              f"    pub(super) t30: [f32; {len(BANDS)}],",
              "    /// Rise time constant of each band, in seconds: the cascade that lets a cymbal bloom.",
              f"    pub(super) bloom: [f32; {len(BANDS)}],",
+             "    /// How much of each band is still to bloom at the strike: one starts from silence.",
+             f"    pub(super) bloom_depth: [f32; {len(BANDS)}],",
              "    /// Level of the diffuse field in each band, in decibels: lines and noise together.",
              f"    pub(super) field_db: [f32; {len(BANDS)}],",
              "    /// Share of each band's energy in resolved lines rather than noise.",
@@ -301,10 +330,11 @@ def rust(tables):
              f"    pub(super) second_t30: [f32; {len(BANDS)}],",
              "    /// Level of the second decay at the strike, in decibels against the first.",
              f"    pub(super) second_db: [f32; {len(BANDS)}],", "}", ""]
-    for name, (t30, rise, level, (share, count, spread), (second_t30, second_db)) in tables.items():
+    for name, (t30, (rise, depth), level, (share, count, spread), (second_t30, second_db)) in tables.items():
         fmt = lambda values: ", ".join(f"{value:.4f}" for value in values)
         lines += [f"pub(super) const {name.upper()}: Acoustics = Acoustics {{",
-                  f"    t30: [{fmt(t30)}],", f"    bloom: [{fmt(rise)}],", f"    field_db: [{fmt(level)}],",
+                  f"    t30: [{fmt(t30)}],", f"    bloom: [{fmt(rise)}],", f"    bloom_depth: [{fmt(depth)}],",
+                  f"    field_db: [{fmt(level)}],",
                   f"    line_share: [{fmt(share)}],", f"    lines: [{', '.join(str(int(c)) for c in count)}],",
                   f"    line_spread_db: {spread:.4f},", f"    second_t30: [{fmt(second_t30)}],",
                   f"    second_db: [{fmt(second_db)}],", "};", ""]
@@ -374,7 +404,14 @@ def main():
                 print(name, "line share", np.round(found[0], 2), "lines", found[1].tolist(), flush=True)
             else:
                 found = (np.zeros(len(BANDS)), np.zeros(len(BANDS), dtype=int), 0.0)
-            tables[name] = (extend(t30), extend(bloom(peak, t30, metal)), level, found,
+            rise, depth = bloom(peak, t30, metal), np.ones(MEASURED)
+            if name in BLOOM_DEPTH:
+                envs = analysis_audio(reference)
+                fitted = [bloom_shape(envelope_db(band(envs, center)), t30[index])
+                          for index, center in enumerate(BANDS[:MEASURED])]
+                rise, depth = np.array([f[0] for f in fitted]), np.array([f[1] for f in fitted])
+                print(name, "bloom rise", rise.tolist(), "depth", depth.tolist(), flush=True)
+            tables[name] = (extend(t30), (extend(rise), extend(depth)), level, found,
                             (extend(second_t30), extend(second_db)))
     finally:
         if worker:

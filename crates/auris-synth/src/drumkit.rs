@@ -239,7 +239,7 @@ struct Hit {
     field_gain: [f32; BANDS],
     field_level: [f32; BANDS],
     field_loss: [f32; BANDS],
-    /// What is still to bloom in each band, falling from one to zero.
+    /// What is still to bloom in each band, falling from its depth to zero.
     bloom: [f32; BANDS],
     bloom_loss: [f32; BANDS],
     /// The second decay of each band's field: a drum's ring and room, a cymbal's stick transient.
@@ -354,7 +354,7 @@ impl Hit {
             second_level: [1.0; BANDS],
             second_loss: std::array::from_fn(|band| t30_loss(bands.second_t30[band], sample_rate)),
             field_loss: std::array::from_fn(|band| t30_loss(bands.t30[band], sample_rate)),
-            bloom: [1.0; BANDS],
+            bloom: bands.bloom_depth,
             bloom_loss: std::array::from_fn(|band| {
                 let rise = bands.bloom[band];
                 if rise > 0.0 {
