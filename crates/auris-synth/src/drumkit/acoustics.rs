@@ -13,6 +13,8 @@ pub(super) struct Acoustics {
     pub(super) t30: [f32; 9],
     /// Rise time constant of each band, in seconds: the cascade that lets a cymbal bloom.
     pub(super) bloom: [f32; 9],
+    /// How much of each band is still to bloom at the strike: one starts from silence.
+    pub(super) bloom_depth: [f32; 9],
     /// Level of the diffuse field in each band, in decibels: lines and noise together.
     pub(super) field_db: [f32; 9],
     /// Share of each band's energy in resolved lines rather than noise.
@@ -26,6 +28,12 @@ pub(super) struct Acoustics {
     pub(super) second_t30: [f32; 9],
     /// Level of the second decay at the strike, in decibels against the first.
     pub(super) second_db: [f32; 9],
+    /// The stick: a noise burst under a Hann window `stick_width` seconds long, starting
+    /// `stick_delay` after the strike, through a bandpass at `stick_hz`, at `stick_db`.
+    pub(super) stick_delay: f32,
+    pub(super) stick_width: f32,
+    pub(super) stick_hz: f32,
+    pub(super) stick_db: f32,
 }
 
 pub(super) const KICK: Acoustics = Acoustics {
@@ -34,6 +42,9 @@ pub(super) const KICK: Acoustics = Acoustics {
     ],
     bloom: [
         0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+    ],
+    bloom_depth: [
+        1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000,
     ],
     field_db: [
         -30.0000, -45.1991, 5.4184, -35.0190, -19.0769, -13.6977, -21.0348, -63.7711, -78.4271,
@@ -50,6 +61,10 @@ pub(super) const KICK: Acoustics = Acoustics {
         -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000,
         -120.0000,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };
 
 pub(super) const SNARE: Acoustics = Acoustics {
@@ -58,6 +73,9 @@ pub(super) const SNARE: Acoustics = Acoustics {
     ],
     bloom: [
         0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+    ],
+    bloom_depth: [
+        1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000,
     ],
     field_db: [
         -80.0000, -69.3435, -30.0000, -25.9049, -37.2011, -11.1956, -12.1952, -20.0640, -30.3880,
@@ -73,6 +91,10 @@ pub(super) const SNARE: Acoustics = Acoustics {
     second_db: [
         -42.3293, -39.1175, -41.9890, -22.1092, -18.9945, -29.3163, -26.5507, -31.0114, -31.0114,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };
 
 pub(super) const CLOSEDHAT: Acoustics = Acoustics {
@@ -81,6 +103,9 @@ pub(super) const CLOSEDHAT: Acoustics = Acoustics {
     ],
     bloom: [
         0.0093, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+    ],
+    bloom_depth: [
+        1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000,
     ],
     field_db: [
         -26.2689, -18.8004, -8.0244, -17.6098, -12.5165, -16.4171, -6.9668, -1.6373, 2.8125,
@@ -97,17 +122,24 @@ pub(super) const CLOSEDHAT: Acoustics = Acoustics {
         -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000,
         -120.0000,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };
 
 pub(super) const OPENHAT: Acoustics = Acoustics {
     t30: [
-        4.0887, 4.0887, 4.0887, 3.7491, 3.3881, 3.4385, 2.3550, 1.3225, 1.3225,
+        4.0887, 4.0887, 3.2710, 3.7491, 2.7105, 2.7508, 1.6821, 1.1808, 1.1808,
     ],
     bloom: [
         0.0034, 0.0000, 0.0099, 0.0207, 0.0097, 0.0180, 0.0093, 0.0000, 0.0000,
     ],
+    bloom_depth: [
+        1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000,
+    ],
     field_db: [
-        -5.8539, -53.9656, -80.0000, 5.0919, -15.4944, -12.2659, -8.1774, -9.0680, -8.7558,
+        -5.8539, -53.9656, -80.0000, 5.0919, -15.4944, -13.2659, -8.1774, -8.0680, -7.7558,
     ],
     line_share: [
         0.0000, 0.0000, 0.1290, 0.7373, 0.7728, 0.7541, 0.7258, 0.7340, 0.4889,
@@ -118,8 +150,12 @@ pub(super) const OPENHAT: Acoustics = Acoustics {
         0.0400, 0.0400, 0.0400, 0.0400, 0.0400, 0.0400, 0.0400, 0.0400, 0.0400,
     ],
     second_db: [
-        -6.0000, -6.0000, 15.0022, 3.3585, -6.0233, -1.4879, 6.1916, 8.2466, 8.2466,
+        -12.0000, -12.0000, 9.0022, -2.6415, -12.0233, -7.4879, 0.1916, 2.2466, 2.2466,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };
 
 pub(super) const CRASH: Acoustics = Acoustics {
@@ -127,10 +163,13 @@ pub(super) const CRASH: Acoustics = Acoustics {
         1.7275, 1.7275, 1.7275, 1.3500, 2.3400, 2.8603, 2.3300, 1.9200, 1.9200,
     ],
     bloom: [
-        0.0000, 0.0042, 0.0086, 0.0052, 0.0000, 0.0308, 0.0714, 0.0397, 0.0397,
+        0.0031, 0.0029, 0.0045, 0.0064, 0.0022, 0.0424, 0.0869, 0.1362, 0.1362,
+    ],
+    bloom_depth: [
+        1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 0.7500, 0.6750, 0.4750, 0.4750,
     ],
     field_db: [
-        -80.0000, -80.0000, -36.3201, 12.9348, -66.4356, -2.5917, -3.2224, -9.1163, -16.0498,
+        -80.0000, -80.0000, -42.3226, 13.1610, -67.8846, -2.0320, -3.5791, -9.0773, -16.0108,
     ],
     line_share: [
         0.0000, 0.0000, 0.8859, 0.4316, 0.3901, 0.6033, 0.5964, 0.5600, 0.3636,
@@ -144,29 +183,40 @@ pub(super) const CRASH: Acoustics = Acoustics {
         -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000, -120.0000,
         -120.0000,
     ],
+    stick_delay: 0.0085,
+    stick_width: 0.0080,
+    stick_hz: 480.0,
+    stick_db: 36.2191,
 };
 
 pub(super) const RIDE: Acoustics = Acoustics {
     t30: [
-        4.2804, 4.2804, 4.2804, 5.9956, 3.8852, 3.4853, 3.1235, 1.5800, 1.5800,
+        4.2804, 4.2804, 3.4243, 5.3533, 3.0972, 4.3566, 2.7888, 0.9029, 0.9029,
     ],
     bloom: [
         0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
     ],
+    bloom_depth: [
+        1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000,
+    ],
     field_db: [
-        -80.0000, -80.0000, -4.0047, -1.0941, -7.2247, -73.9970, -26.2541, 6.6265, 3.9741,
+        -80.0000, -78.0316, -0.9083, 3.6076, 1.1094, -64.0221, -1.4321, 5.2059, 2.5535,
     ],
     line_share: [
-        0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+        0.0000, 0.0000, 0.8839, 0.9601, 0.9909, 0.9919, 0.9903, 0.9902, 0.9463,
     ],
-    lines: [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    line_spread_db: 0.0000,
+    lines: [0, 0, 8, 24, 40, 56, 96, 96, 64],
+    line_spread_db: 4.0000,
     second_t30: [
         0.0400, 0.0400, 0.0400, 0.0400, 0.0400, 0.0400, 0.0400, 0.0400, 0.0400,
     ],
     second_db: [
         -6.0000, -6.0000, 19.8765, -5.1145, 1.2078, -2.0952, 0.8846, 3.6769, 3.6769,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };
 
 pub(super) const TOMLOW: Acoustics = Acoustics {
@@ -175,6 +225,9 @@ pub(super) const TOMLOW: Acoustics = Acoustics {
     ],
     bloom: [
         0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+    ],
+    bloom_depth: [
+        1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000,
     ],
     field_db: [
         -30.0000, -54.1252, 18.3137, -12.6646, -34.7860, -53.0782, -41.4314, -68.4226, -80.0046,
@@ -190,6 +243,10 @@ pub(super) const TOMLOW: Acoustics = Acoustics {
     second_db: [
         -120.0000, -22.5890, -25.5082, -20.6908, -29.6858, -60.0000, -60.0000, -50.4593, -50.4593,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };
 
 pub(super) const TOMHIGH: Acoustics = Acoustics {
@@ -198,6 +255,9 @@ pub(super) const TOMHIGH: Acoustics = Acoustics {
     ],
     bloom: [
         0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+    ],
+    bloom_depth: [
+        1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000,
     ],
     field_db: [
         -44.3037, -30.0000, -80.0000, -76.5135, -23.4421, -10.3256, -50.7467, -80.0000, -89.4815,
@@ -213,4 +273,8 @@ pub(super) const TOMHIGH: Acoustics = Acoustics {
     second_db: [
         -120.0000, -120.0000, -10.0179, -17.1071, -14.5110, -29.4577, -29.3731, -29.5382, -29.5382,
     ],
+    stick_delay: 0.0000,
+    stick_width: 0.0000,
+    stick_hz: 1000.0,
+    stick_db: -120.0000,
 };

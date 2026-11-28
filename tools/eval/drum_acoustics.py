@@ -48,17 +48,40 @@ MODAL_CEILING_DB = -30.0
 # falls is read on the captures.
 TRANSIENT_T30 = 0.04
 SECOND_WINDOWS = {True: ((0.0, 0.02), (0.08, 0.4)), False: ((0.15, 0.6), (0.0, 0.05))}
+# The cymbal window overshoots: the open hat's transient converged 6 dB above where the training
+# hits' mel is lowest (0.281 there, 0.272 six below, 0.276 with none). Its table holds the
+# converged levels less this; a correction adds it back, iterates, and takes it off again.
+SECOND_TRIM_DB = {"OpenHat": -6.0}
 NO_SECOND_DB = -120.0
+# A crash's stick, seen in the captures 300-1400 Hz at 1 ms resolution: a click in the first
+# 3 ms, a lull, then a burst from 9 to 16 ms, peaking at 11 ms, its energy between 400 and
+# 630 Hz and 12 dB down half an octave either side. It is a separate event, not a decay from
+# the strike: a noise burst under a Hann window of `width` seconds starting `delay` after the
+# strike, through two bandpasses at `hz`. Its level is read over the burst's own window and
+# band against the whole note.
+STICKS = {"Crash": {"delay": 0.0085, "width": 0.008, "hz": 480.0}}
+STICK_BAND = (350, 700)
+NO_STICK_DB = -120.0
+# Pads whose bloom is fitted with a depth: a crash's upper bands sound in full at the strike
+# and grow a little more, where starting them from silence cost 5-8 dB in its first 10 ms.
+BLOOM_DEPTH = {"Crash"}
 # A closed hat is all transient already; the captures and the kit agree on its envelope. A kick's
 # ring lifted its midrange 6-13 dB over the captures' between 30 and 200 ms, and a crash's
 # transient landed 15 dB over them in the first 10 ms, where the captured stick has yet to bloom.
 WITHOUT_SECOND = {"ClosedHat", "Kick", "Crash"}
 # Where a cymbal's tail is read for its lines: late enough that the strike has gone, short
-# enough that the band is still well above the floor. A closed hat has no tail to read. The
-# ride's lines are not modelled yet: they made its first 50 ms further from the captures.
-LINE_WINDOWS = {"OpenHat": (0.05, 0.55), "Crash": (0.1, 1.1)}
+# enough that the band is still well above the floor. A closed hat has no tail to read.
+LINE_WINDOWS = {"OpenHat": (0.05, 0.55), "Crash": (0.1, 1.1), "Ride": (0.1, 1.1)}
 # Below this the captures' lines are room and the other drums, not the cymbal.
 LINE_FLOOR_HZ = 250
+# The ride's lines are measured 9 dB apart in level; at that spread the mel bands holding a line
+# or two go up and down where the captured ride's do not, and its training mel rose from 0.209
+# to 0.231. Four decibels keeps the lines standing 29-42 dB over the floor, as captured.
+LINE_SPREAD_CAP_DB = {"Ride": 4.0}
+# Pads whose decays and diffuse levels were searched band by band on the training mel by
+# `drum_band_search.py`, after the tables here: their decays are kept from the output file,
+# and their levels are kept unless corrected.
+SEARCHED = {"OpenHat", "Ride"}
 # A line counts when it stands this far above the local noise mean, at least this far apart.
 LINE_HEIGHT_DB = 12
 LINE_SPACING_HZ = 4
@@ -195,6 +218,39 @@ def bloom(peak, t30, metal):
     return np.array(result)
 
 
+def bloom_shape(envs, t30):
+    """Rise time constant and depth of a band that is sounding at the strike and blooms on.
+
+    The envelope (1 - depth e^(-t/rise)) e^(-t/tau), fitted in dB over the first 0.6 s to the
+    median of the hits' envelopes; tau is the band's own decay. Depth one is a band that starts
+    from silence, the shape `bloom` assumes; zero is one that never blooms.
+    """
+    smooth = 10 * np.log10(np.median(10 ** (np.array(envs) / 10), axis=0) + 1e-14)
+    span = slice(0, int(0.6 * 200))
+    measured = smooth[span]
+    t = np.arange(len(measured)) / 200 + 0.5 / 200
+    keep = measured > measured.max() - 40
+    tau = t30 / (1.5 * np.log(10))
+    best = (np.inf, 0.0, 0.0)
+    for rise in np.geomspace(0.002, 0.4, 60):
+        for depth in np.linspace(0, 1, 41):
+            model = 20 * np.log10(np.maximum(1 - depth * np.exp(-t / rise), 1e-6)) - 8.686 * t / tau
+            offset = np.mean((measured - model)[keep])
+            error = np.mean(((measured - model - offset)[keep]) ** 2)
+            if error < best[0]:
+                best = (error, float(rise), float(depth))
+    return round(best[1], 4), round(best[2], 4)
+
+
+def stick_db(audio, stick):
+    """The burst's window and band against the whole note, in dB, per hit."""
+    x = audio / np.sqrt(np.mean(audio ** 2, axis=-1, keepdims=True))
+    sos = butter(3, STICK_BAND, fs=RATE, btype="bandpass", output="sos")
+    start = int(stick["delay"] * RATE)
+    stop = start + int(stick["width"] * RATE)
+    return 10 * np.log10(np.mean(sosfilt(sos, x, axis=-1)[:, start:stop] ** 2, axis=-1) + 1e-14)
+
+
 def extend(values):
     return np.array([*values, values[-1]])
 
@@ -288,6 +344,8 @@ def rust(tables):
              f"    pub(super) t30: [f32; {len(BANDS)}],",
              "    /// Rise time constant of each band, in seconds: the cascade that lets a cymbal bloom.",
              f"    pub(super) bloom: [f32; {len(BANDS)}],",
+             "    /// How much of each band is still to bloom at the strike: one starts from silence.",
+             f"    pub(super) bloom_depth: [f32; {len(BANDS)}],",
              "    /// Level of the diffuse field in each band, in decibels: lines and noise together.",
              f"    pub(super) field_db: [f32; {len(BANDS)}],",
              "    /// Share of each band's energy in resolved lines rather than noise.",
@@ -300,14 +358,22 @@ def rust(tables):
              "    /// fallen, a cymbal's stick transient before it blooms.",
              f"    pub(super) second_t30: [f32; {len(BANDS)}],",
              "    /// Level of the second decay at the strike, in decibels against the first.",
-             f"    pub(super) second_db: [f32; {len(BANDS)}],", "}", ""]
-    for name, (t30, rise, level, (share, count, spread), (second_t30, second_db)) in tables.items():
+             f"    pub(super) second_db: [f32; {len(BANDS)}],",
+             "    /// The stick: a noise burst under a Hann window `stick_width` seconds long, starting",
+             "    /// `stick_delay` after the strike, through a bandpass at `stick_hz`, at `stick_db`.",
+             "    pub(super) stick_delay: f32,", "    pub(super) stick_width: f32,",
+             "    pub(super) stick_hz: f32,", "    pub(super) stick_db: f32,", "}", ""]
+    for name, (t30, (rise, depth), level, (share, count, spread), (second_t30, second_db), stick) in tables.items():
+        shape = STICKS.get(name, {"delay": 0.0, "width": 0.0, "hz": 1000.0})
         fmt = lambda values: ", ".join(f"{value:.4f}" for value in values)
         lines += [f"pub(super) const {name.upper()}: Acoustics = Acoustics {{",
-                  f"    t30: [{fmt(t30)}],", f"    bloom: [{fmt(rise)}],", f"    field_db: [{fmt(level)}],",
+                  f"    t30: [{fmt(t30)}],", f"    bloom: [{fmt(rise)}],", f"    bloom_depth: [{fmt(depth)}],",
+                  f"    field_db: [{fmt(level)}],",
                   f"    line_share: [{fmt(share)}],", f"    lines: [{', '.join(str(int(c)) for c in count)}],",
                   f"    line_spread_db: {spread:.4f},", f"    second_t30: [{fmt(second_t30)}],",
-                  f"    second_db: [{fmt(second_db)}],", "};", ""]
+                  f"    second_db: [{fmt(second_db)}],", f"    stick_delay: {shape['delay']:.4f},",
+                  f"    stick_width: {shape['width']:.4f},", f"    stick_hz: {shape['hz']:.1f},",
+                  f"    stick_db: {stick:.4f},", "};", ""]
     return "\n".join(lines)
 
 
@@ -319,14 +385,19 @@ def main():
     parser.add_argument("--step", type=float, default=0.8, help="fraction of the level error to remove")
     parser.add_argument("--pad", action="append", choices=PADS,
                         help="correct only these pads' levels; the others keep theirs")
-    parser.add_argument("--correct", choices=("field", "second"), default="field",
+    parser.add_argument("--correct", choices=("field", "second", "stick"), default="field",
                         help="which levels the worker's renders correct")
     parser.add_argument("--fresh-second", action="store_true",
-                        help="start the second decays from the captures, not from the output file")
+                        help="start the corrected pads' second decays and sticks afresh")
     args = parser.parse_args()
     manifest = json.loads((args.reference / "notes.json").read_text(encoding="utf-8"))
     previous = previous_levels(args.output)
     previous_second = previous_levels(args.output, "second_db")
+    previous_t30 = previous_levels(args.output, "t30")
+    previous_stick = {name: float(match[1]) for name in PADS
+                      if (match := re.search(rf"const {name.upper()}: Acoustics = Acoustics \{{[^}}]*?stick_db: (-?[0-9.]+)",
+                                             args.output.read_text(encoding="utf-8") if args.output.exists() else "",
+                                             re.DOTALL))}
     worker = Renderer(args.worker.resolve()) if args.worker else None
     tables = {}
     try:
@@ -337,6 +408,10 @@ def main():
                 notes, reference = [notes[index] for index in keep], reference[keep]
             share, t30, peak = measure(reference)
             t30 = reliable(share, t30)
+            # The bloom is read on the captures' own decay, whatever the table's has become.
+            measured_t30 = t30
+            if name in SEARCHED and name in previous_t30:
+                t30 = previous_t30[name][:MEASURED].copy()
             level = previous.get(name)
             metal = name in METAL
             second_t30, second_db = second_decay(reference, t30, metal)
@@ -344,18 +419,31 @@ def main():
                 second_db = np.full(MEASURED, NO_SECOND_DB)
             kept = previous_second.get(name)
             correcting = worker is not None and (not args.pad or name in args.pad)
-            if kept is not None and not args.fresh_second and name not in WITHOUT_SECOND:
+            fresh = args.fresh_second and correcting
+            if kept is not None and not fresh and name not in WITHOUT_SECOND:
                 second_db = kept[:MEASURED].copy()
             if correcting and args.correct == "second":
                 captured = np.median(window_db(analysis_audio(reference), metal), axis=0)
                 rendered = np.median(window_db(analysis_audio(render_kit(worker, notes)), metal), axis=0)
+                trim = SECOND_TRIM_DB.get(name, 0.0)
+                second_db = np.where(second_db > NO_SECOND_DB + 1, second_db - trim, second_db)
                 active = (second_db > NO_SECOND_DB + 1) & (share > -30)
                 error = np.where(active, captured - rendered, 0)
                 second_db = np.where(second_db > NO_SECOND_DB + 1,
-                                     np.clip(second_db + args.step * error, -60, 20), NO_SECOND_DB)
+                                     np.clip(second_db + args.step * error, -60, 20) + trim, NO_SECOND_DB)
                 print(name, "mean |second error| dB",
                       round(float(np.mean(abs(error[active]))) if active.any() else 0.0, 2), flush=True)
-            if level is not None and (args.correct == "second" or (args.pad and name not in args.pad)):
+            stick = previous_stick.get(name, NO_STICK_DB)
+            if name in STICKS and (stick <= NO_STICK_DB + 1 or fresh):
+                stick = -6.0
+            if name not in STICKS:
+                stick = NO_STICK_DB
+            elif correcting and args.correct == "stick":
+                captured = np.median(stick_db(analysis_audio(reference), STICKS[name]))
+                rendered = np.median(stick_db(analysis_audio(render_kit(worker, notes)), STICKS[name]))
+                stick = float(np.clip(stick + args.step * (captured - rendered), -60, 70))
+                print(name, "stick error dB", round(float(captured - rendered), 2), "level", round(stick, 2), flush=True)
+            if level is not None and (args.correct in ("second", "stick") or (args.pad and name not in args.pad)):
                 pass
             elif level is None or worker is None:
                 level = extend(share)
@@ -371,11 +459,20 @@ def main():
                 level = np.where(modal, np.minimum(level, MODAL_CEILING_DB), level)
             if name in LINE_WINDOWS:
                 found = measure_lines(args.reference, notes, LINE_WINDOWS[name])
+                if name in LINE_SPREAD_CAP_DB:
+                    found = (found[0], found[1], min(found[2], LINE_SPREAD_CAP_DB[name]))
                 print(name, "line share", np.round(found[0], 2), "lines", found[1].tolist(), flush=True)
             else:
                 found = (np.zeros(len(BANDS)), np.zeros(len(BANDS), dtype=int), 0.0)
-            tables[name] = (extend(t30), extend(bloom(peak, t30, metal)), level, found,
-                            (extend(second_t30), extend(second_db)))
+            rise, depth = bloom(peak, measured_t30, metal), np.ones(MEASURED)
+            if name in BLOOM_DEPTH:
+                envs = analysis_audio(reference)
+                fitted = [bloom_shape(envelope_db(band(envs, center)), t30[index])
+                          for index, center in enumerate(BANDS[:MEASURED])]
+                rise, depth = np.array([f[0] for f in fitted]), np.array([f[1] for f in fitted])
+                print(name, "bloom rise", rise.tolist(), "depth", depth.tolist(), flush=True)
+            tables[name] = (extend(t30), (extend(rise), extend(depth)), level, found,
+                            (extend(second_t30), extend(second_db)), stick)
     finally:
         if worker:
             worker.close()

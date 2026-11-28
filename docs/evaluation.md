@@ -23,10 +23,12 @@ training notes only and evaluated on held-out ones.
 The drum-kit calibration fits seven kit families to 151 real drum hits (the Salamander
 Drumkit), with separate attack/body/tail loss. `tools/eval/drum_acoustics.py` measures each
 pad's per-octave decay, bloom, diffuse level, second decay (a drum's ring, a cymbal's stick
-transient) and, for a crash or open hat, the share and count of resolved lines in the tail on the
+transient), the level of a crash's late stick burst and, for a crash or open hat, the share and count of resolved lines in the tail on the
 training hits and writes
 `crates/auris-synth/src/drumkit/acoustics.rs`; `tools/eval/fit_physical_pack.py` then fits
-strike and radiation; `tools/eval/drum_ab.py` compares two kit builds on the held-out hits.
+strike and radiation; `tools/eval/drum_band_search.py` searches one cymbal's per-octave decay
+and level on its training hits, which the single fitted decay cannot give different rings;
+`tools/eval/drum_ab.py` compares two kit builds on the held-out hits.
 The [guitar-amplifier experiment](electric-guitar.md) adds an oversampled amplifier and a
 paired clean/pedal recording benchmark with pitch-grouped splits.
 The choir calibration fits the native vocal-tract ensemble to
