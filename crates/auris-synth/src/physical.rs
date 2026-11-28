@@ -12,12 +12,14 @@
 //! | Model | What resonates | What sets it going |
 //! |---|---|---|
 //! | Piano, Hammered Strings | stiff strings in bridge-coupled unisons, on a soundboard | a felt or wooden hammer, solved against the string it strikes |
-//! | Guitar, Electric Guitar, Bass | a string in two polarisations, on a body or under a pickup | a finger or a pick, let go; on a bass, a thumb thrown at the string and the frets it comes down on |
+//! | Guitar, Electric Guitar, Bass, Harp | a string in two polarisations, on a body or under a pickup | a finger or a pick, let go; on a bass, a thumb thrown at the string and the frets it comes down on |
 //! | Strings | a travelling-wave string per player, on the body of its register | a bow: stick, slip, and the hysteresis between them |
 //! | Mallet | a tuned bar over a resonator tube | a yarn or rubber mallet's Hertzian contact |
 //! | Bell | the paired modes of a shell | a clapper or a hammer |
-//! | Reeds | an air column closed at the reed | the reed as a pressure-controlled valve |
-//! | Whistles | an air column open at both ends | a jet across the window, delayed by its own flight |
+//! | Timpani | a head whose modes the kettle's air brings to a fifth, an octave and a tenth | a felt stick, once or in a roll |
+//! | Reeds | an air column closed at the reed, or a cone: a cylinder with its missing tip beside it | the reed as a pressure-controlled valve |
+//! | Whistles, flutes | an air column open at both ends | a jet across the window, delayed by its own flight |
+//! | Brass | a tube whose flare makes its resonances a harmonic series | the lips as a valve the breath pushes open, the wave steepening on its way to the bell |
 //!
 //! Nothing is sampled, and no spectrum is shaped to match a recording's. The numbers are the
 //! kind a maker or a measurement gives — a string's stiffness, a hammer's mass, a plate's first
@@ -49,8 +51,10 @@ mod bars;
 mod bells;
 pub(crate) mod body;
 mod bowed;
+mod brass;
 mod flutes;
 mod hammer;
+mod kettle;
 mod legato;
 mod plucked;
 mod reeds;
@@ -150,25 +154,35 @@ pub enum Model {
     Mallet,
     /// Bells: a cast bell, a tubular chime, a handbell and a singing bowl.
     Bell,
-    /// Reed woodwinds, from a clarinet's cylinder to a saxophone's cone.
+    /// Reed woodwinds: a clarinet's cylinder and the cones of the oboe, cor anglais and bassoon.
     Clarinet,
-    /// Whistles and flutes: an air jet across the open end of a pipe.
+    /// Whistles and flutes: an air jet across the open end of a pipe — a tin whistle, a
+    /// concert flute and a piccolo.
     TinWhistle,
+    /// Brass: trumpet, horn, trombone and tuba, the lips buzzing into a flared tube.
+    Brass,
+    /// A concert harp: a string for every note, plucked by the fingertips.
+    Harp,
+    /// Timpani: a head over a kettle of air, struck with felt.
+    Timpani,
 }
 
 impl Model {
     /// Every physical instrument, ordered by how it is set going.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 13] = [
         Self::Piano,
         Self::HammeredDulcimer,
         Self::Guitar,
         Self::ElectricGuitar,
         Self::Bass,
+        Self::Harp,
         Self::Violin,
         Self::Mallet,
         Self::Bell,
+        Self::Timpani,
         Self::Clarinet,
         Self::TinWhistle,
+        Self::Brass,
     ];
 
     /// Stable plugin id stored in a project.
@@ -184,6 +198,9 @@ impl Model {
             Self::Bell => "auris.physical.bell",
             Self::Clarinet => "auris.physical.clarinet",
             Self::TinWhistle => "auris.physical.tin_whistle",
+            Self::Brass => "auris.physical.brass",
+            Self::Harp => "auris.physical.harp",
+            Self::Timpani => "auris.physical.timpani",
         }
     }
 
@@ -215,6 +232,9 @@ impl Model {
             Self::Bell => "Physical Bell",
             Self::Clarinet => "Physical Reeds",
             Self::TinWhistle => "Physical Whistles",
+            Self::Brass => "Physical Brass",
+            Self::Harp => "Physical Harp",
+            Self::Timpani => "Physical Timpani",
         }
     }
 
@@ -228,12 +248,19 @@ impl Model {
             Self::ElectricGuitar => "Steel strings under a magnetic pickup, before the amplifier",
             Self::Bass => "Plucked bass strings under a pickup or on an upright's body",
             Self::Violin => {
-                "Bowed strings: stick-slip friction, a section of players, their bodies"
+                "Bowed strings — violin, viola, cello, contrabass: stick-slip friction, a section"
             }
-            Self::Mallet => "Tuned bars over resonator tubes, struck with a mallet",
+            Self::Mallet => "Marimba, vibraphone, xylophone, glockenspiel: tuned bars, struck",
             Self::Bell => "Struck shells and tubes: paired modes that beat as they ring",
-            Self::Clarinet => "A reed valve on a cylinder of air, closed at the reed",
-            Self::TinWhistle => "An air jet across the window of an open pipe",
+            Self::Clarinet => {
+                "Clarinet, oboe, cor anglais, bassoon: a reed valve on a cylinder or a cone of air"
+            }
+            Self::TinWhistle => "Tin whistle, flute, piccolo: an air jet across an open pipe",
+            Self::Brass => "Trumpet, horn, trombone and tuba: buzzing lips into a flared tube",
+            Self::Harp => "A concert harp: a gut string for every note, plucked by the fingertips",
+            Self::Timpani => {
+                "Timpani, kettledrums: a head over a kettle of air, felt sticks, rolls"
+            }
         }
     }
 
@@ -254,20 +281,31 @@ impl Model {
             Self::Bell => StereoImage::new(72.0, 18.0, 0.4),
             Self::Clarinet => StereoImage::new(70.0, 22.0, 0.25),
             Self::TinWhistle => StereoImage::new(86.0, 12.0, 0.25),
+            // The brass sit behind the woodwinds, the tubas and trombones right of centre and
+            // the trumpets further.
+            Self::Brass => StereoImage::new(46.0, 24.0, 0.25),
+            // A harp's strings run from the bass at the player's left shoulder to the top.
+            Self::Harp => StereoImage::new(64.0, 34.0, 0.45),
+            // The drums stand in a curve at the back, the largest at the timpanist's left.
+            Self::Timpani => StereoImage::new(48.0, 12.0, 0.3),
         }
     }
 
     /// Whether a note lasts as long as its key is held: bowed and blown, not struck or plucked.
     pub const fn is_sustained(self) -> bool {
-        matches!(self, Self::Violin | Self::Clarinet | Self::TinWhistle)
+        matches!(
+            self,
+            Self::Violin | Self::Clarinet | Self::TinWhistle | Self::Brass
+        )
     }
 
     /// What a frontend draws this instrument's bodies as.
     pub const fn geometry(self) -> MotionGeometry {
         match self {
             Self::Mallet => MotionGeometry::Bar,
+            Self::Timpani => MotionGeometry::Membrane,
             Self::Bell => MotionGeometry::Shell,
-            Self::Clarinet | Self::TinWhistle => MotionGeometry::Bore,
+            Self::Clarinet | Self::TinWhistle | Self::Brass => MotionGeometry::Bore,
             _ => MotionGeometry::String,
         }
     }
@@ -278,33 +316,41 @@ impl Model {
             Self::Piano => 32,
             Self::HammeredDulcimer | Self::Mallet | Self::Bell => 24,
             Self::Guitar | Self::ElectricGuitar | Self::Violin => 16,
-            Self::Bass | Self::Clarinet | Self::TinWhistle => 12,
+            Self::Harp => 24,
+            Self::Timpani => 8,
+            Self::Bass | Self::Clarinet | Self::TinWhistle | Self::Brass => 12,
         }
     }
 
     fn engine(self) -> Box<dyn Engine> {
         match self {
             Self::Piano | Self::HammeredDulcimer => Box::new(struck::Struck::new(self)),
-            Self::Guitar | Self::ElectricGuitar | Self::Bass => {
+            Self::Guitar | Self::ElectricGuitar | Self::Bass | Self::Harp => {
                 Box::new(plucked::Plucked::new(self))
             }
             Self::Violin => Box::new(bowed::Bowed::new()),
             Self::Mallet => Box::new(bars::Bars::new()),
             Self::Bell => Box::new(bells::Bells::new()),
+            Self::Timpani => Box::new(kettle::Kettle::new()),
             Self::Clarinet => Box::new(reeds::Reeds::new()),
             Self::TinWhistle => Box::new(flutes::Flutes::new()),
+            Self::Brass => Box::new(brass::Brass::new()),
         }
     }
 
     fn descriptors(self) -> Vec<ParamDescriptor> {
         match self {
             Self::Piano | Self::HammeredDulcimer => struck::descriptors(self),
-            Self::Guitar | Self::ElectricGuitar | Self::Bass => plucked::descriptors(self),
+            Self::Guitar | Self::ElectricGuitar | Self::Bass | Self::Harp => {
+                plucked::descriptors(self)
+            }
             Self::Violin => bowed::descriptors(),
             Self::Mallet => bars::descriptors(),
             Self::Bell => bells::descriptors(),
+            Self::Timpani => kettle::descriptors(),
             Self::Clarinet => reeds::descriptors(),
             Self::TinWhistle => flutes::descriptors(),
+            Self::Brass => brass::descriptors(),
         }
     }
 
@@ -328,9 +374,17 @@ impl Model {
             Self::Bell => 0.329,
             Self::Clarinet => 2.481,
             Self::TinWhistle => 2.903,
+            Self::Brass => 0.934,
+            Self::Harp => 0.718,
+            Self::Timpani => 0.473,
         }
     }
 }
+
+/// The top of the Release control on the harp and the timpani, where the hand that would
+/// stop a note stays off it: a harpist and a timpanist leave their notes to ring unless
+/// they mean to stop them, so that is where the control rests.
+pub(crate) const LET_RING: f32 = 10.0;
 
 /// One note as an engine is asked to start it.
 #[derive(Clone, Copy, Debug)]
@@ -583,7 +637,7 @@ pub mod calibration {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     /// Number of dials.
-    pub const DIALS: usize = 128;
+    pub const DIALS: usize = 160;
     /// A bit pattern no finite value has.
     const UNSET: u32 = u32::MAX;
     static VALUES: [AtomicU32; DIALS] = [const { AtomicU32::new(UNSET) }; DIALS];
@@ -696,6 +750,52 @@ pub(crate) mod dials {
     pub(crate) const PLUCK_HARDER: usize = 97;
     /// The power of how much shorter a stopped string sounds by which it decays faster.
     pub(crate) const PLUCK_STOPPED: usize = 98;
+    /// The brass: where the bell lets the sound out, what the air leaves of its top, how far a
+    /// unit of pressure hastens a wave to the bell, the softest and hardest mouth pressures,
+    /// and the lips' tuning against the note, their sharpness and how much air they pass.
+    pub(crate) const BRASS_BELL_HZ: usize = 100;
+    pub(crate) const BRASS_AIR_HZ: usize = 101;
+    pub(crate) const BRASS_STEEPENING: usize = 102;
+    pub(crate) const BRASS_SOFTEST: usize = 103;
+    pub(crate) const BRASS_HARDEST: usize = 104;
+    pub(crate) const BRASS_LIP_TUNING: usize = 105;
+    pub(crate) const BRASS_LIP_Q: usize = 106;
+    pub(crate) const BRASS_LIP_AREA: usize = 107;
+    /// How sharply the brass bell's radiation rises to its corner.
+    pub(crate) const BRASS_BELL_Q: usize = 108;
+    /// How much more breath a brass note is started with, and the seconds that eases over.
+    pub(crate) const BRASS_KICK: usize = 109;
+    pub(crate) const BRASS_KICK_SECONDS: usize = 110;
+    /// How loud a brass note's tongued puff rings the tube, against the breath.
+    pub(crate) const BRASS_SEED: usize = 111;
+    /// How much of a period's measured pull the brass player takes out at once.
+    pub(crate) const BRASS_TRIM_GAIN: usize = 112;
+    /// The flutes: what is added to where the edge sits in the jet, where the pipe stops
+    /// sending the wave back at 600 Hz and the power of the note it moves by, where the jet
+    /// stops following what steers it, and how far over its threshold the jet is driven at
+    /// no breath and what a full breath adds.
+    pub(crate) const FLUTE_OFFSET: usize = 113;
+    pub(crate) const FLUTE_CORNER_HZ: usize = 114;
+    pub(crate) const FLUTE_CORNER_LAW: usize = 115;
+    pub(crate) const FLUTE_JET_CORNER: usize = 116;
+    pub(crate) const FLUTE_OVER: usize = 117;
+    pub(crate) const FLUTE_OVER_LAW: usize = 118;
+    /// The reeds' bores: the note at which a cone's missing tip is a whole period, what
+    /// multiplies where the tone holes stop sending the sound back, the reed's gap at rest,
+    /// how far over its threshold a full breath blows, what the walls take, and what the air
+    /// leaves of the top of the sound.
+    pub(crate) const REED_TIP_HZ: usize = 119;
+    pub(crate) const REED_CORNER: usize = 120;
+    pub(crate) const REED_EMBOUCHURE: usize = 121;
+    pub(crate) const REED_OVER: usize = 122;
+    pub(crate) const REED_LOSS: usize = 123;
+    pub(crate) const REED_AIR_HZ: usize = 124;
+    /// How loud the tongue rings a cone at its note as a note starts.
+    pub(crate) const REED_SEED: usize = 125;
+    /// The power of the breath that how far over a reed's threshold it blows goes as.
+    pub(crate) const REED_OVER_LAW: usize = 126;
+    /// How far open a double reed's lips leave it at the softest breath.
+    pub(crate) const REED_PINCH: usize = 127;
 }
 
 /// A dial for each C from C1 to C8, read at a pitch between them along straight lines.

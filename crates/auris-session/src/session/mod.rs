@@ -2202,6 +2202,7 @@ mod tests {
         for id in [
             "auris.physical.clarinet",
             "auris.physical.tin_whistle",
+            "auris.physical.brass",
             "auris.physical.choir",
             "auris.physical.hammered_dulcimer",
             // Not physical, but observed the same way: their oscillators' waveforms.

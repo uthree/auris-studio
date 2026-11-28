@@ -13,10 +13,15 @@ pub(super) fn family(instrument: &InstrumentTrack, drum: bool) -> &'static str {
         "auris.physical.guitar" | "auris.physical.electric_guitar" => "guitar",
         "auris.physical.bass" => "bass",
         "auris.physical.violin" | "auris.physical.cello" => "bowed_strings",
-        "auris.physical.bell" | "auris.physical.mallet" => "pitched_percussion",
-        "auris.physical.flute" | "auris.physical.clarinet" | "auris.physical.tin_whistle" => {
-            "winds"
+        "auris.physical.bell" | "auris.physical.mallet" | "auris.physical.timpani" => {
+            "pitched_percussion"
         }
+        // Plucked and left to ring, as a guitar's notes are; struck chords are its arpeggios.
+        "auris.physical.harp" => "guitar",
+        "auris.physical.flute"
+        | "auris.physical.clarinet"
+        | "auris.physical.tin_whistle"
+        | "auris.physical.brass" => "winds",
         "auris.synth.chiptune" => "synth",
         // The subtractive patches are all synthesisers, whatever sound each one imitates.
         id if auris_synth::AnalogPatch::from_id(id).is_some() => "synth",
@@ -53,10 +58,15 @@ pub(super) fn capabilities(instrument: &InstrumentTrack, drum: bool) -> Value {
             | "auris.physical.violin"
             | "auris.physical.bell"
             | "auris.physical.mallet"
+            | "auris.physical.harp"
+            | "auris.physical.timpani"
     );
     let dulcimer = id == "auris.physical.hammered_dulcimer";
     let sampler = id == auris_sampler::SAMPLER_ID;
-    let wind = matches!(id, "auris.physical.clarinet" | "auris.physical.tin_whistle");
+    let wind = matches!(
+        id,
+        "auris.physical.clarinet" | "auris.physical.tin_whistle" | "auris.physical.brass"
+    );
     // The subtractive patches read the wheel as vibrato depth exactly as the chiptune voice does.
     let chiptune = id == "auris.synth.chiptune" || auris_synth::AnalogPatch::from_id(id).is_some();
     let native = physical || sampler || wind || chiptune || dulcimer;

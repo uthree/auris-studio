@@ -20,6 +20,8 @@ use auris_core::motion::{MOTION_SCOPE, MotionVoice};
 use auris_core::{ParamDescriptor, ParamUnit};
 use auris_dsp::DcBlocker;
 
+use super::calibration::dial;
+use super::dials;
 use super::waveguide::{Decimator, Line, Noise, lowpass_delay, lowpass_gain, lowpass_pole};
 use super::{Engine, Mute, Note, Performance, Quality, TICK, harmonics, hertz};
 use crate::ParamBank;
@@ -32,6 +34,14 @@ const P_RELEASE: u32 = 4;
 const P_VIBRATO: u32 = 5;
 const P_LEGATO: u32 = 6;
 const P_TECHNIQUE: u32 = 7;
+const P_INSTRUMENT: u32 = 8;
+
+/// The instruments, in parameter-value order.
+const INSTRUMENTS: &[std::borrow::Cow<'static, str>] = &[
+    std::borrow::Cow::Borrowed("Whistle"),
+    std::borrow::Cow::Borrowed("Flute"),
+    std::borrow::Cow::Borrowed("Piccolo"),
+];
 
 const LOWEST_HZ: f32 = 20.0;
 const DISPLAY: f32 = 0.03;
@@ -44,6 +54,79 @@ const JET_CORNER: f32 = 2.0;
 const PUFF: f32 = 0.2;
 /// How much of the reflection filter's delay the pipe is shortened by to stay on pitch.
 const FILTER_SHARE: f32 = 0.988;
+
+/// What sets one instrument's pipe and jet apart from another's.
+#[derive(Clone, Copy, Debug)]
+struct Pipe {
+    /// Added to where the edge sits in the jet: how unequal the two half-cycles are, which is
+    /// how strong the even harmonics are.
+    offset: f32,
+    /// Where the open end and the tone holes stop sending the wave back, at 600 Hz, and the
+    /// power of the note it moves by.
+    corner_hz: f32,
+    corner_law: f32,
+    /// Where the jet stops following what steers it, as a multiple of the note.
+    jet_corner: f32,
+    /// How far over what the pipe needs to sound the jet is driven at no breath, and what a
+    /// full breath adds as its square: how much brighter blowing harder is.
+    over: f32,
+    over_law: f32,
+    /// How rough the jet is, against the whistle's.
+    breathy: f32,
+    /// Gain that brings the instrument to the whistle's loudness in its own register, and the
+    /// note that register is measured from.
+    level: f32,
+    register_hz: f32,
+}
+
+impl Pipe {
+    fn of(instrument: usize) -> Self {
+        match instrument {
+            // A flute's embouchure hole is half covered by the lip, and the jet across it is
+            // long: the tone is rounder than a whistle's at the top, its low notes carry a
+            // strong octave, the breath is more audible, and it brightens more as it is blown
+            // harder. Fitted to the first ten harmonics of the Iowa MIS flute, without
+            // vibrato, at pp, mf and ff. A piccolo is voiced as the flute is, an octave up:
+            // there is no recording of one to fit it to.
+            1 | 2 => Self {
+                offset: 0.224,
+                corner_hz: 6_802.0,
+                corner_law: 0.047,
+                jet_corner: 3.15,
+                over: 1.03,
+                over_law: 1.475,
+                breathy: if instrument == 1 { 1.6 } else { 1.2 },
+                level: if instrument == 1 { 0.792 } else { 0.377 },
+                register_hz: if instrument == 1 { 523.0 } else { 1_046.0 },
+            },
+            _ => Self {
+                offset: 0.0,
+                corner_hz: 4_500.0,
+                corner_law: 0.3,
+                jet_corner: JET_CORNER,
+                over: 1.05,
+                over_law: 0.25,
+                breathy: 1.0,
+                level: 1.0,
+                register_hz: 880.0,
+            },
+        }
+    }
+
+    /// The pipe with whatever a calibration run has dialled in.
+    fn dialled(instrument: usize) -> Self {
+        let pipe = Self::of(instrument);
+        Self {
+            offset: dial(dials::FLUTE_OFFSET, pipe.offset),
+            corner_hz: dial(dials::FLUTE_CORNER_HZ, pipe.corner_hz),
+            corner_law: dial(dials::FLUTE_CORNER_LAW, pipe.corner_law),
+            jet_corner: dial(dials::FLUTE_JET_CORNER, pipe.jet_corner),
+            over: dial(dials::FLUTE_OVER, pipe.over),
+            over_law: dial(dials::FLUTE_OVER_LAW, pipe.over_law),
+            ..pipe
+        }
+    }
+}
 
 pub(super) fn descriptors() -> Vec<ParamDescriptor> {
     vec![
@@ -58,6 +141,8 @@ pub(super) fn descriptors() -> Vec<ParamDescriptor> {
         ParamDescriptor::toggle(P_LEGATO, "legato", "Legato", true),
         ParamDescriptor::new(P_TECHNIQUE, "technique", "Technique", 0.0, 1.0, 0.0)
             .with_choices(super::TONGUINGS),
+        ParamDescriptor::new(P_INSTRUMENT, "instrument", "Instrument", 0.0, 2.0, 0.0)
+            .with_choices(INSTRUMENTS),
     ]
 }
 
@@ -71,6 +156,13 @@ struct Settings {
     vibrato: f32,
     /// Whether the tongue is rolled against the breath: a flutter-tongue.
     flutter: bool,
+    pipe: Pipe,
+}
+
+impl Default for Pipe {
+    fn default() -> Self {
+        Self::of(0)
+    }
 }
 
 /// How much a rolled tongue takes away at each roll: of the breath, and of how far over
@@ -307,7 +399,9 @@ impl Flutes {
         voice.drift += (voice.noise.next() * 2.5 - voice.drift) * 0.02;
         let cents = voice.drift + depth * (TAU * voice.vibrato).sin();
         let fundamental = hertz(voice.pitch + cents / 100.0).clamp(LOWEST_HZ, internal * 0.2);
-        let corner = (4_500.0 * (fundamental / 600.0).powf(0.3)).max(2.5 * fundamental);
+        let pipe = settings.pipe;
+        let corner =
+            (pipe.corner_hz * (fundamental / 600.0).powf(pipe.corner_law)).max(2.5 * fundamental);
         let pole = lowpass_pole(corner, internal);
         let breath = settings.pressure
             * (0.1 + 0.9 * voice.velocity)
@@ -330,7 +424,7 @@ impl Flutes {
             (settings.release * 0.3).max(0.004)
         };
         let turn = TAU * fundamental / internal;
-        let offset = 1.2 * settings.jet;
+        let offset = 1.2 * settings.jet + pipe.offset;
         let reflection = 0.93;
         // How strongly the jet must be deflected for the pipe to sound at all: enough to make
         // up what a round trip loses, through whatever part of the jet's profile the edge
@@ -338,7 +432,7 @@ impl Flutes {
         // tone so nearly a sine — the jet is barely driven into saturation — and a faster jet
         // is deflected further by the same wave, so blowing harder is brighter.
         let profile = (1.0 - offset.tanh().powi(2)).max(0.2);
-        let jet_pole = lowpass_pole(JET_CORNER * fundamental, internal);
+        let jet_pole = lowpass_pole(pipe.jet_corner * fundamental, internal);
         let threshold = (1.0 / (reflection * lowpass_gain(pole, turn)) - MOUTH).max(0.05)
             / (profile * lowpass_gain(jet_pole, turn));
         // A tongued start: the first moments of a note are blown harder, which is the chiff.
@@ -348,20 +442,20 @@ impl Flutes {
             ramp: 1.0 - (-1.0 / (time.max(0.001) * internal)).exp(),
             offset,
             gain: threshold
-                * (1.05 + 0.25 * breath * breath)
+                * (pipe.over + pipe.over_law * breath * breath)
                 * chiff
                 * (1.0 - FLUTTER_UNDER * (1.0 - roll) / FLUTTER)
                 * performance.speaking(),
             // No jet is perfectly smooth, and it is the roughness that starts a pipe sounding.
             // Smoothing takes most of white noise away, and the gain here puts back what is
             // left of it at the level the control names.
-            noise: 0.006 + settings.noise * 0.18,
+            noise: (0.006 + settings.noise * 0.18) * pipe.breathy,
             smooth: 1.0 - lowpass_pole(3_500.0, internal),
             sway: 1.0 - jet_pole,
             fade: (-fundamental / (4.0 * internal)).exp(),
             pole,
             reflection,
-            loudness: (880.0 / fundamental).powf(0.5).clamp(0.4, 2.5),
+            loudness: pipe.level * (pipe.register_hz / fundamental).powf(0.5).clamp(0.4, 2.5),
         };
         // The pipe sounds the note whose whole period is one trip along it and back, less
         // what the end's filter keeps; the jet crosses the window in half of one.
@@ -421,6 +515,7 @@ impl Engine for Flutes {
             release: params.at(P_RELEASE),
             vibrato: params.at(P_VIBRATO),
             flutter: params.at(P_TECHNIQUE) >= 0.5,
+            pipe: Pipe::dialled(params.at(P_INSTRUMENT).round().clamp(0.0, 2.0) as usize),
         };
     }
 

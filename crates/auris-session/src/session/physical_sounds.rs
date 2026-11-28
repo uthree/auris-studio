@@ -132,12 +132,25 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
             &[("players", 4.0), ("bow_pressure", 0.4), ("release", 0.5)],
         ),
         71 => (Model::Clarinet, &[]),
+        68 => (Model::Clarinet, &[("instrument", 1.0)]),
+        69 => (Model::Clarinet, &[("instrument", 2.0)]),
+        70 => (Model::Clarinet, &[("instrument", 3.0)]),
+        72 => (Model::TinWhistle, &[("instrument", 2.0)]),
+        73 => (Model::TinWhistle, &[("instrument", 1.0)]),
+        46 => (Model::Harp, &[]),
+        47 => (Model::Timpani, &[]),
         // A recorder is a whistle in wood, voiced rounder.
         74 => (
             Model::TinWhistle,
             &[("jet_shape", 0.12), ("breath_noise", 0.06)],
         ),
         78 => (Model::TinWhistle, &[]),
+        // The brass: one model with the instrument named. A muted trumpet is a trumpet until
+        // the model has mutes, and a section is its trumpets.
+        56 | 59 | 61 => (Model::Brass, &[("instrument", 0.0)]),
+        57 => (Model::Brass, &[("instrument", 2.0)]),
+        58 => (Model::Brass, &[("instrument", 3.0)]),
+        60 => (Model::Brass, &[("instrument", 1.0)]),
         _ => return None,
     };
     let mut state = PluginState::empty();
@@ -168,9 +181,12 @@ pub(super) const GM_PROGRAMS: &[(&str, u8)] = &[
     (Model::Guitar.id(), 25),
     (Model::ElectricGuitar.id(), 27),
     (Model::Bass.id(), 33),
+    (Model::Harp.id(), 46),
+    (Model::Timpani.id(), 47),
     (Model::Violin.id(), 48),
     (auris_synth::Choir::ID, 52),
     (auris_synth::Vocal::ID, 54),
+    (Model::Brass.id(), 61),
     (Model::Clarinet.id(), 71),
     (Model::TinWhistle.id(), 78),
     (auris_synth::Chiptune::ID, 80),
@@ -226,7 +242,7 @@ mod tests {
     #[test]
     fn distinct_gm_timbres_are_not_replaced_by_unrelated_physical_models() {
         for patch in [
-            4, 5, 29, 30, 38, 39, 46, 47, 50, 51, 56, 61, 65, 73, 81, 84, 88, 94, 98,
+            4, 5, 29, 30, 38, 39, 50, 51, 62, 65, 75, 79, 81, 84, 88, 94, 98,
         ] {
             assert!(
                 native_sound(0, patch).is_none(),
@@ -317,6 +333,13 @@ mod tests {
             (71, Model::Clarinet.id()),
             (15, Model::HammeredDulcimer.id()),
             (78, Model::TinWhistle.id()),
+            (56, Model::Brass.id()),
+            (60, Model::Brass.id()),
+            (46, Model::Harp.id()),
+            (47, Model::Timpani.id()),
+            (68, Model::Clarinet.id()),
+            (70, Model::Clarinet.id()),
+            (73, Model::TinWhistle.id()),
         ] {
             let track = session.add_default_instrument_track("Part").unwrap();
             session.forget_history();
@@ -388,18 +411,18 @@ mod tests {
 
     #[test]
     fn a_program_no_built_in_voice_covers_keeps_the_registry_default() {
-        // 56 is a trumpet. The built-in voices have no brass model, so the fallback stands rather
-        // than a violin being declared a trumpet because it was the nearest thing to hand.
+        // 79 is an ocarina. The built-in voices have no ocarina, so the fallback stands rather
+        // than a whistle being declared one because it was the nearest thing to hand.
         let folder = tempfile::tempdir().unwrap();
-        let destination = folder.path().join("Brass.mid");
-        let mut source = auris_core::Project::new("Brass", 48_000.0);
-        let track = source.add_instrument_track("Trumpet", "auris.sampler");
+        let destination = folder.path().join("Ocarina.mid");
+        let mut source = auris_core::Project::new("Ocarina", 48_000.0);
+        let track = source.add_instrument_track("Ocarina", "auris.sampler");
         let clip = source
             .add_midi_clip(track, "Line", Ticks::ZERO, Ticks::QUARTER)
             .unwrap();
         source.midi_clip_mut(clip).unwrap().notes =
             vec![auris_core::Note::new(60, Ticks::ZERO, Ticks::QUARTER)];
-        let bytes = auris_io::write_midi_bytes(&source, &[("auris.sampler", 56)]).unwrap();
+        let bytes = auris_io::write_midi_bytes(&source, &[("auris.sampler", 79)]).unwrap();
         std::fs::write(&destination, bytes).unwrap();
 
         let mut session = Session::new(SessionOptions::headless()).unwrap();

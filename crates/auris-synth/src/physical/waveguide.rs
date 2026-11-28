@@ -6,6 +6,81 @@
 //! moment ago. Those instruments are therefore kept as what they are, a wave going out and a
 //! wave coming back, in delay lines.
 
+use std::f32::consts::{PI, TAU};
+
+/// A player's ear: times the periods of what is sounding, from the upward zero crossings of
+/// its fundamental, so that a valve that pulls the note can be lipped back onto it.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Ear {
+    /// A resonator tuned to the note, which keeps the fundamental and little else.
+    pub(crate) held: [f32; 2],
+    pub(crate) coefficient: f32,
+    pub(crate) damping: f32,
+    /// Samples since the last crossing, and the length of the last period heard.
+    pub(crate) since: f32,
+    pub(crate) period: f32,
+    /// Crossings heard since the note began, and whether a new period is waiting.
+    pub(crate) crossings: u32,
+    pub(crate) fresh: bool,
+}
+
+impl Ear {
+    /// Moves `trim`, the cents the instrument is played under the note, by `gain` of what the
+    /// last period heard was off `aim` by, within `limit` either way, once a period has been
+    /// heard that has not been acted on.
+    pub(crate) fn correct(
+        &mut self,
+        trim: &mut f32,
+        aim: f32,
+        gain: f32,
+        limit: f32,
+        internal: f32,
+    ) {
+        if self.fresh && self.crossings > 3 {
+            self.fresh = false;
+            let heard = internal / self.period.max(1.0);
+            let off = 1200.0 * (heard / aim).log2();
+            if off.is_finite() && off.abs() < 600.0 {
+                *trim = (*trim + gain * off).clamp(-limit, limit);
+            }
+        }
+    }
+
+    /// Tunes the resonator to `hz`, `width` of it wide: narrow enough to keep the
+    /// fundamental of a note whose harmonics are stronger than it.
+    pub(crate) fn tune(&mut self, hz: f32, width: f32, internal: f32) {
+        let radius = (-PI * width * hz / internal).exp();
+        self.coefficient = 2.0 * radius * (TAU * hz / internal).cos();
+        self.damping = radius * radius;
+    }
+
+    pub(crate) fn clear(&mut self) {
+        *self = Self {
+            coefficient: self.coefficient,
+            damping: self.damping,
+            ..Self::default()
+        };
+    }
+
+    #[inline]
+    pub(crate) fn hear(&mut self, pressure: f32) {
+        let [last, before] = self.held;
+        let now = pressure + self.coefficient * last - self.damping * before;
+        self.held = [now, last];
+        self.since += 1.0;
+        if last <= 0.0 && now > 0.0 {
+            let fraction = -last / (now - last);
+            let crossed = self.since - 1.0 + fraction;
+            if self.crossings > 0 {
+                self.period = crossed;
+                self.fresh = true;
+            }
+            self.crossings = self.crossings.saturating_add(1);
+            self.since = 1.0 - fraction;
+        }
+    }
+}
+
 /// A delay line whose length may be changed while it sounds.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Line {

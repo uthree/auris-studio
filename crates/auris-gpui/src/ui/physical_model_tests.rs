@@ -115,9 +115,16 @@ fn lanes_keep_a_chord_in_pitch_order_whatever_the_voices_recency() {
 fn every_model_is_played_the_way_the_instrument_is() {
     assert_eq!(Gesture::of("auris.physical.guitar"), Gesture::Pluck);
     assert_eq!(Gesture::of("auris.physical.bass"), Gesture::Pluck);
+    assert_eq!(Gesture::of("auris.physical.harp"), Gesture::Pluck);
+    assert_eq!(Gesture::of("auris.physical.timpani"), Gesture::Strike);
     assert_eq!(Gesture::of("auris.physical.piano"), Gesture::Key);
     assert_eq!(Gesture::of("auris.physical.violin"), Gesture::Sustain);
     assert_eq!(Gesture::of("auris.physical.clarinet"), Gesture::Sustain);
+    assert_eq!(Gesture::of("auris.physical.brass"), Gesture::Sustain);
+    assert_eq!(
+        resting_geometry("auris.physical.brass", MotionGeometry::String),
+        MotionGeometry::Bore
+    );
     assert_eq!(Gesture::of("auris.physical.choir"), Gesture::Sustain);
     assert_eq!(
         Gesture::of("auris.physical.hammered_dulcimer"),
@@ -215,6 +222,9 @@ fn every_physical_model_shows_its_bodies_in_every_direction(cx: &mut gpui::TestA
         ("auris.physical.mallet", false),
         ("auris.physical.hammered_dulcimer", false),
         ("auris.physical.tin_whistle", false),
+        ("auris.physical.brass", false),
+        ("auris.physical.harp", false),
+        ("auris.physical.timpani", false),
         ("auris.physical.choir", true),
         ("auris.synth.drumkit", true),
         ("auris.synth.fm2", true),
@@ -474,6 +484,9 @@ fn each_body_is_drawn_as_the_thing_it_is(cx: &mut gpui::TestAppContext) {
         ("auris.physical.bell", MotionGeometry::Shell, true),
         ("auris.physical.clarinet", MotionGeometry::Bore, false),
         ("auris.physical.tin_whistle", MotionGeometry::Bore, false),
+        ("auris.physical.brass", MotionGeometry::Bore, false),
+        ("auris.physical.harp", MotionGeometry::String, false),
+        ("auris.physical.timpani", MotionGeometry::Membrane, true),
         ("auris.physical.choir", MotionGeometry::Tract, false),
     ] {
         let (_, mut utility) = open_model(&app, cx, id);

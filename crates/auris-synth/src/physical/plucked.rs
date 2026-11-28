@@ -1,4 +1,4 @@
-//! Plucked strings: an acoustic guitar, an electric guitar and a bass.
+//! Plucked strings: an acoustic guitar, an electric guitar, a bass and a concert harp.
 //!
 //! A pluck is the simplest excitation there is — the string is held aside at one point and let
 //! go — and everything that follows is the string's own. Held aside it is a triangle, whose
@@ -24,6 +24,10 @@
 //! rings on is the string's octave — played on a string twice as long as the note's own,
 //! which is why a harmonic is purer and longer than the same note fretted.
 //!
+//! A harp has a string for every note, so nothing is ever fretted: each is plucked open, by
+//! the soft pad of a fingertip near its middle — which leaves its even harmonics weak and its
+//! tone round — over a long soundboard, and left to ring.
+//!
 //! A bass can be slapped as well as plucked, and then the string meets its frets: that is not
 //! a way of setting the partials going but something done to them while they ring, and it is
 //! in `slap`.
@@ -40,8 +44,8 @@ use super::dials;
 use super::rotors::{Rotor, Rotors, decay_rate, pole};
 use super::slap::{self, Blow, Slap, Stroke, Technique};
 use super::strings::{
-    BASS_STRINGS, GUITAR_STRINGS, Losses, fretted, material, partial_ratio, pluck_share,
-    release_rolloff,
+    BASS_STRINGS, GUITAR_STRINGS, HARP_STIFFNESS, HARP_STRINGS, Losses, fretted, material,
+    partial_ratio, pluck_share, release_rolloff,
 };
 use super::{
     Declick, Engine, Model, Mute, Note, Performance, Quality, TICK, hertz, touch_position,
@@ -138,6 +142,7 @@ pub(super) fn descriptors(model: Model) -> Vec<ParamDescriptor> {
     let (hardness, position, decay, damping, release) = match model {
         Model::ElectricGuitar => (0.3, 0.13, 9.0, 0.03, 0.1),
         Model::Bass => (0.35, 0.16, 35.0, 0.12, 0.1),
+        Model::Harp => (0.12, 0.42, 18.0, 0.35, super::LET_RING),
         _ => (0.2, 0.26, 12.5, 0.5, 0.12),
     };
     let mut descriptors = vec![
@@ -179,9 +184,23 @@ pub(super) fn descriptors(model: Model) -> Vec<ParamDescriptor> {
         Model::Bass => ParamDescriptor::percent(P_BODY, "body", "Body Resonance", 0.0),
         _ => ParamDescriptor::percent(P_BODY, "body", "Body Resonance", 1.0),
     });
+    // A harp's notes are left to ring; a hand laid back on the strings stops them slowly, and
+    // at the top of its travel the control leaves them alone.
+    let longest_release = if model == Model::Harp {
+        super::LET_RING
+    } else {
+        3.0
+    };
     descriptors.push(
-        ParamDescriptor::new(P_RELEASE, "release", "Release", 0.01, 3.0, release)
-            .with_unit(ParamUnit::Seconds),
+        ParamDescriptor::new(
+            P_RELEASE,
+            "release",
+            "Release",
+            0.01,
+            longest_release,
+            release,
+        )
+        .with_unit(ParamUnit::Seconds),
     );
     match model {
         Model::ElectricGuitar => {
@@ -339,6 +358,19 @@ impl Build {
                 wound: (1.0, 1.0),
                 drive: 1.0,
                 snap: (1.4, 0.0),
+            },
+            // Gut and nylon over a long soundboard: no frets, a string for every note, and the
+            // higher ones dying faster, as a shorter string meets its ends more often.
+            Model::Harp => Self {
+                strings: &HARP_STRINGS,
+                stiffness: &HARP_STIFFNESS,
+                reference: 48.0,
+                tracking: 0.45,
+                stopped: 0.0,
+                glide: 3.0,
+                wound: (1.0, 1.0),
+                drive: 1.0,
+                snap: (0.9, 1.5),
             },
             Model::Bass => Self {
                 strings: &BASS_STRINGS,
@@ -544,6 +576,7 @@ impl Plucked {
         let spec = self.body_spec();
         let scale = self.body_scale();
         let release = self.settings.release;
+        let lets_ring = self.model == Model::Harp && release >= super::LET_RING;
         let (palm, palm_at) = (self.performance.palm(), self.palm_at());
         let Some(voice) = self.voices.get_mut(index) else {
             return;
@@ -559,7 +592,7 @@ impl Plucked {
                 break;
             };
             let mut nepers = losses.rate(hz, voice.stiffness * order * order);
-            if !voice.held {
+            if !voice.held && !lets_ring {
                 // A finger laid on the string takes the top first.
                 nepers += decay_rate(release) * (1.0 + n as f32 / 6.0);
             }
@@ -641,7 +674,12 @@ impl Plucked {
     }
 
     fn body_scale(&self) -> f32 {
-        if self.model == Model::Bass { 0.23 } else { 1.0 }
+        match self.model {
+            Model::Bass => 0.23,
+            // A harp's soundboard is as long as its longest strings, and rings lower.
+            Model::Harp => 0.6,
+            _ => 1.0,
+        }
     }
 
     fn bend_cents(&self) -> f32 {

@@ -114,13 +114,15 @@ pub(crate) enum Gesture {
 impl Gesture {
     fn of(id: &str) -> Self {
         match id {
-            "auris.physical.guitar" | "auris.physical.electric_guitar" | "auris.physical.bass" => {
-                Self::Pluck
-            }
+            "auris.physical.guitar"
+            | "auris.physical.electric_guitar"
+            | "auris.physical.bass"
+            | "auris.physical.harp" => Self::Pluck,
             "auris.physical.piano" => Self::Key,
             "auris.physical.violin"
             | "auris.physical.clarinet"
             | "auris.physical.tin_whistle"
+            | "auris.physical.brass"
             | "auris.physical.choir" => Self::Sustain,
             // An electronic kit's pads are struck like any other drum's.
             id if is_electro_kit(id) => Self::Strike,
@@ -1186,13 +1188,11 @@ impl Bodies {
             }
             MotionGeometry::Bar => Some(Shape::Bar { mallet: contact }),
             MotionGeometry::Shell => Some(Shape::Ring { contact }),
-            MotionGeometry::Bore => Some(Shape::Bore(
-                if self.instrument == "auris.physical.tin_whistle" {
-                    BoreEnd::Fipple
-                } else {
-                    BoreEnd::Reed
-                },
-            )),
+            MotionGeometry::Bore => Some(Shape::Bore(match self.instrument.as_str() {
+                "auris.physical.tin_whistle" => BoreEnd::Fipple,
+                "auris.physical.brass" => BoreEnd::Bell,
+                _ => BoreEnd::Reed,
+            })),
             MotionGeometry::Tract => Some(Shape::Tract(tract_areas(shown))),
             _ => None,
         };
@@ -1213,7 +1213,11 @@ impl Bodies {
     /// Whether the bodies sit side by side in square cells, as heads and bells do, rather
     /// than one lane under another.
     fn cells(&self) -> bool {
-        self.drums || self.resting == MotionGeometry::Shell
+        self.drums
+            || matches!(
+                self.resting,
+                MotionGeometry::Shell | MotionGeometry::Membrane
+            )
     }
 }
 
@@ -1239,9 +1243,11 @@ fn resting_geometry(id: &str, observed: MotionGeometry) -> MotionGeometry {
     match id {
         "auris.physical.bell" => MotionGeometry::Shell,
         "auris.physical.mallet" => MotionGeometry::Bar,
-        "auris.physical.clarinet" | "auris.physical.tin_whistle" => MotionGeometry::Bore,
+        "auris.physical.clarinet" | "auris.physical.tin_whistle" | "auris.physical.brass" => {
+            MotionGeometry::Bore
+        }
         "auris.physical.choir" => MotionGeometry::Tract,
-        "auris.synth.drumkit" => MotionGeometry::Membrane,
+        "auris.synth.drumkit" | "auris.physical.timpani" => MotionGeometry::Membrane,
         id if is_oscillator_model(id) => MotionGeometry::Oscillator,
         id if id.starts_with("auris.physical.") => MotionGeometry::String,
         _ => observed,

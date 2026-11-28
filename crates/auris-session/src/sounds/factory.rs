@@ -349,6 +349,9 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                 Physical::new(Model::Clarinet),
                 &[
                     ("Clarinet", &[]),
+                    ("Oboe", &[("instrument", 1.0)]),
+                    ("Cor anglais", &[("instrument", 2.0)]),
+                    ("Bassoon", &[("instrument", 3.0)]),
                     (
                         "Soft clarinet",
                         &[
@@ -398,9 +401,44 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                 ],
             ),
             family(
+                Physical::new(Model::Harp),
+                &[
+                    ("Concert harp", &[]),
+                    ("Harp harmonics", &[("technique", 1.0), ("level", -3.1)]),
+                    // Plucked nearer the soundboard with the nail's edge: près de la table.
+                    (
+                        "Bright harp",
+                        &[("hardness", 0.45), ("position", 0.12), ("level", -7.5)],
+                    ),
+                ],
+            ),
+            family(
+                Physical::new(Model::Timpani),
+                &[
+                    ("Timpani", &[]),
+                    ("Timpani roll", &[("technique", 1.0), ("level", -15.1)]),
+                    // Wooden sticks: a harder, shorter stroke.
+                    (
+                        "Hard-stick timpani",
+                        &[("hardness", 0.85), ("level", -17.3)],
+                    ),
+                ],
+            ),
+            family(
+                Physical::new(Model::Brass),
+                &[
+                    ("Trumpet", &[]),
+                    ("French horn", &[("instrument", 1.0)]),
+                    ("Trombone", &[("instrument", 2.0)]),
+                    ("Tuba", &[("instrument", 3.0)]),
+                ],
+            ),
+            family(
                 Physical::new(Model::TinWhistle),
                 &[
                     ("Tin whistle", &[]),
+                    ("Flute", &[("instrument", 1.0)]),
+                    ("Piccolo", &[("instrument", 2.0)]),
                     (
                         "Soft whistle",
                         &[
@@ -551,7 +589,9 @@ mod tests {
     fn patch_register(name: &str, id: &str) -> u8 {
         match name {
             "Contrabass" => 36,
-            "Cello" | "Bass choir" => 48,
+            "Cello" | "Bass choir" | "Trombone" | "Bassoon" => 48,
+            "Piccolo" => 86,
+            "Tuba" => 36,
             "Glockenspiel" | "Music box" => 72,
             _ => auris_synth::level_reference::register(id),
         }
