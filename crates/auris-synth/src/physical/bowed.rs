@@ -234,7 +234,7 @@ pub(super) fn descriptors() -> Vec<ParamDescriptor> {
             0.08,
         )
         .with_unit(ParamUnit::Seconds),
-        ParamDescriptor::toggle(P_LEGATO, "legato", "Legato", false),
+        ParamDescriptor::toggle(P_LEGATO, "legato", "Legato", true),
         ParamDescriptor::percent(P_VIBRATO, "vibrato", "Vibrato", 0.35),
         ParamDescriptor::new(P_PLAYERS, "players", "Players", 1.0, PLAYERS as f32, 3.0)
             .with_steps(PLAYERS as u32),
