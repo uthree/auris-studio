@@ -17,8 +17,10 @@ use crate::voice::VoiceAllocator;
 
 mod acoustics;
 mod calibration;
+mod lines;
 mod model;
 use acoustics::{Acoustics, BAND_HZ};
+use lines::{Lines, Rng};
 use model::{Projection, Resonators};
 
 const BANDS: usize = BAND_HZ.len();
@@ -27,6 +29,8 @@ const VOICE_COUNT: usize = 24;
 const PAD_COUNT: usize = 7;
 /// How far velocity moves the beater hardness of a membrane, around a velocity of 0.75.
 const VELOCITY_HARDNESS: f32 = 0.5;
+/// How far each line of a cymbal varies from one strike to the next, in decibels.
+const LINE_JITTER_DB: f32 = 1.5;
 /// How much faster than velocity a membrane's diffuse field grows, per octave above 250 Hz.
 const FIELD_VELOCITY_TILT: f32 = 0.3;
 const TOM_KEYS: [u8; 6] = [41, 43, 45, 47, 48, 50];
@@ -146,6 +150,8 @@ impl Pad {
                     t30: ratio(low.t30, high.t30),
                     bloom: mix(low.bloom, high.bloom),
                     field_db: mix(low.field_db, high.field_db),
+                    // A drum head's field is all noise.
+                    ..low
                 }
             }
         }
@@ -211,6 +217,8 @@ struct Hit {
     /// What is still to bloom in each band, falling from one to zero.
     bloom: [f32; BANDS],
     bloom_loss: [f32; BANDS],
+    /// The share of the field a cymbal rings on as resolved modes rather than noise.
+    lines: Lines,
     /// The slowest of the hit's losses: once it is 80 dB down, the hit is over.
     tail: f32,
     tail_loss: f32,
@@ -235,6 +243,27 @@ impl Hit {
         let density = (sample_rate / 48_000.0).sqrt();
         let audible = |band: usize| BAND_HZ[band] < sample_rate * 0.45;
         let longest = bands.t30.iter().copied().fold(0.0, f32::max);
+        let field_gain: [f32; BANDS] = std::array::from_fn(|band| {
+            if audible(band) {
+                db_to_gain(bands.field_db[band]) * density
+            } else {
+                0.0
+            }
+        });
+        // What the band's noise would carry: uniform noise of variance 1/3 through a bandpass
+        // of Q sqrt(2), whose noise bandwidth is pi/2 times f/Q. The lines take their share of it.
+        let line_power: [f32; BANDS] = std::array::from_fn(|band| {
+            let bandwidth = std::f32::consts::FRAC_PI_2 * BAND_HZ[band] / std::f32::consts::SQRT_2;
+            bands.line_share[band] * field_gain[band].powi(2) / 3.0 * 2.0 * bandwidth / sample_rate
+        });
+        let lines = Lines::prepared(
+            sample_rate,
+            &bands.lines,
+            &line_power,
+            bands.line_spread_db,
+            |hz| t30_at(&bands.t30, hz),
+            (pad as u32 + 1).wrapping_mul(0x9e37_79b9),
+        );
         Self {
             pad,
             pitch,
@@ -260,10 +289,10 @@ impl Hit {
                 })
             }),
             field_gain: std::array::from_fn(|band| {
-                if audible(band) {
-                    db_to_gain(bands.field_db[band]) * density
+                if lines.carries(band) {
+                    field_gain[band] * (1.0 - bands.line_share[band].clamp(0.0, 1.0)).sqrt()
                 } else {
-                    0.0
+                    field_gain[band]
                 }
             }),
             field_level: [1.0; BANDS],
@@ -277,6 +306,7 @@ impl Hit {
                     0.0
                 }
             }),
+            lines,
             tail: 1.0,
             tail_loss: t30_loss(longest, sample_rate),
             noise_state: 1,
@@ -320,6 +350,10 @@ impl Hit {
             self.bloom[band] *= self.bloom_loss[band];
             let drive = noise * gain * self.field_level[band] * (1.0 - self.bloom[band]);
             field += self.field[band].process_sample(drive);
+        }
+        if !self.lines.is_empty() {
+            let blooming = std::array::from_fn(|band| 1.0 - self.bloom[band]);
+            field += self.lines.next(&blooming);
         }
         self.tail *= self.tail_loss;
         // Once: a ramp restarted every sample shrinks geometrically and never reaches zero.
@@ -471,6 +505,8 @@ impl DrumKit {
             }
         }
         hit.tail_loss = hit.tail_loss.powf(exponent);
+        let mut rng = Rng(hit.noise_state ^ 0x5bd1_e995);
+        hit.lines.strike(exponent, LINE_JITTER_DB, &mut rng);
         let glide = hit.profile.glide * velocity * velocity;
         hit.resonators
             .strike(hardness, position, damping_scale(damping), decay, glide);
@@ -772,6 +808,29 @@ mod tests {
             wires(attack) / head(attack),
             wires(late) / head(late),
         );
+    }
+
+    #[test]
+    fn a_crash_and_an_open_hat_ring_on_lines_not_noise() {
+        // In the captured tails, the strongest 0.5% of 2 Hz bins between 3 and 5 kHz stand
+        // 20 dB or more above the median one; band-limited noise reaches about 10.
+        for (key, from) in [(49, 0.3), (46, 0.1)] {
+            let audio = &rig(512).render(48_000, &[hit(0, key)])[(48_000.0 * from) as usize..];
+            // Hann-windowed, so a strong line does not leak into the bins between.
+            let tail: Vec<f32> = audio[..24_000]
+                .iter()
+                .enumerate()
+                .map(|(n, x)| x * (std::f32::consts::PI * n as f32 / 24_000.0).sin().powi(2))
+                .collect();
+            let mut power: Vec<f64> = (1_500..2_500)
+                .map(|bin| {
+                    crate::test_support::goertzel(&tail, 48_000.0, f64::from(bin) * 2.0).powi(2)
+                })
+                .collect();
+            power.sort_by(f64::total_cmp);
+            let standing = 10.0 * (power[995] / power[500]).log10();
+            assert!(standing > 15.0, "key {key}: lines stand {standing} dB");
+        }
     }
 
     #[test]

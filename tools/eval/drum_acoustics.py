@@ -6,7 +6,8 @@
 
 Writes `crates/auris-synth/src/drumkit/acoustics.rs`: for every pad, the -30 dB decay time of
 each octave band (which sets both the modal and the diffuse losses), the time each band takes to
-bloom, and the level of the diffuse field in each band. The levels need the kit itself: given
+bloom, the level of the diffuse field in each band, and for a cymbal how much of each band is
+resolved lines and how many of them there are. The levels need the kit itself: given
 `--worker`, the current kit is rendered on the same training hits and every level is moved by
 the difference between the captures' band shares and the kit's, so a few rebuild-and-rerun
 rounds converge on the captures' spectrum. Only the training split is read.
@@ -22,7 +23,8 @@ import soundfile as sf
 from fit_worker import Renderer
 from physical_mel import RATE
 from physical_pack import analysis_audio, load
-from scipy.signal import butter, sosfilt
+from scipy.ndimage import median_filter
+from scipy.signal import butter, find_peaks, sosfilt
 
 BANDS = (63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
 MEASURED = len(BANDS) - 1  # the 24 kHz captures end inside the 16 kHz band
@@ -38,6 +40,22 @@ METAL = {"ClosedHat", "OpenHat", "Crash", "Ride"}
 FUNDAMENTAL = {"Kick": 42.0, "Snare": 185.0, "TomLow": 63.0, "TomHigh": 135.0}
 MODAL_REACH = 2.5
 MODAL_CEILING_DB = -30.0
+# Where a cymbal's tail is read for its lines: late enough that the strike has gone, short
+# enough that the band is still well above the floor. A closed hat has no tail to read. The
+# ride's lines are not modelled yet: they made its first 50 ms further from the captures.
+LINE_WINDOWS = {"OpenHat": (0.05, 0.55), "Crash": (0.1, 1.1)}
+# Below this the captures' lines are room and the other drums, not the cymbal.
+LINE_FLOOR_HZ = 250
+# A line counts when it stands this far above the local noise mean, at least this far apart.
+LINE_HEIGHT_DB = 12
+LINE_SPACING_HZ = 4
+# Counted lines are the strong ones; as many again, weaker, sit in what reads as the floor.
+LINE_SURPLUS = 1.5
+# A band keeps at most this many lines, and a hit at most `MAX_LINES`: the cost is per line
+# per sample. A band given fewer than it has puts their energy in fewer, stronger lines.
+LINES_PER_BAND = 96
+MAX_LINES = 384
+LANES = 8
 
 
 def band(audio, center):
@@ -134,6 +152,51 @@ def top_octave(root, notes):
     return float(np.median(differences))
 
 
+def measure_lines(root, notes, window):
+    """Per band: the share of the tail's energy in resolved lines and how many lines to model.
+
+    Read on the archive's own 48 kHz files. The local noise mean is a running median 60 Hz wide
+    divided by ln 2 (the median of an exponential); whatever stands above it is line energy. The
+    count is the lines `LINE_HEIGHT_DB` above that mean, scaled by `LINE_SURPLUS`, rounded up to
+    whole SIMD lanes and capped per band and in total. Also returns the spread of the lines' levels in dB.
+    """
+    shares, densities, spreads = [], [], []
+    for note in notes:
+        audio, rate = sf.read(root / "drums" / note["source"], always_2d=True)
+        if rate != 48000:
+            raise ValueError(f"{note['source']}: {rate} Hz")
+        start = round(note["offset_seconds"] * rate)
+        audio = audio.mean(axis=1)[start + round(window[0] * rate):start + round(window[1] * rate)]
+        power = np.abs(np.fft.rfft(audio * np.hanning(len(audio)))) ** 2
+        hz = np.fft.rfftfreq(len(audio), 1 / rate)
+        resolution = rate / len(audio)
+        floor = median_filter(power, size=max(5, int(60 / resolution) | 1)) / np.log(2)
+        share, density = np.zeros(len(BANDS)), np.zeros(len(BANDS))
+        for index, center in enumerate(BANDS):
+            if center < LINE_FLOOR_HZ:
+                continue
+            chosen = (hz >= center / np.sqrt(2)) & (hz < min(center * np.sqrt(2), rate * 0.48))
+            share[index] = max(0.0, 1 - floor[chosen].sum() / power[chosen].sum())
+            height = 10 * np.log10(power[chosen] / floor[chosen])
+            peaks, _ = find_peaks(height, height=LINE_HEIGHT_DB,
+                                  distance=max(1, round(LINE_SPACING_HZ / resolution)))
+            density[index] = len(peaks) / (chosen.sum() * resolution)
+            if len(peaks) > 2:
+                spreads.append(np.std(10 * np.log10(power[chosen][peaks])))
+        shares.append(share)
+        densities.append(density)
+    share, density = np.median(shares, axis=0), np.median(densities, axis=0)
+    width = np.array([min(c * np.sqrt(2), 24000 * 0.96) - c / np.sqrt(2) for c in BANDS])
+    wanted = LINE_SURPLUS * density * width
+    kept = np.minimum(wanted, LINES_PER_BAND)
+    if kept.sum() > MAX_LINES:
+        kept *= MAX_LINES / kept.sum()
+    count = np.ceil(kept / LANES).astype(int) * LANES
+    while count.sum() > MAX_LINES:
+        count[np.argmax(count - kept)] -= LANES
+    return share, count, float(np.median(spreads))
+
+
 def previous_levels(path):
     text = path.read_text(encoding="utf-8") if path.exists() else ""
     levels = {}
@@ -158,12 +221,20 @@ def rust(tables):
              f"    pub(super) t30: [f32; {len(BANDS)}],",
              "    /// Rise time constant of each band, in seconds: the cascade that lets a cymbal bloom.",
              f"    pub(super) bloom: [f32; {len(BANDS)}],",
-             "    /// Level of the diffuse field in each band, in decibels.",
-             f"    pub(super) field_db: [f32; {len(BANDS)}],", "}", ""]
-    for name, (t30, rise, level) in tables.items():
+             "    /// Level of the diffuse field in each band, in decibels: lines and noise together.",
+             f"    pub(super) field_db: [f32; {len(BANDS)}],",
+             "    /// Share of each band's energy in resolved lines rather than noise.",
+             f"    pub(super) line_share: [f32; {len(BANDS)}],",
+             "    /// Lines modelled in each band, a whole number of SIMD lanes.",
+             f"    pub(super) lines: [u16; {len(BANDS)}],",
+             "    /// Standard deviation of the lines' levels, in decibels.",
+             "    pub(super) line_spread_db: f32,", "}", ""]
+    for name, (t30, rise, level, (share, count, spread)) in tables.items():
         fmt = lambda values: ", ".join(f"{value:.4f}" for value in values)
         lines += [f"pub(super) const {name.upper()}: Acoustics = Acoustics {{",
-                  f"    t30: [{fmt(t30)}],", f"    bloom: [{fmt(rise)}],", f"    field_db: [{fmt(level)}],", "};", ""]
+                  f"    t30: [{fmt(t30)}],", f"    bloom: [{fmt(rise)}],", f"    field_db: [{fmt(level)}],",
+                  f"    line_share: [{fmt(share)}],", f"    lines: [{', '.join(str(int(c)) for c in count)}],",
+                  f"    line_spread_db: {spread:.4f},", "};", ""]
     return "\n".join(lines)
 
 
@@ -173,6 +244,8 @@ def main():
     parser.add_argument("output", type=Path)
     parser.add_argument("--worker", type=Path, help="render the current kit and correct the levels")
     parser.add_argument("--step", type=float, default=0.8, help="fraction of the level error to remove")
+    parser.add_argument("--pad", action="append", choices=PADS,
+                        help="correct only these pads' levels; the others keep theirs")
     args = parser.parse_args()
     manifest = json.loads((args.reference / "notes.json").read_text(encoding="utf-8"))
     previous = previous_levels(args.output)
@@ -187,7 +260,9 @@ def main():
             share, t30, peak = measure(reference)
             t30 = reliable(share, t30)
             level = previous.get(name)
-            if level is None or worker is None:
+            if level is not None and args.pad and name not in args.pad:
+                pass
+            elif level is None or worker is None:
                 level = extend(share)
             else:
                 kit = shares(analysis_audio(render_kit(worker, notes)))
@@ -199,7 +274,12 @@ def main():
             if name in FUNDAMENTAL:
                 modal = np.array(BANDS) < FUNDAMENTAL[name] * MODAL_REACH
                 level = np.where(modal, np.minimum(level, MODAL_CEILING_DB), level)
-            tables[name] = (extend(t30), extend(bloom(peak, t30, name in METAL)), level)
+            if name in LINE_WINDOWS:
+                found = measure_lines(args.reference, notes, LINE_WINDOWS[name])
+                print(name, "line share", np.round(found[0], 2), "lines", found[1].tolist(), flush=True)
+            else:
+                found = (np.zeros(len(BANDS)), np.zeros(len(BANDS), dtype=int), 0.0)
+            tables[name] = (extend(t30), extend(bloom(peak, t30, name in METAL)), level, found)
     finally:
         if worker:
             worker.close()

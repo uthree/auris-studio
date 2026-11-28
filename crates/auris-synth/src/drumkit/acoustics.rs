@@ -13,8 +13,14 @@ pub(super) struct Acoustics {
     pub(super) t30: [f32; 9],
     /// Rise time constant of each band, in seconds: the cascade that lets a cymbal bloom.
     pub(super) bloom: [f32; 9],
-    /// Level of the diffuse field in each band, in decibels.
+    /// Level of the diffuse field in each band, in decibels: lines and noise together.
     pub(super) field_db: [f32; 9],
+    /// Share of each band's energy in resolved lines rather than noise.
+    pub(super) line_share: [f32; 9],
+    /// Lines modelled in each band, a whole number of SIMD lanes.
+    pub(super) lines: [u16; 9],
+    /// Standard deviation of the lines' levels, in decibels.
+    pub(super) line_spread_db: f32,
 }
 
 pub(super) const KICK: Acoustics = Acoustics {
@@ -25,8 +31,13 @@ pub(super) const KICK: Acoustics = Acoustics {
         0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
     ],
     field_db: [
-        -30.0000, -45.1991, 5.4184, -35.0190, -19.0769, -13.6977, -21.0348, -63.7711, -78.4270,
+        -30.0000, -45.1991, 5.4184, -35.0190, -19.0769, -13.6977, -21.0348, -63.7711, -78.4271,
     ],
+    line_share: [
+        0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+    ],
+    lines: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    line_spread_db: 0.0000,
 };
 
 pub(super) const SNARE: Acoustics = Acoustics {
@@ -39,6 +50,11 @@ pub(super) const SNARE: Acoustics = Acoustics {
     field_db: [
         -80.0000, -69.3435, -30.0000, -25.9049, -37.2011, -11.1956, -12.1952, -20.0640, -30.3880,
     ],
+    line_share: [
+        0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+    ],
+    lines: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    line_spread_db: 0.0000,
 };
 
 pub(super) const CLOSEDHAT: Acoustics = Acoustics {
@@ -51,6 +67,11 @@ pub(super) const CLOSEDHAT: Acoustics = Acoustics {
     field_db: [
         -26.2689, -18.8004, -8.0244, -17.6098, -12.5165, -16.4171, -6.9668, -1.6373, 2.8125,
     ],
+    line_share: [
+        0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+    ],
+    lines: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    line_spread_db: 0.0000,
 };
 
 pub(super) const OPENHAT: Acoustics = Acoustics {
@@ -61,8 +82,13 @@ pub(super) const OPENHAT: Acoustics = Acoustics {
         0.0034, 0.0000, 0.0099, 0.0207, 0.0097, 0.0180, 0.0093, 0.0000, 0.0000,
     ],
     field_db: [
-        -19.2824, -76.6876, -80.0000, 0.7835, -29.5497, -17.2113, -7.7820, -5.4958, -5.1835,
+        -5.8539, -53.9656, -80.0000, 5.0919, -15.4944, -12.2659, -8.1774, -9.0680, -8.7558,
     ],
+    line_share: [
+        0.0000, 0.0000, 0.1290, 0.7373, 0.7728, 0.7541, 0.7258, 0.7340, 0.4889,
+    ],
+    lines: [0, 0, 0, 16, 24, 32, 80, 96, 40],
+    line_spread_db: 5.6696,
 };
 
 pub(super) const CRASH: Acoustics = Acoustics {
@@ -73,8 +99,13 @@ pub(super) const CRASH: Acoustics = Acoustics {
         0.0000, 0.0042, 0.0086, 0.0052, 0.0000, 0.0308, 0.0714, 0.0397, 0.0397,
     ],
     field_db: [
-        -80.0000, -80.0000, -29.8809, 9.9921, -66.8808, -7.9330, -3.0101, -4.0556, -10.9892,
+        -80.0000, -80.0000, -36.3201, 12.9348, -66.4356, -2.5917, -3.2224, -9.1163, -16.0498,
     ],
+    line_share: [
+        0.0000, 0.0000, 0.8859, 0.4316, 0.3901, 0.6033, 0.5964, 0.5600, 0.3636,
+    ],
+    lines: [0, 0, 8, 8, 8, 32, 64, 96, 40],
+    line_spread_db: 5.4859,
 };
 
 pub(super) const RIDE: Acoustics = Acoustics {
@@ -85,8 +116,13 @@ pub(super) const RIDE: Acoustics = Acoustics {
         0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
     ],
     field_db: [
-        -80.0000, -80.0000, -4.0047, -1.0941, -7.2247, -73.9970, -26.2541, 6.6265, 3.9740,
+        -80.0000, -80.0000, -4.0047, -1.0941, -7.2247, -73.9970, -26.2541, 6.6265, 3.9741,
     ],
+    line_share: [
+        0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+    ],
+    lines: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    line_spread_db: 0.0000,
 };
 
 pub(super) const TOMLOW: Acoustics = Acoustics {
@@ -99,6 +135,11 @@ pub(super) const TOMLOW: Acoustics = Acoustics {
     field_db: [
         -30.0000, -54.1252, 18.3137, -12.6646, -34.7860, -53.0782, -41.4314, -68.4226, -80.0046,
     ],
+    line_share: [
+        0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+    ],
+    lines: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    line_spread_db: 0.0000,
 };
 
 pub(super) const TOMHIGH: Acoustics = Acoustics {
@@ -111,4 +152,9 @@ pub(super) const TOMHIGH: Acoustics = Acoustics {
     field_db: [
         -44.3037, -30.0000, -80.0000, -76.5135, -23.4421, -10.3256, -50.7467, -80.0000, -89.4815,
     ],
+    line_share: [
+        0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+    ],
+    lines: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    line_spread_db: 0.0000,
 };
