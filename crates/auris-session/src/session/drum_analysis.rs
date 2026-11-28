@@ -1367,15 +1367,8 @@ mod tests {
         assert_eq!(report.voices.len(), 128);
         assert!(report.voices[0].silent);
         assert!(report.voices[0].fitness.values().all(|v| *v == 0.0));
-        // The kit is calibrated to recorded drums, and the analyzer reads the recorded snare as
-        // a tom and the recorded open hat as a crash; only the roles it reads correctly in the
-        // recordings are asked of the kit.
-        for role in [
-            DrumRole::Kick,
-            DrumRole::ClosedHat,
-            DrumRole::Crash,
-            DrumRole::Tom,
-        ] {
+        // The kit is calibrated to recorded drums, and the analyzer reads every role in them.
+        for role in DrumRole::ALL {
             assert!(report.proposed_map.voices.contains_key(&role), "{role:?}");
         }
         // Known synthesis fixtures verify acoustic consequences; their note addresses still
