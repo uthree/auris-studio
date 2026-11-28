@@ -1141,9 +1141,15 @@ mod tests {
         assert!(reset.voices.iter().all(|voice| voice.points == [0.0; 64]));
     }
 
-    const ROLES_THE_ANALYZER_READS_IN_CAPTURES: [(u8, auris_core::DrumRole); 5] = [
+    const KIT_ROLES: [(u8, auris_core::DrumRole); 11] = [
         (36, auris_core::DrumRole::Kick),
+        (38, auris_core::DrumRole::Snare),
         (42, auris_core::DrumRole::ClosedHat),
+        (46, auris_core::DrumRole::OpenHat),
+        (49, auris_core::DrumRole::Crash),
+        (41, auris_core::DrumRole::Tom),
+        (43, auris_core::DrumRole::Tom),
+        (45, auris_core::DrumRole::Tom),
         (47, auris_core::DrumRole::Tom),
         (48, auris_core::DrumRole::Tom),
         (50, auris_core::DrumRole::Tom),
@@ -1152,10 +1158,9 @@ mod tests {
     #[test]
     fn acoustic_analysis_recognizes_the_generated_kit_roles_without_note_labels() {
         use auris_dsp::drum_analysis::analyze_drum_audio;
-        // Only the pads whose captured hits the analyzer itself reads correctly: it calls the
-        // captured snare a tom, the captured open hat and ride crashes, and the captured low tom
-        // a kick, and the kit that sounds like them is read the same way.
-        for (pitch, role) in ROLES_THE_ANALYZER_READS_IN_CAPTURES {
+        // Every pad but the ride, whose role the analyzer leaves open: it reads the recorded
+        // ride as an open hat too.
+        for (pitch, role) in KIT_ROLES {
             let audio = rig(512).render(144_000, &[hit(0, pitch)]);
             let mut buffer = AudioBuffer::new(1, audio.len(), 48_000.0);
             buffer.channel_mut(0).copy_from_slice(&audio);
