@@ -148,7 +148,10 @@ Some of what these do is worth knowing before you hear it.
   overtones are nowhere near harmonic; the air in the kettle and the room bring the modes with
   one, two, three and four nodal diameters to a fifth, an octave and a tenth over the first.
   The modes that squeeze the kettle hand their energy to the room within a fraction of a
-  second and are the thud of the stroke. Its notes ring on as a harp's do. With **Technique**
+  second and are the thud of the stroke, most of what is heard in its first tenth of a second.
+  The note itself fades before the fifth over it, which is what is left a second or two on,
+  and the head's higher modes ring under both. Each mode with nodal diameters rings in two
+  orientations a few cents apart, so the partials beat. Its notes ring on as a harp's do. With **Technique**
   on Roll, a held note is struck from alternating sticks at the **Roll Rate**, each stroke a
   little uneven, until the key is let go.
 - **A bell's warble depends on where you strike it.** Each partial is two shapes a
@@ -291,7 +294,7 @@ sound goes on. Watching changes nothing that is heard.
 
 The instruments are checked against recordings of real ones with the tools under `tools/eval`,
 which render through the code the application runs. These are what they read on 2026-11-11,
-and on 2026-11-28 for the winds; smaller is closer. The harp and the timpani are not yet
+and on 2026-11-28 for the winds and the timpani; smaller is closer. The harp is not yet
 measured against recordings.
 
 | Measure | Recorded | Reads | A model fitted to the same recordings |
@@ -304,7 +307,8 @@ measured against recordings.
 | Reeds, mel distance | B♭ clarinet, held-out pitches | 0.041 | 0.054 |
 | Whistles, mel distance of the settled tone | tin whistle scale | 0.017 | 0.018 |
 | Hammered Strings, mel distance | hammered dulcimer | 0.234 | 0.241 |
-| Brass, first ten harmonics | trumpet, horn, trombone, tuba at *pp*, *mf*, *ff*; the middle note of each capture held out | 5.7, 5.1, 3.9, 3.4 dB | — |
+| Brass, first ten harmonics | trumpet E3–B5, horn C2–B4, trombone E2–B3, tuba C1–B2, at *pp*, *mf*, *ff*; the middle note of each capture held out | 5.3, 3.4, 2.9, 2.9 dB | — |
+| Timpani, partials over time | five drums struck *forte*, 90–190 Hz | 2.0 dB | — |
 | Flute and double reeds, first ten harmonics | flute without vibrato, oboe, bassoon at *pp*, *mf*, *ff*; the middle note of each capture held out | 8.0, 10.7, 8.0 dB | — |
 
 The last column is the instruments these replaced, which were fitted to the recordings in the

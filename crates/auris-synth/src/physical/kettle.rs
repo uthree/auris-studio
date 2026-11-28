@@ -12,7 +12,14 @@
 //!
 //! The modes that squeeze the kettle push air in and out of the whole head at once and so
 //! hand their energy to the room within a fraction of a second: they are the thud of the
-//! stroke. The others, whose halves cancel each other's push, ring for seconds.
+//! stroke, and in the first tenth of a second they are most of what is heard. The others,
+//! whose halves cancel each other's push, ring for seconds — and not the first of them
+//! longest: recordings of struck timpani have the fifth over it ringing on after the note
+//! itself has faded, the octave after that, and a cloud of the head's higher modes under
+//! both. A head is never quite even, either, so each mode with nodal diameters rings in two
+//! orientations a few cents apart, and beats. A model that left all that out, with the
+//! first ringing mode strongest throughout and nothing between its partials, sounded like a
+//! plucked bass string.
 //!
 //! Where the stick lands decides which modes it wakes, as it does on a bar: each mode moves as
 //! a Bessel function of the distance from the middle, and a timpanist plays about a quarter of
@@ -41,7 +48,9 @@ const TECHNIQUES: &[Cow<'static, str>] = &[Cow::Borrowed("Single"), Cow::Borrowe
 
 /// One mode of the head: its nodal diameters and circles, the zero of the Bessel function
 /// that is its shape, its frequency over the first ringing mode's, how long it rings against
-/// that mode, and how much of its motion reaches the room.
+/// the longest-ringing mode, how much of its motion reaches the room, and — for a mode with
+/// nodal diameters — how far apart in cents its two orientations ring and where the head's
+/// unevenness has turned them.
 #[derive(Clone, Copy, Debug)]
 struct Mode {
     diameters: u32,
@@ -49,38 +58,54 @@ struct Mode {
     ratio: f32,
     sustain: f32,
     radiates: f32,
+    split: f32,
+    turned: f32,
 }
 
-const fn mode(diameters: u32, zero: f32, ratio: f32, sustain: f32, radiates: f32) -> Mode {
+const fn mode(
+    diameters: u32,
+    zero: f32,
+    ratio: f32,
+    sustain: f32,
+    radiates: f32,
+    split: f32,
+    turned: f32,
+) -> Mode {
     Mode {
         diameters,
         zero,
         ratio,
         sustain,
         radiates,
+        split,
+        turned,
     }
 }
 
 /// Rossing's modes of a 65 cm timpano, from the one with no nodal line but the rim.
 const MODES: [Mode; 13] = [
-    mode(0, 2.404_8, 0.85, 0.12, 1.0),
-    mode(1, 3.831_7, 1.0, 1.0, 1.0),
-    mode(2, 5.135_6, 1.5, 0.8, 0.8),
-    mode(0, 5.520_1, 1.68, 0.15, 0.6),
-    mode(3, 6.380_2, 1.99, 0.65, 0.6),
-    mode(1, 7.015_6, 2.09, 0.25, 0.35),
-    mode(4, 7.588_3, 2.44, 0.5, 0.45),
-    mode(2, 8.417_2, 2.67, 0.25, 0.3),
-    mode(0, 8.653_7, 2.79, 0.12, 0.3),
-    mode(5, 8.771_5, 2.89, 0.4, 0.35),
-    mode(3, 9.761_0, 3.17, 0.2, 0.2),
-    mode(6, 9.936_1, 3.34, 0.35, 0.25),
-    mode(7, 11.086_4, 3.78, 0.3, 0.2),
+    mode(0, 2.404_8, 0.85, 0.12, 3.0, 0.0, 0.0),
+    mode(1, 3.831_7, 1.0, 0.5, 1.6, 5.0, 0.5),
+    mode(2, 5.135_6, 1.5, 1.0, 0.9, 8.0, 1.1),
+    mode(0, 5.520_1, 1.68, 0.15, 2.5, 0.0, 0.0),
+    mode(3, 6.380_2, 1.99, 1.0, 0.3, 11.0, 0.3),
+    mode(1, 7.015_6, 2.09, 0.8, 0.9, 14.0, 0.9),
+    mode(4, 7.588_3, 2.44, 0.8, 0.15, 9.0, 1.3),
+    mode(2, 8.417_2, 2.67, 0.8, 0.8, 17.0, 0.7),
+    mode(0, 8.653_7, 2.79, 0.15, 2.0, 0.0, 0.0),
+    mode(5, 8.771_5, 2.89, 0.8, 0.7, 12.0, 0.4),
+    mode(3, 9.761_0, 3.17, 0.7, 0.7, 19.0, 1.0),
+    mode(6, 9.936_1, 3.34, 0.8, 0.6, 15.0, 0.6),
+    mode(7, 11.086_4, 3.78, 0.7, 0.6, 21.0, 1.2),
 ];
 const COUNT: usize = MODES.len();
+/// Two phasors a mode: a mode with nodal diameters rings in two orientations at right angles,
+/// which an uneven head tunes a little apart. A mode with none uses only the first.
+const PHASORS: usize = 2 * COUNT;
 const FLOOR: f32 = 1.0e-6;
 const DISPLAY: f32 = 0.05;
-/// The note at which the decay control is the ringing fundamental's decay time.
+/// The note at which the decay control is the decay time of the longest-ringing mode, the
+/// fifth over the note.
 const REFERENCE_HZ: f32 = 110.0;
 /// Power of how much higher a drum is tuned by which its modes die faster: a tighter, smaller
 /// head hands its energy to the air sooner.
@@ -136,7 +161,7 @@ pub(super) fn descriptors() -> Vec<ParamDescriptor> {
             0.25,
         )
         .with_unit(ParamUnit::Percent),
-        ParamDescriptor::new(P_DECAY, "decay", "Resonance Decay", 0.2, 10.0, 2.5)
+        ParamDescriptor::new(P_DECAY, "decay", "Resonance Decay", 0.2, 10.0, 4.3)
             .with_unit(ParamUnit::Seconds),
         ParamDescriptor::percent(P_DAMPING, "damping", "Damping", 0.0),
         ParamDescriptor::new(
@@ -202,26 +227,37 @@ struct Voice {
 
 impl Voice {
     fn retune(&mut self, cents: f32, rate: f32) {
-        let factor = (cents / 1200.0).exp2();
-        for index in 0..self.modes {
-            let hz = self.hz[index] * factor;
-            if hz >= rate * 0.49 {
-                self.rotors.turn(index, 0.0, 0.0);
-                continue;
+        for (index, spec) in MODES.iter().enumerate().take(self.modes) {
+            for (half, offset) in [(0, -0.5), (1, 0.5)] {
+                let hz = self.hz[index] * ((cents + offset * spec.split) / 1200.0).exp2();
+                let phasor = 2 * index + half;
+                if hz >= rate * 0.49 || (half == 1 && spec.diameters == 0) {
+                    self.rotors.turn(phasor, 0.0, 0.0);
+                    continue;
+                }
+                let (cosine, sine) = pole(hz, self.nepers[index], rate);
+                self.rotors.turn(phasor, cosine, sine);
             }
-            let (cosine, sine) = pole(hz, self.nepers[index], rate);
-            self.rotors.turn(index, cosine, sine);
         }
         self.tuned = cents;
     }
 
     /// The stick comes down with `strength`: every mode is pushed by what the felt gives it.
     fn strike(&mut self, strength: f32) {
-        for mode in 0..self.modes {
+        for (mode, spec) in MODES.iter().enumerate().take(self.modes) {
             let push = strength * self.shapes[mode] * contact_spectrum(self.hz[mode], self.seconds);
-            let (re, im) = self.rotors.at(mode);
-            // Struck into the velocity half and heard on the other.
-            self.rotors.place(mode, re + push, im);
+            // The stick lands on neither orientation's antinode: each takes its projection.
+            let shares = if spec.diameters == 0 {
+                [1.0, 0.0]
+            } else {
+                [spec.turned.cos(), -spec.turned.sin()]
+            };
+            for (half, share) in shares.into_iter().enumerate() {
+                let phasor = 2 * mode + half;
+                let (re, im) = self.rotors.at(phasor);
+                // Struck into the velocity half and heard on the other.
+                self.rotors.place(phasor, re + push * share, im);
+            }
         }
     }
 
@@ -282,7 +318,7 @@ impl Kettle {
     /// longer, a faster stroke less, as the fifth root of its speed.
     fn contact_seconds(&self, fundamental: f32, velocity: f32) -> f32 {
         let hardness = self.performance.hardness(self.settings.hardness);
-        0.007
+        0.006
             * 0.2_f32.powf(hardness)
             * velocity.max(0.05).powf(-0.2)
             * (REFERENCE_HZ / fundamental).clamp(0.25, 4.0).powf(0.3)
@@ -295,7 +331,7 @@ impl Engine for Kettle {
         self.voices = (0..voices)
             .map(|_| {
                 let mut voice = Voice::default();
-                voice.rotors.prepare(COUNT);
+                voice.rotors.prepare(PHASORS);
                 voice
             })
             .collect();
@@ -381,21 +417,23 @@ impl Engine for Kettle {
             voice.shapes[mode] = shape(spec, contact);
             voice.modes = mode + 1;
         }
-        voice.rotors.set_len(voice.modes);
+        voice.rotors.set_len(2 * voice.modes);
         self.set_rates(index);
         let voice = &mut self.voices[index];
         let stretch = STRETCH * note.velocity * note.velocity;
         voice.retune(self.performance.bend * 100.0 + stretch, rate);
-        for (mode, spec) in MODES.iter().enumerate().take(voice.modes) {
-            let (cosine, sine) = voice.rotors.pole(mode);
+        for phasor in 0..2 * voice.modes {
+            let spec = &MODES[phasor / 2];
+            let (cosine, sine) = voice.rotors.pole(phasor);
+            let heard = phasor % 2 == 0 || spec.diameters > 0;
             voice.rotors.set(
-                mode,
+                phasor,
                 Rotor {
                     cosine,
                     sine,
                     drive: 0.0,
                     listen_re: 0.0,
-                    listen_im: spec.radiates,
+                    listen_im: if heard { spec.radiates } else { 0.0 },
                 },
             );
         }
@@ -521,18 +559,19 @@ impl Engine for Kettle {
                     .enumerate()
                     .take(voice.modes)
                     .map(|(mode, spec)| {
-                        voice.rotors.at(mode).1 / spec.ratio.sqrt()
-                            * shape(spec, radius)
-                            * (spec.diameters as f32 * angle).cos()
+                        let turn = spec.diameters as f32 * angle - spec.turned;
+                        let moving = voice.rotors.at(2 * mode).1 * turn.cos()
+                            + voice.rotors.at(2 * mode + 1).1 * turn.sin();
+                        moving / spec.ratio.sqrt() * shape(spec, radius)
                     })
                     .sum::<f32>()
                     * DISPLAY
             };
         }
         for (mode, value) in picture.partials.iter_mut().enumerate() {
-            let (re, im) = voice.rotors.at(mode);
             *value = if mode < voice.modes {
-                re.hypot(im) * DISPLAY
+                let (a, b) = (voice.rotors.at(2 * mode), voice.rotors.at(2 * mode + 1));
+                a.0.hypot(a.1).hypot(b.0.hypot(b.1)) * DISPLAY
             } else {
                 0.0
             };

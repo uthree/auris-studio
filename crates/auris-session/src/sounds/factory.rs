@@ -420,7 +420,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     // Wooden sticks: a harder, shorter stroke.
                     (
                         "Hard-stick timpani",
-                        &[("hardness", 0.85), ("level", -15.7)],
+                        &[("hardness", 0.85), ("level", -17.3)],
                     ),
                 ],
             ),

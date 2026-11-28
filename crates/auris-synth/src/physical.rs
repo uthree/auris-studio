@@ -376,7 +376,7 @@ impl Model {
             Self::TinWhistle => 2.903,
             Self::Brass => 1.334,
             Self::Harp => 0.718,
-            Self::Timpani => 0.765,
+            Self::Timpani => 0.473,
         }
     }
 }

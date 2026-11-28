@@ -90,7 +90,10 @@ const CARRY: usize = 2_048;
 /// Fitted, not chosen: each instrument's numbers are the ones that bring the first ten
 /// harmonics of its notes nearest those of the University of Iowa recordings of it, at
 /// *pianissimo*, *mezzo forte* and *fortissimo* — every note the fit was not shown included,
-/// to within a few decibels a harmonic. `docs/physical-instruments.md` has the account.
+/// to within a few decibels a harmonic. The fit has to be shown the whole range: the bell's
+/// corner only reaches into the loop below a third of it, so a horn fitted on C4–B4 alone
+/// played its two lowest octaves as little more than their first two harmonics.
+/// `docs/physical-instruments.md` has the account.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Bore {
     /// Where the bell stops sending the wave back and lets it out, and how sharply its
@@ -126,17 +129,17 @@ impl Bore {
             // round, and brightens little. A trombone's long cylinder is where a wave steepens
             // most.
             1 => Self {
-                bell_hz: 405.0,
-                bell_q: 2.59,
-                air_hz: 3_955.0,
-                steepening: 2.3e-4,
+                bell_hz: 557.0,
+                bell_q: 1.54,
+                air_hz: 2_476.0,
+                steepening: 1.2e-4,
                 loss: 0.03,
-                softest: 0.076,
-                hardest: 0.738,
-                lip_tuning: 0.685,
-                lip_q: 7.43,
-                lip_area: 0.648,
-                level: 0.452,
+                softest: 0.128,
+                hardest: 1.597,
+                lip_tuning: 0.651,
+                lip_q: 6.99,
+                lip_area: 0.68,
+                level: 0.388,
             },
             2 => Self {
                 bell_hz: 504.0,

@@ -3026,19 +3026,41 @@ fn a_harp_and_a_timpano_ring_on_after_the_key_is_let_go() {
 }
 
 #[test]
-fn a_timpano_is_heard_at_the_note_with_a_fifth_and_an_octave_over_it() {
+fn a_timpanos_fifth_rings_on_after_its_note() {
     let mut drum = rig(Model::Timpani, 48_000.0);
-    let audio = drum.render(48_000, &[on(45, 0.8)]);
-    let steady = &audio[4_800..28_800];
-    let at = |ratio: f64| windowed(steady, 48_000.0, hz(45) * ratio);
-    let (note, fifth, octave) = (at(1.0), at(1.5), at(1.99));
-    // Between the modes there is nothing.
-    let between = at(1.25).max(at(1.75));
-    assert!(note > fifth && fifth > octave, "{note} {fifth} {octave}");
+    let audio = drum.render(144_000, &[on(50, 0.8)]);
+    let at = |span: &[f32], ratio: f64| windowed(span, 48_000.0, hz(50) * ratio);
+    // Struck, the note and the fifth over it sound together, the octave under both.
+    let early = &audio[2_400..24_000];
+    let (note, fifth, octave) = (at(early, 1.0), at(early, 1.5), at(early, 1.99));
     assert!(
-        octave > 4.0 * between,
-        "{octave} against {between} between the modes"
+        note > 0.3 * fifth && fifth > octave,
+        "{note} {fifth} {octave}"
     );
+    // Two seconds on, the fifth is what is left.
+    let late = &audio[72_000..120_000];
+    let (note, fifth) = (at(late, 1.0), at(late, 1.5));
+    assert!(fifth > 3.0 * note, "{note} under a fifth of {fifth}");
+}
+
+#[test]
+fn a_timpanos_modes_ring_in_two_orientations_and_beat() {
+    // An even head would ring each mode as one steady partial; this one's beat, so its
+    // level at the fifth wanders over a few hundred milliseconds instead of falling smoothly.
+    let mut drum = rig(Model::Timpani, 48_000.0);
+    let audio = drum.render(144_000, &[on(50, 0.8)]);
+    let levels: Vec<f64> = (0..20)
+        .map(|k| {
+            let start = 24_000 + k * 4_800;
+            20.0 * windowed(&audio[start..start + 4_800], 48_000.0, hz(50) * 1.5).log10()
+        })
+        .collect();
+    let steps: Vec<f64> = levels.windows(2).map(|w| w[1] - w[0]).collect();
+    // A smooth decay would step down by the same amount every time.
+    let mean = steps.iter().sum::<f64>() / steps.len() as f64;
+    let spread =
+        (steps.iter().map(|d| (d - mean).powi(2)).sum::<f64>() / steps.len() as f64).sqrt();
+    assert!(spread > 0.3, "steps of {steps:?}");
 }
 
 #[test]

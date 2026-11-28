@@ -30,19 +30,26 @@ from urllib.request import urlopen
 
 import numpy as np
 import soundfile as sf
-from scipy.optimize import differential_evolution
-
 from fit_worker import Renderer
+from scipy.optimize import differential_evolution
 
 BASE = "https://theremin.music.uiowa.edu/sound%20files/MIS/"
 DYNAMICS = ("pp", "mf", "ff")
 # Concert-pitch chromatic captures, without vibrato where there is a choice.
 CAPTURES = {
     "Trumpet": [f"Brass/Bbtrumpet/Trumpet.novib.{d}.{s}.aiff" for d in DYNAMICS
-                for s in ("C4B4", "C5B5")],
-    "Horn": [f"Brass/frenchhorn/Horn.{d}.C4B4.aiff" for d in DYNAMICS],
-    "TenorTrombone": [f"Brass/tenortrombone/TenorTrombone.{d}.C3B3.aiff" for d in DYNAMICS],
-    "Tuba": [f"Brass/tuba/Tuba.{d}.C2B2.aiff" for d in DYNAMICS],
+                for s in ("E3B3", "C4B4", "C5B5")],
+    # The horn's low captures are what its low register is fitted on: without them the
+    # dials that only act below C3 are never seen. Only ff exists for both octaves under C4;
+    # the mf C2B2 capture's notes break between registers and are not named reliably.
+    "Horn": ([f"Brass/frenchhorn/Horn.{d}.C4B4.aiff" for d in DYNAMICS]
+             + [f"Brass/frenchhorn/Horn.ff.{s}.aiff" for s in ("C2B2", "C3B3")]),
+    # The low trombone captures have a space in their names.
+    "TenorTrombone": [f"Brass/tenortrombone/TenorTrombone.{d}.{s}.aiff" for d in DYNAMICS
+                      for s in (" E2B2", "C3B3")],
+    # The tuba's pp C1B1 capture is mostly the room: its notes are not there to read.
+    "Tuba": [f"Brass/tuba/Tuba.{d}.{s}.aiff" for d in DYNAMICS for s in ("C1B1", "C2B2")
+             if (d, s) != ("pp", "C1B1")],
     "Flute": [f"Woodwinds/flute/Flute.nonvib.{d}.{s}.aiff" for d in DYNAMICS
               for s in ("B3B4", "C6B6" if d != "pp" else "C6Bb6")],
     "Oboe": [f"Woodwinds/oboe/Oboe.{d}.{s}.aiff" for d in DYNAMICS for s in ("C4B4", "C5B5")],
@@ -73,6 +80,12 @@ NOTE = {"C": 0, "Db": 1, "D": 2, "Eb": 3, "E": 4, "F": 5, "Gb": 6, "G": 7, "Ab":
 def first_note(span):
     """The MIDI note a capture's span starts on: "B3B4" is 59."""
     name, octave = re.match(r"([A-G]b?)(\d)", span).groups()
+    return 12 * (int(octave) + 1) + NOTE[name]
+
+
+def last_note(span):
+    """The MIDI note a capture's span ends on: "B3B4" is 71, "C5" is 72."""
+    name, octave = re.findall(r"([A-G]b?)(\d)", span)[-1]
     return 12 * (int(octave) + 1) + NOTE[name]
 
 
@@ -150,7 +163,7 @@ def fetch(root, only=None):
         if only and instrument != only:
             continue
         for capture in captures:
-            path = root / Path(capture).name
+            path = root / Path(capture).name.replace(" ", "")
             if not path.exists():
                 with urlopen(BASE + quote(capture)) as response:
                     path.write_bytes(response.read())
@@ -165,7 +178,7 @@ def fetch(root, only=None):
                 # A chromatic capture climbs: each note is the last, if the segmentation split
                 # it, or up to three semitones over it, if it missed some on the way.
                 candidates = (range(first_note(span), first_note(span) + 3) if last is None
-                              else range(last, last + 4))
+                              else range(last, min(last + 4, last_note(span) + 1)))
                 pitch = identify(settled, rate, candidates)
                 if pitch == last:
                     continue

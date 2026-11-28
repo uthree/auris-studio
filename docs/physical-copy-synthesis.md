@@ -296,14 +296,20 @@ that a slapped note sounds like any one bass.
 ## Winds
 
 The [Iowa MIS](https://theremin.music.uiowa.edu/MIS.html) brass and woodwind captures are
-chromatic phrases at *pp*, *mf* and *ff*: the B♭ trumpet without vibrato over C4–B5, the horn
-and the tenor trombone over C4–B4 and C3–B3, the tuba over C2–B2, the flute without vibrato
-over B3–B4 and C6–B6, the oboe over C4–B5 and the bassoon over C2–B3. `wind_profile.py` cuts
+chromatic phrases at *pp*, *mf* and *ff*: the B♭ trumpet without vibrato over E3–B5, the
+horn over C4–B4 and, at *ff* only, C2–B3, the tenor trombone over E2–B3, the tuba over C1–B2
+(no *pp* under C2, whose capture is mostly the room), the flute without vibrato over B3–B4 and
+C6–B6, the oboe over C4–B5 and the bassoon over C2–B3. The low octaves matter: the bell's
+corner only reaches into the brass loop below a third of it, so a dial fitted on the middle of
+the range alone is never seen there. The horn fitted on C4–B4 played C2–B3 as little more than
+its first two harmonics, where the recordings have a dozen; refitted on all of it, the horn's
+held-out distance over the whole range went from 7.0 to 3.4 dB. `wind_profile.py` cuts
 each capture into its notes and names each by what it sounds: a capture's quiet notes are
 sometimes missed and its long ones split, so the place of a note in the file is not its pitch.
 Each note is taken to be the last one again (a split) or up to three semitones over it, and
-the candidate whose harmonics stand furthest over the points between them wins. The tuba's
-*pp* capture still yields one note.
+the candidate whose harmonics stand furthest over the points between them wins, no higher
+than the capture's last note. The tuba's *pp* C2–B2 capture still yields one note, and the
+horn's *mf* C2–B2 is left out: its notes break between registers and are not named reliably.
 
 It reads each note's first ten harmonics, in decibels under its strongest, from 0.25 to 0.85 s
 after its onset, and plays the same pitch at velocity 0.3, 0.65 and 1.0 for the three dynamics,
@@ -321,6 +327,25 @@ one player and one room for each instrument. It also does not see how much a not
 from *pp* to *ff* beyond what the three envelopes show, and the horn and the trombone
 recordings brighten more than the model does. The oboe's held-out notes keep their strongest
 harmonics in the third and fourth, near a kilohertz, where the model's are in the first two.
+
+## Timpani
+
+The [VSCO-2 Community Edition](https://github.com/sgossner/VSCO-2-CE) has single strokes on
+five drums, whose notes the recordings sound at 90, 122, 143, 169 and 190 Hz; it is CC0.
+`timpani_profile.py` reads, for four windows after the stroke (0–0.15, 0.15–0.5, 0.5–1.2 and
+1.2–2.5 s), what share of the sound lies within 3.5 % of the note, the fifth, the octave and
+the tenth over it, what share lies anywhere else from 30 Hz to 2 kHz, and how far each window
+is under the first. The model plays each drum's nearest note at velocity 0.85, and the
+distance is the mean absolute difference from the five recordings' mean.
+
+The recordings settled what the model had wrong. A tenth of a second after the stroke most of
+their sound is not at the four partials at all; half a second on, the fifth is louder than the
+note and stays so; and the octave fades more slowly than the note. The model had the note
+strongest throughout and next to nothing between the partials, and read 11.8 dB. The mode
+table's decay times and radiation were then set by hand against the measure, which reads
+2.0 dB. What it does not see: the recordings' level falls nine decibels over the first half
+second and the model's four, and the lowest drum's recording keeps its note strongest
+throughout, which the model, one table for every drum, does not. The *piano* strokes and the rolls are not compared.
 
 ## Running the measures
 
@@ -373,6 +398,8 @@ uv run tools/eval/bass_slap.py measure target/slap-reference <after-worker> \
 
 uv run tools/eval/wind_profile.py fetch target/wind-reference
 uv run tools/eval/wind_profile.py measure target/wind-reference <after-worker>
+uv run tools/eval/timpani_profile.py fetch target/timpani-reference
+uv run tools/eval/timpani_profile.py measure target/timpani-reference <after-worker>
 # Fitting needs a worker built with --features physical-calibration.
 uv run tools/eval/wind_profile.py fit target/wind-reference <calibration-worker> Oboe
 ```
