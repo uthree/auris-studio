@@ -40,6 +40,13 @@ struct Mode {
     loss: f32,
     /// Phase advance per sample, kept for the glide's extra rotation.
     angle: f32,
+    /// The mode's second decay at the same frequency: the ring a struck head keeps once the
+    /// strike has fallen, or a plate's stick transient. Its own state, loss and level.
+    second_displacement: f32,
+    second_quadrature: f32,
+    second_radius: f32,
+    second_loss: f32,
+    second_gain: f32,
     frequency: f32,
     pickup: f32,
     strike: [f32; 8],
@@ -105,7 +112,7 @@ impl Projection {
     pub(super) fn observe(&self, resonators: &Resonators, level: f32, voice: &mut MotionVoice) {
         for (index, mode) in resonators.modes.iter().take(resonators.count).enumerate() {
             for (point, shape) in voice.points.iter_mut().zip(&self.shapes[index]) {
-                *point += shape * mode.displacement * level;
+                *point += shape * (mode.displacement + mode.second_displacement) * level;
             }
             if let Some(magnitude) = voice.modes.get_mut(index) {
                 *magnitude = mode.displacement.hypot(mode.quadrature) * level;
@@ -115,12 +122,14 @@ impl Projection {
 }
 
 impl Resonators {
-    /// `t30` gives each mode the seconds its frequency takes to fall 30 dB.
+    /// `t30` gives each mode the seconds its frequency takes to fall 30 dB; `second` the same
+    /// for its second decay, with that decay's amplitude against the first.
     pub(super) fn prepared(
         projection: &Projection,
         rate: f32,
         fundamental: f32,
         t30: impl Fn(f32) -> f32,
+        second: impl Fn(f32) -> (f32, f32),
     ) -> Self {
         let count = if projection.metal { MODES } else { HEAD.len() };
         let mut modes = [Mode::default(); MODES];
@@ -137,11 +146,14 @@ impl Resonators {
                 continue;
             }
             let angle = 2.0 * PI * frequency / rate;
+            let (second_t30, second_gain) = second(frequency);
             *mode = Mode {
                 cosine: angle.cos(),
                 sine: angle.sin(),
                 // Natural-log decrement per sample of a fall of 30 dB.
                 loss: 1.5 * std::f32::consts::LN_10 / (t30(frequency).max(1e-3) * rate),
+                second_loss: 1.5 * std::f32::consts::LN_10 / (second_t30.max(1e-3) * rate),
+                second_gain,
                 angle,
                 frequency,
                 pickup: projection.pickup[index],
@@ -182,12 +194,15 @@ impl Resonators {
             *weight = spatial / (1.0 + contact * contact);
             energy += (*weight * mode.pickup).powi(2);
             mode.radius = (-mode.loss * damping / decay).exp();
+            mode.second_radius = (-mode.second_loss * damping / decay).exp();
         }
         // Fix total strike energy, while position and hardness redistribute it between modes.
         let scale = 0.65 / energy.sqrt().max(0.1);
         for (mode, weight) in self.modes.iter_mut().zip(weights).take(self.count) {
             mode.displacement = 0.0;
             mode.quadrature = weight * scale;
+            mode.second_displacement = 0.0;
+            mode.second_quadrature = weight * scale * mode.second_gain;
         }
         self.glide = glide.clamp(0.0, 1.0);
     }
@@ -205,18 +220,26 @@ impl Resonators {
         let mut output = 0.0;
         let gliding = self.glide > 1e-5;
         for mode in self.modes.iter_mut().take(self.count) {
-            let mut real = mode.displacement * mode.cosine - mode.quadrature * mode.sine;
-            let mut imag = mode.displacement * mode.sine + mode.quadrature * mode.cosine;
+            // Both decays turn at the same rate, the second only when it is there at all.
+            let (mut cosine, mut sine) = (mode.cosine, mode.sine);
             if gliding {
                 // The extra advance is a small angle: second order keeps the rotation unitary
                 // to well below the mode's own loss.
                 let extra = mode.angle * self.glide;
-                let (cosine, sine) = (1.0 - extra * extra * 0.5, extra);
-                (real, imag) = (real * cosine - imag * sine, real * sine + imag * cosine);
+                let (c, s) = (1.0 - extra * extra * 0.5, extra);
+                (cosine, sine) = (cosine * c - sine * s, cosine * s + sine * c);
             }
+            let real = mode.displacement * cosine - mode.quadrature * sine;
+            let imag = mode.displacement * sine + mode.quadrature * cosine;
             mode.displacement = real * mode.radius;
             mode.quadrature = imag * mode.radius;
-            output += mode.displacement * mode.pickup;
+            if mode.second_gain > 0.0 {
+                let real = mode.second_displacement * cosine - mode.second_quadrature * sine;
+                let imag = mode.second_displacement * sine + mode.second_quadrature * cosine;
+                mode.second_displacement = real * mode.second_radius;
+                mode.second_quadrature = imag * mode.second_radius;
+            }
+            output += (mode.displacement + mode.second_displacement) * mode.pickup;
         }
         self.glide *= self.glide_loss;
         output
@@ -246,7 +269,8 @@ mod tests {
             assert!(bessel(order, zero).abs() < 2e-6);
         }
         let projection = Projection::new(false);
-        let resonators = Resonators::prepared(&projection, 48_000.0, 100.0, |_| 0.5);
+        let resonators =
+            Resonators::prepared(&projection, 48_000.0, 100.0, |_| 0.5, |_| (1.0, 0.0));
         assert!((resonators.modes[1].frequency / 100.0 - 1.5933).abs() < 0.001);
         assert!(
             projection
@@ -261,11 +285,12 @@ mod tests {
         for rate in [8_000.0, 22_050.0, 48_000.0, 96_000.0, 192_000.0] {
             for metal in [false, true] {
                 let projection = Projection::new(metal);
-                let mut resonators = Resonators::prepared(&projection, rate, 900.0, |_| 2.4);
+                let mut resonators =
+                    Resonators::prepared(&projection, rate, 900.0, |_| 2.4, |_| (6.0, 0.1));
                 resonators.strike(1.0, 0.98, 0.4, 2.0, 0.3);
                 for mode in &resonators.modes {
                     assert!(mode.frequency < rate * 0.5);
-                    assert!(mode.radius <= 1.0);
+                    assert!(mode.radius <= 1.0 && mode.second_radius <= 1.0);
                 }
                 for _ in 0..rate as usize {
                     assert!(resonators.next().is_finite());

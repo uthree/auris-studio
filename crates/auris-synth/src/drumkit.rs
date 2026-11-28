@@ -150,6 +150,8 @@ impl Pad {
                     t30: ratio(low.t30, high.t30),
                     bloom: mix(low.bloom, high.bloom),
                     field_db: mix(low.field_db, high.field_db),
+                    second_t30: ratio(low.second_t30, high.second_t30),
+                    second_db: mix(low.second_db, high.second_db),
                     // A drum head's field is all noise.
                     ..low
                 }
@@ -184,15 +186,38 @@ struct Profile {
     glide: f32,
 }
 
-/// Seconds a band takes to fall 30 dB, read at `hz` between the measured octave centres.
-fn t30_at(table: &[f32; BANDS], hz: f32) -> f32 {
+/// The band below `hz` and how far `hz` lies towards the next octave centre.
+fn band_position(hz: f32) -> (usize, f32) {
     let position = (hz.max(1.0) / BAND_HZ[0])
         .log2()
         .clamp(0.0, (BANDS - 1) as f32);
     let below = (position as usize).min(BANDS - 2);
-    let fraction = position - below as f32;
+    (below, position - below as f32)
+}
+
+/// Seconds a band takes to fall 30 dB, read at `hz` between the measured octave centres.
+fn t30_at(table: &[f32; BANDS], hz: f32) -> f32 {
+    let (below, fraction) = band_position(hz);
     // Interpolate the logarithm: a decay time is a ratio, not a level.
     (table[below].ln() * (1.0 - fraction) + table[below + 1].ln() * fraction).exp()
+}
+
+/// A level in decibels, read at `hz` between the measured octave centres.
+fn db_at(table: &[f32; BANDS], hz: f32) -> f32 {
+    let (below, fraction) = band_position(hz);
+    table[below] * (1.0 - fraction) + table[below + 1] * fraction
+}
+
+/// A second decay this far down is no second decay at all.
+const NO_SECOND_DB: f32 = -100.0;
+
+/// Amplitude of a band's second decay against its first.
+fn second_gain(db: f32) -> f32 {
+    if db <= NO_SECOND_DB {
+        0.0
+    } else {
+        db_to_gain(db)
+    }
 }
 
 /// Per-sample amplitude factor of a fall of 30 dB in `seconds`.
@@ -217,6 +242,10 @@ struct Hit {
     /// What is still to bloom in each band, falling from one to zero.
     bloom: [f32; BANDS],
     bloom_loss: [f32; BANDS],
+    /// The second decay of each band's field: a drum's ring and room, a cymbal's stick transient.
+    second_gain: [f32; BANDS],
+    second_level: [f32; BANDS],
+    second_loss: [f32; BANDS],
     /// The share of the field a cymbal rings on as resolved modes rather than noise.
     lines: Lines,
     /// The slowest of the hit's losses: once it is 80 dB down, the hit is over.
@@ -242,7 +271,15 @@ impl Hit {
         // White noise of a fixed variance spreads thinner per hertz at a higher rate.
         let density = (sample_rate / 48_000.0).sqrt();
         let audible = |band: usize| BAND_HZ[band] < sample_rate * 0.45;
-        let longest = bands.t30.iter().copied().fold(0.0, f32::max);
+        let longest = (0..BANDS)
+            .map(|band| {
+                if second_gain(bands.second_db[band]) > 0.0 {
+                    bands.t30[band].max(bands.second_t30[band])
+                } else {
+                    bands.t30[band]
+                }
+            })
+            .fold(0.0, f32::max);
         let field_gain: [f32; BANDS] = std::array::from_fn(|band| {
             if audible(band) {
                 db_to_gain(bands.field_db[band]) * density
@@ -269,9 +306,24 @@ impl Hit {
             pitch,
             profile,
             amplitude,
-            resonators: Resonators::prepared(projection, sample_rate, profile.tone, |hz| {
-                t30_at(&bands.t30, hz)
-            }),
+            resonators: Resonators::prepared(
+                projection,
+                sample_rate,
+                profile.tone,
+                |hz| t30_at(&bands.t30, hz),
+                |hz| {
+                    let (below, _) = band_position(hz);
+                    // Between a band with a second decay and one without, the one that has it.
+                    let db = if bands.second_db[below] <= NO_SECOND_DB {
+                        bands.second_db[below + 1]
+                    } else if bands.second_db[below + 1] <= NO_SECOND_DB {
+                        bands.second_db[below]
+                    } else {
+                        db_at(&bands.second_db, hz)
+                    };
+                    (t30_at(&bands.second_t30, hz), second_gain(db))
+                },
+            ),
             shell: Biquad::new(BiquadCoefficients::bandpass(
                 sample_rate as f64,
                 (profile.tone * 0.8).min(sample_rate * 0.4),
@@ -296,6 +348,11 @@ impl Hit {
                 }
             }),
             field_level: [1.0; BANDS],
+            second_gain: std::array::from_fn(|band| {
+                field_gain[band] * second_gain(bands.second_db[band])
+            }),
+            second_level: [1.0; BANDS],
+            second_loss: std::array::from_fn(|band| t30_loss(bands.second_t30[band], sample_rate)),
             field_loss: std::array::from_fn(|band| t30_loss(bands.t30[band], sample_rate)),
             bloom: [1.0; BANDS],
             bloom_loss: std::array::from_fn(|band| {
@@ -343,12 +400,16 @@ impl Hit {
         let mut field = 0.0;
         for band in 0..BANDS {
             let gain = self.field_gain[band];
-            if gain == 0.0 {
+            let second = self.second_gain[band];
+            if gain == 0.0 && second == 0.0 {
                 continue;
             }
             self.field_level[band] *= self.field_loss[band];
             self.bloom[band] *= self.bloom_loss[band];
-            let drive = noise * gain * self.field_level[band] * (1.0 - self.bloom[band]);
+            self.second_level[band] *= self.second_loss[band];
+            let drive = noise
+                * (gain * self.field_level[band] * (1.0 - self.bloom[band])
+                    + second * self.second_level[band]);
             field += self.field[band].process_sample(drive);
         }
         if !self.lines.is_empty() {
@@ -499,6 +560,7 @@ impl DrumKit {
         let hit = &mut voice.current;
         for band in 0..BANDS {
             hit.field_loss[band] = hit.field_loss[band].powf(exponent);
+            hit.second_loss[band] = hit.second_loss[band].powf(exponent);
             if membrane {
                 let octaves = (BAND_HZ[band] / 250.0).log2().clamp(0.0, 5.0);
                 hit.field_gain[band] *= velocity.powf(FIELD_VELOCITY_TILT * octaves);
@@ -808,6 +870,22 @@ mod tests {
             wires(attack) / head(attack),
             wires(late) / head(late),
         );
+    }
+
+    #[test]
+    fn a_snare_rings_on_once_its_strike_has_fallen() {
+        // The captured snares' 250 Hz octave holds 41-47 dB below its first 50 ms between
+        // 0.2 and 0.5 s: the head and the room ring on long after the strike has fallen 30 dB.
+        let snare = sound(38);
+        let level = |from: f64, to: f64| {
+            band_amplitude(
+                &snare[(48_000.0 * from) as usize..(48_000.0 * to) as usize],
+                48_000.0,
+                250.0,
+            )
+        };
+        let ring = 20.0 * (level(0.2, 0.5) / level(0.0, 0.05)).log10();
+        assert!((-55.0..-35.0).contains(&ring), "{ring} dB");
     }
 
     #[test]

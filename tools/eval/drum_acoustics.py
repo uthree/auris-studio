@@ -6,11 +6,14 @@
 
 Writes `crates/auris-synth/src/drumkit/acoustics.rs`: for every pad, the -30 dB decay time of
 each octave band (which sets both the modal and the diffuse losses), the time each band takes to
-bloom, the level of the diffuse field in each band, and for a cymbal how much of each band is
-resolved lines and how many of them there are. The levels need the kit itself: given
+bloom, the level of the diffuse field in each band, a second decay in each band (a drum's ring
+and room once its strike has fallen, a cymbal's stick transient before it blooms), and for a
+cymbal how much of each band is resolved lines and how many of them there are. The levels need the kit itself: given
 `--worker`, the current kit is rendered on the same training hits and every level is moved by
 the difference between the captures' band shares and the kit's, so a few rebuild-and-rerun
-rounds converge on the captures' spectrum. Only the training split is read.
+rounds converge on the captures' spectrum. `--correct second` moves the second decays' levels
+instead, on how much of each band the captures hold late (drums) or early (cymbals). Only the
+training split is read.
 """
 
 import argparse
@@ -40,6 +43,16 @@ METAL = {"ClosedHat", "OpenHat", "Crash", "Ride"}
 FUNDAMENTAL = {"Kick": 42.0, "Snare": 185.0, "TomLow": 63.0, "TomHigh": 135.0}
 MODAL_REACH = 2.5
 MODAL_CEILING_DB = -30.0
+# A cymbal's stick transient: how fast it falls 30 dB, and the windows whose difference sets its
+# level. A drum's ring after the strike: the windows whose difference sets its level; how fast it
+# falls is read on the captures.
+TRANSIENT_T30 = 0.04
+SECOND_WINDOWS = {True: ((0.0, 0.02), (0.08, 0.4)), False: ((0.15, 0.6), (0.0, 0.05))}
+NO_SECOND_DB = -120.0
+# A closed hat is all transient already; the captures and the kit agree on its envelope. A kick's
+# ring lifted its midrange 6-13 dB over the captures' between 30 and 200 ms, and a crash's
+# transient landed 15 dB over them in the first 10 ms, where the captured stick has yet to bloom.
+WITHOUT_SECOND = {"ClosedHat", "Kick", "Crash"}
 # Where a cymbal's tail is read for its lines: late enough that the strike has gone, short
 # enough that the band is still well above the floor. A closed hat has no tail to read. The
 # ride's lines are not modelled yet: they made its first 50 ms further from the captures.
@@ -99,6 +112,60 @@ def measure(audio):
     t30 = np.array([[decay(e) for e in env] for env in envs])
     peaks = np.array([[np.argmax(e) / 200 for e in env] for env in envs])
     return np.median(shares(audio), axis=0), np.median(t30, axis=1), np.median(peaks, axis=1)
+
+
+def ring(env, t30):
+    """A drum band's second decay: seconds to fall 30 dB, read below where the strike has fallen
+    30 dB and above the excerpt's floor, and its level at the peak in dB. None if too short."""
+    smooth = 10 * np.log10(np.convolve(10 ** (env / 10), np.ones(4) / 4, mode="same") + 1e-14)
+    peak = int(np.argmax(smooth))
+    after = smooth[peak:] - smooth[peak]
+    floor = np.median(after[-50:]) + 6
+    below = np.flatnonzero(after < -30)
+    if not len(below):
+        return None
+    start = below[0]
+    quiet = np.flatnonzero(after[start:] < floor)
+    stop = start + quiet[0] if len(quiet) else len(after)
+    if stop - start < 10:
+        return None
+    t = np.arange(start, stop) / 200
+    slope, intercept = np.polyfit(t, after[start:stop], 1)
+    if slope >= 0 or 30 / -slope < t30 * 1.3:
+        return None
+    return min(6.0, 30 / -slope), float(intercept)
+
+
+def second_decay(reference, t30, metal):
+    """Per band: the second decay's T30 and a starting level in dB below the first."""
+    if metal:
+        return np.full(MEASURED, TRANSIENT_T30), np.full(MEASURED, -6.0)
+    audio = analysis_audio(reference)
+    times, levels = [], []
+    for index, center in enumerate(BANDS[:MEASURED]):
+        found = [ring(env, t30[index]) for env in envelope_db(band(audio, center))]
+        found = [value for value in found if value is not None]
+        if len(found) * 2 < len(audio):
+            times.append(t30[index])
+            levels.append(NO_SECOND_DB)
+        else:
+            times.append(float(np.median([value[0] for value in found])))
+            levels.append(float(np.median([value[1] for value in found])))
+    return np.array(times), np.array(levels)
+
+
+def window_db(audio, metal):
+    """Per band, how much the second decay's window holds against the first's, per hit."""
+    late, early = SECOND_WINDOWS[metal]
+    out = []
+    for center in BANDS[:MEASURED]:
+        x = band(audio, center)
+
+        def power(window, x=x):
+            return np.mean(x[:, int(window[0] * RATE):int(window[1] * RATE)] ** 2, axis=-1)
+
+        out.append(10 * np.log10((power(late) + 1e-14) / (power(early) + 1e-14)))
+    return np.array(out).T
 
 
 def reliable(share, t30):
@@ -197,11 +264,11 @@ def measure_lines(root, notes, window):
     return share, count, float(np.median(spreads))
 
 
-def previous_levels(path):
+def previous_levels(path, key="field_db"):
     text = path.read_text(encoding="utf-8") if path.exists() else ""
     levels = {}
     for name in PADS:
-        match = re.search(rf"pub\(super\) const {name.upper()}: Acoustics = Acoustics \{{.*?field_db: \[([^\]]*)\]", text, re.DOTALL)
+        match = re.search(rf"pub\(super\) const {name.upper()}: Acoustics = Acoustics \{{[^}}]*?{key}: \[([^\]]*)\]", text, re.DOTALL)
         if match:
             levels[name] = np.array([float(value) for value in match[1].split(",") if value.strip()])
     return levels
@@ -228,13 +295,19 @@ def rust(tables):
              "    /// Lines modelled in each band, a whole number of SIMD lanes.",
              f"    pub(super) lines: [u16; {len(BANDS)}],",
              "    /// Standard deviation of the lines' levels, in decibels.",
-             "    pub(super) line_spread_db: f32,", "}", ""]
-    for name, (t30, rise, level, (share, count, spread)) in tables.items():
+             "    pub(super) line_spread_db: f32,",
+             "    /// Seconds for each band's second decay to fall 30 dB: a drum's ring once the strike has",
+             "    /// fallen, a cymbal's stick transient before it blooms.",
+             f"    pub(super) second_t30: [f32; {len(BANDS)}],",
+             "    /// Level of the second decay at the strike, in decibels against the first.",
+             f"    pub(super) second_db: [f32; {len(BANDS)}],", "}", ""]
+    for name, (t30, rise, level, (share, count, spread), (second_t30, second_db)) in tables.items():
         fmt = lambda values: ", ".join(f"{value:.4f}" for value in values)
         lines += [f"pub(super) const {name.upper()}: Acoustics = Acoustics {{",
                   f"    t30: [{fmt(t30)}],", f"    bloom: [{fmt(rise)}],", f"    field_db: [{fmt(level)}],",
                   f"    line_share: [{fmt(share)}],", f"    lines: [{', '.join(str(int(c)) for c in count)}],",
-                  f"    line_spread_db: {spread:.4f},", "};", ""]
+                  f"    line_spread_db: {spread:.4f},", f"    second_t30: [{fmt(second_t30)}],",
+                  f"    second_db: [{fmt(second_db)}],", "};", ""]
     return "\n".join(lines)
 
 
@@ -246,9 +319,14 @@ def main():
     parser.add_argument("--step", type=float, default=0.8, help="fraction of the level error to remove")
     parser.add_argument("--pad", action="append", choices=PADS,
                         help="correct only these pads' levels; the others keep theirs")
+    parser.add_argument("--correct", choices=("field", "second"), default="field",
+                        help="which levels the worker's renders correct")
+    parser.add_argument("--fresh-second", action="store_true",
+                        help="start the second decays from the captures, not from the output file")
     args = parser.parse_args()
     manifest = json.loads((args.reference / "notes.json").read_text(encoding="utf-8"))
     previous = previous_levels(args.output)
+    previous_second = previous_levels(args.output, "second_db")
     worker = Renderer(args.worker.resolve()) if args.worker else None
     tables = {}
     try:
@@ -260,7 +338,24 @@ def main():
             share, t30, peak = measure(reference)
             t30 = reliable(share, t30)
             level = previous.get(name)
-            if level is not None and args.pad and name not in args.pad:
+            metal = name in METAL
+            second_t30, second_db = second_decay(reference, t30, metal)
+            if name in WITHOUT_SECOND:
+                second_db = np.full(MEASURED, NO_SECOND_DB)
+            kept = previous_second.get(name)
+            correcting = worker is not None and (not args.pad or name in args.pad)
+            if kept is not None and not args.fresh_second and name not in WITHOUT_SECOND:
+                second_db = kept[:MEASURED].copy()
+            if correcting and args.correct == "second":
+                captured = np.median(window_db(analysis_audio(reference), metal), axis=0)
+                rendered = np.median(window_db(analysis_audio(render_kit(worker, notes)), metal), axis=0)
+                active = (second_db > NO_SECOND_DB + 1) & (share > -30)
+                error = np.where(active, captured - rendered, 0)
+                second_db = np.where(second_db > NO_SECOND_DB + 1,
+                                     np.clip(second_db + args.step * error, -60, 20), NO_SECOND_DB)
+                print(name, "mean |second error| dB",
+                      round(float(np.mean(abs(error[active]))) if active.any() else 0.0, 2), flush=True)
+            if level is not None and (args.correct == "second" or (args.pad and name not in args.pad)):
                 pass
             elif level is None or worker is None:
                 level = extend(share)
@@ -279,7 +374,8 @@ def main():
                 print(name, "line share", np.round(found[0], 2), "lines", found[1].tolist(), flush=True)
             else:
                 found = (np.zeros(len(BANDS)), np.zeros(len(BANDS), dtype=int), 0.0)
-            tables[name] = (extend(t30), extend(bloom(peak, t30, name in METAL)), level, found)
+            tables[name] = (extend(t30), extend(bloom(peak, t30, metal)), level, found,
+                            (extend(second_t30), extend(second_db)))
     finally:
         if worker:
             worker.close()

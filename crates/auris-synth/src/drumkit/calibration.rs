@@ -31,7 +31,7 @@ pub(super) fn profile(pad: Pad) -> Profile {
             position: 0.492,
             decay: 0.82,
             damping: 0.374,
-            normalization: 0.385902,
+            normalization: 0.372844,
             gains: [1.8, 6.3, 1.8, -6.3, 2.7, 4.5, 6.3, 0.0, 0.0, 1.8, 0.0, -2.7],
         },
         Pad::ClosedHat => Profile {
@@ -49,7 +49,7 @@ pub(super) fn profile(pad: Pad) -> Profile {
             position: 0.519,
             decay: 1.315,
             damping: 0.35,
-            normalization: 0.295515,
+            normalization: 0.268367,
             gains: [
                 -4.5, -4.5, -4.5, 1.8, 1.8, -4.5, 0.0, 1.8, 0.0, 1.8, 0.0, 6.3,
             ],
@@ -69,7 +69,7 @@ pub(super) fn profile(pad: Pad) -> Profile {
             position: 0.6,
             decay: 1.315,
             damping: 0.23,
-            normalization: 0.170582,
+            normalization: 0.150196,
             gains: [
                 -6.3, -4.5, -4.5, 0.0, 0.0, 0.0, -2.7, -2.7, 1.8, -2.7, -2.7, 4.5,
             ],
@@ -79,7 +79,7 @@ pub(super) fn profile(pad: Pad) -> Profile {
             position: 0.357,
             decay: 0.685,
             damping: 0.518,
-            normalization: 0.478614,
+            normalization: 0.477492,
             gains: [
                 2.7, 6.3, -1.8, -4.5, -2.7, 0.0, 0.0, -4.5, 0.0, 0.0, -1.8, 0.0,
             ],
