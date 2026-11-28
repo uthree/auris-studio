@@ -48,6 +48,10 @@ MODAL_CEILING_DB = -30.0
 # falls is read on the captures.
 TRANSIENT_T30 = 0.04
 SECOND_WINDOWS = {True: ((0.0, 0.02), (0.08, 0.4)), False: ((0.15, 0.6), (0.0, 0.05))}
+# The cymbal window overshoots: the open hat's transient converged 6 dB above where the training
+# hits' mel is lowest (0.281 there, 0.272 six below, 0.276 with none). Its table holds the
+# converged levels less this; a correction adds it back, iterates, and takes it off again.
+SECOND_TRIM_DB = {"OpenHat": -6.0}
 NO_SECOND_DB = -120.0
 # A crash's stick, seen in the captures 300-1400 Hz at 1 ms resolution: a click in the first
 # 3 ms, a lull, then a burst from 9 to 16 ms, peaking at 11 ms, its energy between 400 and
@@ -409,10 +413,12 @@ def main():
             if correcting and args.correct == "second":
                 captured = np.median(window_db(analysis_audio(reference), metal), axis=0)
                 rendered = np.median(window_db(analysis_audio(render_kit(worker, notes)), metal), axis=0)
+                trim = SECOND_TRIM_DB.get(name, 0.0)
+                second_db = np.where(second_db > NO_SECOND_DB + 1, second_db - trim, second_db)
                 active = (second_db > NO_SECOND_DB + 1) & (share > -30)
                 error = np.where(active, captured - rendered, 0)
                 second_db = np.where(second_db > NO_SECOND_DB + 1,
-                                     np.clip(second_db + args.step * error, -60, 20), NO_SECOND_DB)
+                                     np.clip(second_db + args.step * error, -60, 20) + trim, NO_SECOND_DB)
                 print(name, "mean |second error| dB",
                       round(float(np.mean(abs(error[active]))) if active.any() else 0.0, 2), flush=True)
             stick = previous_stick.get(name, NO_STICK_DB)
