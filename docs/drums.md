@@ -12,10 +12,19 @@ their stored notes and performance.
 
 The built-in kit models a struck circular membrane for kicks, snares and six tuned toms,
 and damped bending modes of metal plates for hats, crash and ride. A lossy cavity follows
-the moving drum head. Snappy wires and metal
-collisions use a diffuse noise-energy approximation. Beater hardness and strike position
-change the distribution of modal energy; damping and resonance decay change the tail.
-Resonance decay is relative to each pad's natural duration (100% is the default).
+the moving drum head. Beside the resolved modes, each pad has a diffuse field in nine
+octave bands: the snare's wires, the shell and beater, and the modes of a cymbal too dense
+for the plate to resolve. A crash or open hat carries most of that field as a few hundred
+split pairs of decaying lines, which beat slowly as a slightly out-of-round cymbal's do, with
+the share, count and spread of lines measured in each octave of recorded tails; only the rest
+is noise. Every band, modal or diffuse, falls at the rate measured for that
+octave on recorded drums, and most carry a second, measured decay beside the first: the ring
+a snare or tom head and its room keep once the strike has fallen 30 dB, and the stick's
+transient on an open hat or ride before the cymbal blooms, and a cymbal's upper bands bloom after the strike the way the
+recordings do; nothing else shortens a hit. A struck kick or tom starts sharp and settles
+onto its tuning, further the harder it is hit, and a harder blow brightens a drum head.
+Beater hardness and strike position change the distribution of modal energy; damping and
+resonance decay change how fast every band falls (100% is the measured rate).
 The level parameter keeps its existing identity in saved projects.
 
 Open the kit's instrument editor to see the actual modal displacement on a tilted surface

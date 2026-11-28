@@ -294,6 +294,19 @@ fn measure_spectrum(
 /// The temporal memberships use the time containing 90 percent of energy, not sample length or
 /// the last audible tail: for an exponential amplitude decay, that energy duration is one
 /// quarter of the time to -40 dB. Overlapping memberships deliberately allow ambiguous uses.
+///
+/// The thresholds are calibrated on recorded drums (the Salamander Drumkit's overhead hits, at
+/// the recordings' own rate) as well as on synthetic sounds, and three readings come from those
+/// recordings rather than from synthesis:
+///
+/// * A struck snare's first milliseconds belong to its head, a strong tone near 200 Hz, so the
+///   spectrum is concentrated and mostly low. What sets it apart from a tom is that it is over
+///   in a few tens of milliseconds, and that its wires put energy above 250 Hz.
+/// * A low tom can sit as deep as a bass drum. It rings for a few hundred milliseconds where a
+///   kick is over in about a tenth of a second.
+/// * An open hat rings as long as a crash, so duration cannot separate them. A crash *blooms*:
+///   its attack is dark and its high band grows afterwards. A hat's clash is brightest at the
+///   strike. A ride behaves like the hat here, and reads as one.
 pub fn drum_role_fitness(audio: &DrumAcoustics) -> BTreeMap<DrumRole, f64> {
     let mut result: BTreeMap<_, _> = DrumRole::ALL.into_iter().map(|r| (r, 0.0)).collect();
     if audio.character == AcousticCharacter::Silent {
@@ -304,39 +317,60 @@ pub fn drum_role_fitness(audio: &DrumAcoustics) -> BTreeMap<DrumRole, f64> {
     let noisy = (1.0 - spectrum.concentration / 0.3).clamp(0.0, 1.0);
     let tonal = (spectrum.concentration / 0.45).clamp(0.0, 1.0);
     let duration = audio.energy_duration_seconds;
-    let short = 1.0 - rise(duration, 0.04, 0.10);
-    let open = rise(duration, 0.035, 0.09) * (1.0 - rise(duration, 0.18, 0.40));
+    let short = 1.0 - rise(duration, 0.055, 0.11);
+    let ringing = rise(duration, 0.055, 0.11);
     let long = rise(duration, 0.12, 0.30);
     let pitched_low = (spectrum.low + spectrum.body * 0.65).clamp(0.0, 1.0);
     // Low-band energy alone cannot separate a bass drum from a resonant floor tom. A deep
     // centroid or a substantial pitch fall into the bass provides foundation evidence; a
-    // higher, more stable pitched resonance provides fill-voice evidence. These are musical
-    // fitness criteria, so a deep, stable tom may still serve as a kick.
+    // higher pitched resonance, or one that keeps ringing, provides fill-voice evidence. These
+    // are musical fitness criteria, so a deep, short, stable tom may still serve as a kick.
     let deep = 1.0 - rise(spectrum.centroid_hz, 85.0, 140.0);
     let falling = rise(audio.pitch_fall_semitones, 4.0, 9.0)
         * (1.0 - rise(audio.body.low_peak_hz, 100.0, 200.0));
     let stable_pitch = 1.0 - rise(audio.pitch_fall_semitones.abs(), 4.0, 10.0);
     let resonant_register = rise(spectrum.centroid_hz, 80.0, 140.0);
+    let rings_on = rise(duration, 0.12, 0.17);
     // The 2–4 kHz noise body matters as much as 250 Hz–2 kHz: inspecting only `body` would
     // reject a backbeat merely because its wire spectrum is centered around 3 kHz.
     let midrange = (1.0 - spectrum.low - spectrum.high).clamp(0.0, 1.0);
+    let noise_snare =
+        (midrange / 0.45).min(1.0) * noisy * transient * (1.0 - rise(duration, 0.15, 0.30));
+    // A head-dominated backbeat: mostly low but above the bass register, with wires showing
+    // above 250 Hz, and over before a tom would have begun to ring.
+    let head = rise(spectrum.low, 0.10, 0.25) * rise(spectrum.centroid_hz, 150.0, 250.0);
+    let wires = rise(1.0 - spectrum.low, 0.05, 0.15);
+    let head_snare = head * wires * (1.0 - rise(duration, 0.08, 0.14)) * transient;
+    // Cymbal evidence saturates: a darker crash is no less a crash.
+    let cymbal = (spectrum.high / 0.18).min(1.0)
+        * (1.0 - rise(spectrum.concentration, 0.45, 0.75))
+        * transient;
+    let bloom = rise(audio.tail.high - audio.attack.high, 0.08, 0.18);
+    let dark_attack = 1.0 - rise(audio.attack.centroid_hz, 2600.0, 3400.0);
+    let crash = bloom.max(dark_attack);
     result.insert(
         DrumRole::Kick,
-        spectrum.low * (0.55 + 0.45 * tonal) * deep.max(falling) * transient,
+        spectrum.low
+            * (0.55 + 0.45 * tonal)
+            * deep.max(falling)
+            * (1.0 - rings_on).max(falling)
+            * transient,
     );
-    result.insert(
-        DrumRole::Snare,
-        (midrange / 0.45).min(1.0) * noisy * transient,
-    );
+    result.insert(DrumRole::Snare, noise_snare.max(head_snare));
     result.insert(
         DrumRole::ClosedHat,
-        spectrum.high * noisy * short * transient,
+        (spectrum.high / 0.6).min(1.0) * noisy * short * transient,
     );
-    result.insert(DrumRole::OpenHat, spectrum.high * noisy * open * transient);
-    result.insert(DrumRole::Crash, spectrum.high * noisy * long * transient);
+    result.insert(DrumRole::OpenHat, cymbal * ringing * (1.0 - crash));
+    result.insert(DrumRole::Crash, cymbal * long * crash);
     result.insert(
         DrumRole::Tom,
-        pitched_low * tonal * transient * stable_pitch * (0.25 + 0.75 * resonant_register),
+        pitched_low
+            * tonal
+            * transient
+            * stable_pitch
+            * (0.25 + 0.75 * (resonant_register + rings_on).min(1.0))
+            * rise(duration, 0.04, 0.08),
     );
     result
 }
@@ -465,8 +499,35 @@ mod tests {
         assert!(measured.fitness[&DrumRole::Snare] > measured.fitness[&DrumRole::ClosedHat]);
     }
 
+    /// White noise through a two-pole band-pass or high-pass, under any amplitude envelope.
+    fn filtered_noise(
+        seed: u64,
+        midrange_hz: Option<f32>,
+        envelope: impl Fn(f64) -> f64,
+    ) -> Vec<f32> {
+        use crate::{Biquad, BiquadCoefficients};
+        let rate = 48_000.0;
+        let coefficients = match midrange_hz {
+            Some(hz) => BiquadCoefficients::bandpass(rate, hz, 0.9),
+            None => BiquadCoefficients::highpass(rate, 6000.0, 0.707),
+        };
+        let mut first = Biquad::new(coefficients);
+        let mut second = Biquad::new(coefficients);
+        let mut seed = seed;
+        (0..72_000)
+            .map(|i| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                let noise = (seed as i64 as f64 / i64::MAX as f64) as f32;
+                second.process_sample(first.process_sample(noise))
+                    * envelope(i as f64 / rate) as f32
+            })
+            .collect()
+    }
+
     #[test]
-    fn longer_bright_noise_moves_from_short_timekeeper_to_open_timekeeper_to_accent() {
+    fn longer_bright_noise_moves_from_short_timekeeper_to_open_timekeeper() {
         let short = analyze_drum_audio(&noise_with_envelope(0.015, false)).unwrap();
         let open = analyze_drum_audio(&noise_with_envelope(0.10, false)).unwrap();
         let long = analyze_drum_audio(&noise_with_envelope(0.40, false)).unwrap();
@@ -476,8 +537,75 @@ mod tests {
         assert!(short.fitness[&DrumRole::OpenHat] < 0.2);
         assert!(open.fitness[&DrumRole::OpenHat] > 0.7);
         assert!(open.fitness[&DrumRole::ClosedHat] < 0.1);
-        assert!(long.fitness[&DrumRole::Crash] > 0.7);
-        assert!(long.fitness[&DrumRole::Crash] > long.fitness[&DrumRole::OpenHat]);
+        // A recorded open hat rings as long as a crash, so length alone makes no accent: noise
+        // that is brightest at the strike stays a timekeeper however long it lasts.
+        assert!(long.fitness[&DrumRole::OpenHat] > 0.7);
+        assert!(long.fitness[&DrumRole::OpenHat] > long.fitness[&DrumRole::Crash]);
+    }
+
+    #[test]
+    fn a_long_cymbal_whose_highs_bloom_after_a_dark_strike_is_an_accent() {
+        // The strike is a short burst around 800 Hz; the bright wash swells in behind it.
+        let strike = filtered_noise(5, Some(800.0), |t| 20.0 * (-t / 0.02).exp());
+        let wash = filtered_noise(11, None, |t| (1.0 - (-t / 0.05).exp()) * (-t / 0.4).exp());
+        let samples = strike.iter().zip(&wash).map(|(a, b)| a + b).collect();
+        let crash = analyze_drum_audio(&AudioBuffer::from_planar(vec![samples], 48_000.0).unwrap())
+            .unwrap();
+        assert!(
+            crash.attack.centroid_hz < 2600.0,
+            "{}",
+            crash.attack.centroid_hz
+        );
+        assert!(crash.tail.high > crash.attack.high + 0.18);
+        assert!(crash.fitness[&DrumRole::Crash] > 0.7, "{:?}", crash.fitness);
+        assert!(crash.fitness[&DrumRole::OpenHat] < 0.1);
+    }
+
+    #[test]
+    fn a_short_head_tone_with_wires_is_a_backbeat_and_not_a_tom() {
+        // A head ringing at 200 Hz for a few tens of milliseconds, with wire noise under it.
+        let rate = 48_000.0;
+        let wires = filtered_noise(23, Some(3000.0), |t| 2.0 * (-t / 0.03).exp());
+        let samples = wires
+            .iter()
+            .enumerate()
+            .map(|(i, wire)| {
+                let t = i as f64 / rate;
+                let head = (std::f64::consts::TAU * 200.0 * t).sin() * (-t / 0.02).exp();
+                head as f32 + wire
+            })
+            .collect();
+        let snare =
+            analyze_drum_audio(&AudioBuffer::from_planar(vec![samples], rate).unwrap()).unwrap();
+        assert!(snare.spectrum.concentration > 0.3);
+        assert!(snare.spectrum.low > 0.3 && snare.spectrum.low < 0.9);
+        assert!(snare.energy_duration_seconds < 0.06);
+        assert!(snare.fitness[&DrumRole::Snare] > 0.7, "{:?}", snare.fitness);
+        assert!(snare.fitness[&DrumRole::Tom] < 0.2);
+        assert!(snare.fitness[&DrumRole::Kick] < 0.2);
+    }
+
+    #[test]
+    fn a_deep_tone_that_rings_on_is_a_tom_and_one_that_stops_is_a_kick() {
+        // The recorded low tom sits at 63 Hz, as deep as a bass drum, and rings three times
+        // as long.
+        let rate = 48_000.0;
+        let render = |decay: f64| {
+            let samples = (0..48_000)
+                .map(|i| {
+                    let t = i as f64 / rate;
+                    ((std::f64::consts::TAU * 63.0 * t).sin() * (-t / decay).exp()) as f32
+                })
+                .collect();
+            analyze_drum_audio(&AudioBuffer::from_planar(vec![samples], rate).unwrap()).unwrap()
+        };
+        let kick = render(0.09);
+        let tom = render(0.30);
+        assert!(kick.spectrum.centroid_hz < 85.0 && tom.spectrum.centroid_hz < 85.0);
+        assert!(kick.fitness[&DrumRole::Kick] > 0.9);
+        assert!(kick.fitness[&DrumRole::Kick] > kick.fitness[&DrumRole::Tom] + 0.4);
+        assert!(tom.fitness[&DrumRole::Tom] > 0.9);
+        assert!(tom.fitness[&DrumRole::Tom] > tom.fitness[&DrumRole::Kick] + 0.4);
     }
 
     #[test]

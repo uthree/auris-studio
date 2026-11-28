@@ -20,8 +20,13 @@ and per-partial decay, register level and soundboard knock across a Steinway's k
 This acoustic distance complements the symbolic and learned song measurements below.
 The drum kit, the guitar amplifier and the choir are fitted to recordings as well, each on its
 training notes only and evaluated on held-out ones.
-The drum-kit calibration fits seven kit families to 151 real drum hits,
-with separate attack/body/tail loss and acoustic-role guards for every snare/tom register.
+The drum-kit calibration fits seven kit families to 151 real drum hits (the Salamander
+Drumkit), with separate attack/body/tail loss. `tools/eval/drum_acoustics.py` measures each
+pad's per-octave decay, bloom, diffuse level, second decay (a drum's ring, a cymbal's stick
+transient) and, for a crash or open hat, the share and count of resolved lines in the tail on the
+training hits and writes
+`crates/auris-synth/src/drumkit/acoustics.rs`; `tools/eval/fit_physical_pack.py` then fits
+strike and radiation; `tools/eval/drum_ab.py` compares two kit builds on the held-out hits.
 The [guitar-amplifier experiment](electric-guitar.md) adds an oversampled amplifier and a
 paired clean/pedal recording benchmark with pitch-grouped splits.
 The choir calibration fits the native vocal-tract ensemble to

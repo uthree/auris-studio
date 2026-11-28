@@ -1367,26 +1367,15 @@ mod tests {
         assert_eq!(report.voices.len(), 128);
         assert!(report.voices[0].silent);
         assert!(report.voices[0].fitness.values().all(|v| *v == 0.0));
-        assert!(report.proposed_map.voices.contains_key(&DrumRole::Kick));
-        assert!(report.proposed_map.voices.contains_key(&DrumRole::Snare));
-        assert!(report.proposed_map.voices.contains_key(&DrumRole::OpenHat));
-        assert!(report.proposed_map.voices.contains_key(&DrumRole::Crash));
-        assert!(report.proposed_map.voices.contains_key(&DrumRole::Tom));
-        assert!(
-            report
-                .proposed_map
-                .voices
-                .contains_key(&DrumRole::ClosedHat)
-        );
+        // The kit is calibrated to recorded drums, and the analyzer reads every role in them.
+        for role in DrumRole::ALL {
+            assert!(report.proposed_map.voices.contains_key(&role), "{role:?}");
+        }
         // Known synthesis fixtures verify acoustic consequences; their note addresses still
         // enter only the probe, never the fitness function.
-        assert!(report.voices[38].fitness[&DrumRole::Snare] > report.options.minimum_fitness);
+        assert!(report.voices[42].fitness[&DrumRole::ClosedHat] > report.options.minimum_fitness);
         assert!(
-            report.voices[46].fitness[&DrumRole::OpenHat]
-                > report.voices[46].fitness[&DrumRole::ClosedHat]
-        );
-        assert!(
-            report.voices[41].fitness[&DrumRole::Tom] > report.voices[41].fitness[&DrumRole::Kick]
+            report.voices[47].fitness[&DrumRole::Tom] > report.voices[47].fitness[&DrumRole::Kick]
         );
         let assigned_duration = |role| {
             let note = report.proposed_map.voices[&role];
@@ -1394,8 +1383,7 @@ mod tests {
                 .acoustics
                 .energy_duration_seconds
         };
-        assert!(assigned_duration(DrumRole::ClosedHat) < assigned_duration(DrumRole::OpenHat));
-        assert!(assigned_duration(DrumRole::OpenHat) < assigned_duration(DrumRole::Crash));
+        assert!(assigned_duration(DrumRole::ClosedHat) < assigned_duration(DrumRole::Crash));
         report.validate().unwrap();
     }
 

@@ -468,7 +468,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("hardness", 0.75),
                             ("damping", 0.85),
                             ("decay", 0.6),
-                            ("level", 0.0),
+                            ("level", 3.3),
                         ],
                     ),
                     (
@@ -477,7 +477,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("hardness", 0.5),
                             ("damping", 0.12),
                             ("decay", 1.8),
-                            ("level", -5.0),
+                            ("level", -6.3),
                         ],
                     ),
                 ],

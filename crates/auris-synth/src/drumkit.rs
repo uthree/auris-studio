@@ -8,18 +8,31 @@ use auris_core::{
     AudioBuffer, Instrument, NoteEvent, ParamDescriptor, ParamId, ParamUnit, Parameterized,
     PluginCategory, PluginDescriptor, PrepareContext, ProcessContext,
 };
+use auris_dsp::adsr::SILENCE_LEVEL;
 use auris_dsp::{Adsr, Biquad, BiquadCoefficients};
 
 use crate::params::{ParamBank, finite_or};
 use crate::render::{SegmentRenderer, render_segments, spread_to_all_channels};
 use crate::voice::VoiceAllocator;
 
+mod acoustics;
 mod calibration;
+mod lines;
 mod model;
+use acoustics::{Acoustics, BAND_HZ};
+use lines::{Lines, Rng};
 use model::{Projection, Resonators};
+
+const BANDS: usize = BAND_HZ.len();
 
 const VOICE_COUNT: usize = 24;
 const PAD_COUNT: usize = 7;
+/// How far velocity moves the beater hardness of a membrane, around a velocity of 0.75.
+const VELOCITY_HARDNESS: f32 = 0.5;
+/// How far each line of a cymbal varies from one strike to the next, in decibels.
+const LINE_JITTER_DB: f32 = 1.5;
+/// How much faster than velocity a membrane's diffuse field grows, per octave above 250 Hz.
+const FIELD_VELOCITY_TILT: f32 = 0.3;
 const TOM_KEYS: [u8; 6] = [41, 43, 45, 47, 48, 50];
 const PAD_KEYS: [u8; PAD_COUNT] = [36, 38, 42, 46, 49, 51, 47];
 
@@ -80,67 +93,136 @@ impl Pad {
     fn profile(self) -> Profile {
         match self {
             Self::Kick => Profile {
-                tone: 55.0,
-                decay: 0.42,
+                tone: 42.0,
                 body: 0.95,
-                noise: 0.05,
-                highpass: 1_000.0,
-                lowpass: 4_000.0,
+                glide: 0.30,
             },
             Self::Snare => Profile {
                 tone: 185.0,
-                decay: 0.32,
-                // Keep the resonating head under the diffuse wires after the initial strike.
-                body: 0.28,
-                // Retain the lower wire body after the upper-midrange contact correction.
-                noise: 1.145,
-                highpass: 650.0,
-                lowpass: 6_000.0,
+                body: 0.9,
+                glide: 0.04,
             },
             Self::ClosedHat | Self::OpenHat => Profile {
                 tone: 7_200.0,
-                decay: if self == Self::ClosedHat { 0.10 } else { 0.85 },
                 body: 0.2,
-                noise: 0.68,
-                highpass: 7_000.0,
-                lowpass: 18_000.0,
+                glide: 0.0,
             },
             Self::Crash => Profile {
                 tone: 900.0,
-                decay: 2.4,
                 body: 0.15,
-                noise: 0.85,
-                highpass: 2_500.0,
-                lowpass: 16_000.0,
+                glide: 0.0,
             },
             Self::Ride => Profile {
                 tone: 2_650.0,
-                decay: 1.25,
                 body: 0.65,
-                noise: 0.18,
-                highpass: 3_500.0,
-                lowpass: 15_000.0,
+                glide: 0.0,
             },
             Self::Tom => Profile {
-                tone: 130.0,
-                decay: 0.55,
+                tone: 103.0,
                 body: 0.85,
-                noise: 0.075,
-                highpass: 500.0,
-                lowpass: 3_000.0,
+                glide: 0.12,
             },
+        }
+    }
+
+    /// The pad's measured bands; a tom's lie between the low and the high tom's.
+    fn acoustics(self, pitch: u8) -> Acoustics {
+        match self {
+            Self::Kick => acoustics::KICK,
+            Self::Snare => acoustics::SNARE,
+            Self::ClosedHat => acoustics::CLOSEDHAT,
+            Self::OpenHat => acoustics::OPENHAT,
+            Self::Crash => acoustics::CRASH,
+            Self::Ride => acoustics::RIDE,
+            Self::Tom => {
+                let (low, high) = (acoustics::TOMLOW, acoustics::TOMHIGH);
+                let at = tom_register(pitch);
+                // Decay times mix as ratios, levels as decibels.
+                let mix = |a: [f32; BANDS], b: [f32; BANDS]| -> [f32; BANDS] {
+                    std::array::from_fn(|band| a[band] + (b[band] - a[band]) * at)
+                };
+                let ratio = |a: [f32; BANDS], b: [f32; BANDS]| -> [f32; BANDS] {
+                    std::array::from_fn(|band| {
+                        (a[band].max(1e-4).ln() * (1.0 - at) + b[band].max(1e-4).ln() * at).exp()
+                    })
+                };
+                Acoustics {
+                    t30: ratio(low.t30, high.t30),
+                    bloom: mix(low.bloom, high.bloom),
+                    field_db: mix(low.field_db, high.field_db),
+                    second_t30: ratio(low.second_t30, high.second_t30),
+                    second_db: mix(low.second_db, high.second_db),
+                    // A drum head's field is all noise.
+                    ..low
+                }
+            }
         }
     }
 }
 
+/// How much faster every loss runs at `damping` than at the factory 0.35.
+fn damping_scale(damping: f32) -> f32 {
+    (0.5 + damping * 2.0) / 1.2
+}
+
+/// Where a tom key sits between the low tom (41) and the high tom (50) the captures hold.
+fn tom_register(pitch: u8) -> f32 {
+    ((f32::from(pitch) - 41.0) / 9.0).clamp(-0.5, 1.5)
+}
+
+/// A tom's settled pitch. The captured low and high toms settle at 63 and 135 Hz, a little over
+/// an octave across nine keys: a kit's toms are spread wider than the keys that name them.
+fn tom_tone(pitch: u8) -> f32 {
+    63.0 * (135.0_f32 / 63.0).powf(tom_register(pitch))
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Profile {
+    /// The lowest mode, once the head has settled.
     tone: f32,
-    decay: f32,
+    /// Level of the modes against the diffuse field.
     body: f32,
-    noise: f32,
-    highpass: f32,
-    lowpass: f32,
+    /// How far above `tone` a full-velocity strike starts, as a fraction: tension modulation.
+    glide: f32,
+}
+
+/// The band below `hz` and how far `hz` lies towards the next octave centre.
+fn band_position(hz: f32) -> (usize, f32) {
+    let position = (hz.max(1.0) / BAND_HZ[0])
+        .log2()
+        .clamp(0.0, (BANDS - 1) as f32);
+    let below = (position as usize).min(BANDS - 2);
+    (below, position - below as f32)
+}
+
+/// Seconds a band takes to fall 30 dB, read at `hz` between the measured octave centres.
+fn t30_at(table: &[f32; BANDS], hz: f32) -> f32 {
+    let (below, fraction) = band_position(hz);
+    // Interpolate the logarithm: a decay time is a ratio, not a level.
+    (table[below].ln() * (1.0 - fraction) + table[below + 1].ln() * fraction).exp()
+}
+
+/// A level in decibels, read at `hz` between the measured octave centres.
+fn db_at(table: &[f32; BANDS], hz: f32) -> f32 {
+    let (below, fraction) = band_position(hz);
+    table[below] * (1.0 - fraction) + table[below + 1] * fraction
+}
+
+/// A second decay this far down is no second decay at all.
+const NO_SECOND_DB: f32 = -100.0;
+
+/// Amplitude of a band's second decay against its first.
+fn second_gain(db: f32) -> f32 {
+    if db <= NO_SECOND_DB {
+        0.0
+    } else {
+        db_to_gain(db)
+    }
+}
+
+/// Per-sample amplitude factor of a fall of 30 dB in `seconds`.
+fn t30_loss(seconds: f32, rate: f32) -> f32 {
+    (-1.5 * std::f32::consts::LN_10 / (seconds.max(1e-3) * rate)).exp()
 }
 
 #[derive(Clone, Debug)]
@@ -148,15 +230,28 @@ struct Hit {
     pad: Pad,
     pitch: u8,
     profile: Profile,
+    /// Attack, choke and steal ramps only; the hit's own losses decide how long it rings.
     amplitude: Adsr,
     resonators: Resonators,
     shell: Biquad,
-    highpass: Biquad,
-    lowpass: Biquad,
-    wire_color: Biquad,
+    /// The diffuse field: snare wires, shell and beater noise, and a cymbal's unresolved modes.
+    field: [Biquad; BANDS],
+    field_gain: [f32; BANDS],
+    field_level: [f32; BANDS],
+    field_loss: [f32; BANDS],
+    /// What is still to bloom in each band, falling from one to zero.
+    bloom: [f32; BANDS],
+    bloom_loss: [f32; BANDS],
+    /// The second decay of each band's field: a drum's ring and room, a cymbal's stick transient.
+    second_gain: [f32; BANDS],
+    second_level: [f32; BANDS],
+    second_loss: [f32; BANDS],
+    /// The share of the field a cymbal rings on as resolved modes rather than noise.
+    lines: Lines,
+    /// The slowest of the hit's losses: once it is 80 dB down, the hit is over.
+    tail: f32,
+    tail_loss: f32,
     noise_state: u32,
-    wire_energy: f32,
-    wire_loss: f32,
     velocity: f32,
     contact: f32,
 }
@@ -165,11 +260,47 @@ impl Hit {
     fn prepared(pad: Pad, pitch: u8, sample_rate: f32, projection: &Projection) -> Self {
         let mut profile = pad.profile();
         if pad == Pad::Tom {
-            profile.tone *= ((f32::from(pitch) - 47.0) / 12.0).exp2();
+            profile.tone = tom_tone(pitch);
+            // Looser, lower heads bend further when struck.
+            profile.glide *= (0.5 - tom_register(pitch)).exp2();
         }
+        let bands = pad.acoustics(pitch);
         let mut amplitude = Adsr::new();
         amplitude.set_sample_rate(sample_rate);
-        amplitude.set_adsr(0.001, profile.decay, 0.0, profile.decay);
+        amplitude.set_adsr(0.001, 0.0, 1.0, 0.002);
+        // White noise of a fixed variance spreads thinner per hertz at a higher rate.
+        let density = (sample_rate / 48_000.0).sqrt();
+        let audible = |band: usize| BAND_HZ[band] < sample_rate * 0.45;
+        let longest = (0..BANDS)
+            .map(|band| {
+                if second_gain(bands.second_db[band]) > 0.0 {
+                    bands.t30[band].max(bands.second_t30[band])
+                } else {
+                    bands.t30[band]
+                }
+            })
+            .fold(0.0, f32::max);
+        let field_gain: [f32; BANDS] = std::array::from_fn(|band| {
+            if audible(band) {
+                db_to_gain(bands.field_db[band]) * density
+            } else {
+                0.0
+            }
+        });
+        // What the band's noise would carry: uniform noise of variance 1/3 through a bandpass
+        // of Q sqrt(2), whose noise bandwidth is pi/2 times f/Q. The lines take their share of it.
+        let line_power: [f32; BANDS] = std::array::from_fn(|band| {
+            let bandwidth = std::f32::consts::FRAC_PI_2 * BAND_HZ[band] / std::f32::consts::SQRT_2;
+            bands.line_share[band] * field_gain[band].powi(2) / 3.0 * 2.0 * bandwidth / sample_rate
+        });
+        let lines = Lines::prepared(
+            sample_rate,
+            &bands.lines,
+            &line_power,
+            bands.line_spread_db,
+            |hz| t30_at(&bands.t30, hz),
+            (pad as u32 + 1).wrapping_mul(0x9e37_79b9),
+        );
         Self {
             pad,
             pitch,
@@ -179,53 +310,76 @@ impl Hit {
                 projection,
                 sample_rate,
                 profile.tone,
-                profile.decay,
-                pad == Pad::Snare,
+                |hz| t30_at(&bands.t30, hz),
+                |hz| {
+                    let (below, _) = band_position(hz);
+                    // Between a band with a second decay and one without, the one that has it.
+                    let db = if bands.second_db[below] <= NO_SECOND_DB {
+                        bands.second_db[below + 1]
+                    } else if bands.second_db[below + 1] <= NO_SECOND_DB {
+                        bands.second_db[below]
+                    } else {
+                        db_at(&bands.second_db, hz)
+                    };
+                    (t30_at(&bands.second_t30, hz), second_gain(db))
+                },
             ),
             shell: Biquad::new(BiquadCoefficients::bandpass(
                 sample_rate as f64,
                 (profile.tone * 0.8).min(sample_rate * 0.4),
                 0.9,
             )),
-            highpass: Biquad::new(BiquadCoefficients::highpass(
-                sample_rate as f64,
-                profile.highpass.min(sample_rate * 0.4),
-                std::f32::consts::FRAC_1_SQRT_2,
-            )),
-            lowpass: Biquad::new(BiquadCoefficients::lowpass(
-                sample_rate as f64,
-                profile.lowpass.min(sample_rate * 0.45),
-                std::f32::consts::FRAC_1_SQRT_2,
-            )),
-            // Shape only the snappy wires: keep the head and high-frequency sizzle intact.
-            wire_color: Biquad::new(if pad == Pad::Snare {
-                BiquadCoefficients::peaking(
-                    f64::from(sample_rate),
-                    3_800.0_f32.min(sample_rate * 0.4),
-                    1.3,
-                    -4.0,
-                )
-            } else {
-                BiquadCoefficients::identity()
+            field: std::array::from_fn(|band| {
+                Biquad::new(if audible(band) {
+                    BiquadCoefficients::bandpass(
+                        f64::from(sample_rate),
+                        BAND_HZ[band],
+                        std::f32::consts::SQRT_2,
+                    )
+                } else {
+                    BiquadCoefficients::identity()
+                })
             }),
+            field_gain: std::array::from_fn(|band| {
+                if lines.carries(band) {
+                    field_gain[band] * (1.0 - bands.line_share[band].clamp(0.0, 1.0)).sqrt()
+                } else {
+                    field_gain[band]
+                }
+            }),
+            field_level: [1.0; BANDS],
+            second_gain: std::array::from_fn(|band| {
+                field_gain[band] * second_gain(bands.second_db[band])
+            }),
+            second_level: [1.0; BANDS],
+            second_loss: std::array::from_fn(|band| t30_loss(bands.second_t30[band], sample_rate)),
+            field_loss: std::array::from_fn(|band| t30_loss(bands.t30[band], sample_rate)),
+            bloom: [1.0; BANDS],
+            bloom_loss: std::array::from_fn(|band| {
+                let rise = bands.bloom[band];
+                if rise > 0.0 {
+                    (-1.0 / (rise * sample_rate)).exp()
+                } else {
+                    0.0
+                }
+            }),
+            lines,
+            tail: 1.0,
+            tail_loss: t30_loss(longest, sample_rate),
             noise_state: 1,
-            wire_energy: 1.0,
-            // Snappy wires and colliding hat plates retain diffuse energy after the strike.
-            // Kicks and toms have only a short beater contact transient.
-            wire_loss: (-1.0
-                / (sample_rate
-                    * if pad == Pad::Crash {
-                        // The diffuse plate modes outlast the clearly resolved low modes.
-                        profile.decay * 2.0
-                    } else if pad == Pad::Snare || pad.is_metal() {
-                        profile.decay * 0.5
-                    } else {
-                        0.004
-                    }))
-            .exp(),
             velocity: 0.0,
             contact: 0.6,
         }
+    }
+
+    /// Mean level of the diffuse field, for the motion display.
+    fn field_energy(&self) -> f32 {
+        self.field_level
+            .iter()
+            .zip(&self.bloom)
+            .map(|(level, bloom)| level * (1.0 - bloom))
+            .sum::<f32>()
+            / BANDS as f32
     }
 
     fn next(&mut self) -> f32 {
@@ -243,20 +397,34 @@ impl Hit {
         self.noise_state ^= self.noise_state >> 17;
         self.noise_state ^= self.noise_state << 5;
         let noise = (self.noise_state >> 8) as f32 / 8_388_608.0 - 1.0;
-        self.wire_energy *= self.wire_loss;
-        let noise = self
-            .lowpass
-            .process_sample(self.highpass.process_sample(noise * self.wire_energy));
-        let noise = if self.pad == Pad::Snare {
-            self.wire_color.process_sample(noise)
-        } else {
-            noise
-        };
-        (body * self.profile.body + noise * self.profile.noise)
-            * self.amplitude.process()
-            * self.velocity
+        let mut field = 0.0;
+        for band in 0..BANDS {
+            let gain = self.field_gain[band];
+            let second = self.second_gain[band];
+            if gain == 0.0 && second == 0.0 {
+                continue;
+            }
+            self.field_level[band] *= self.field_loss[band];
+            self.bloom[band] *= self.bloom_loss[band];
+            self.second_level[band] *= self.second_loss[band];
+            let drive = noise
+                * (gain * self.field_level[band] * (1.0 - self.bloom[band])
+                    + second * self.second_level[band]);
+            field += self.field[band].process_sample(drive);
+        }
+        if !self.lines.is_empty() {
+            let blooming = std::array::from_fn(|band| 1.0 - self.bloom[band]);
+            field += self.lines.next(&blooming);
+        }
+        self.tail *= self.tail_loss;
+        // Once: a ramp restarted every sample shrinks geometrically and never reaches zero.
+        if self.tail < SILENCE_LEVEL && !self.amplitude.is_releasing() {
+            self.amplitude.kill();
+        }
+        (body * self.profile.body + field) * self.amplitude.process() * self.velocity
     }
 }
+
 #[derive(Clone, Debug)]
 struct KitVoice {
     current: Hit,
@@ -304,7 +472,7 @@ impl DrumKit {
     /// A kit with its default pad balance and a six-decibel output attenuation.
     pub fn new() -> Self {
         let params = ParamBank::new(vec![
-            ParamDescriptor::decibels(0u32, "level", "Level", -60.0, 6.0, -2.5),
+            ParamDescriptor::decibels(0u32, "level", "Level", -60.0, 6.0, -1.6),
             ParamDescriptor::percent(1u32, "hardness", "Beater hardness", 0.65),
             ParamDescriptor::percent(2u32, "position", "Strike position", 0.6),
             ParamDescriptor::percent(3u32, "damping", "Damping", 0.35),
@@ -370,7 +538,15 @@ impl DrumKit {
         voice.current.velocity = velocity;
         voice.current.pitch = pitch;
         let calibrated = calibration::profile(pad);
-        let hardness = (self.params.at(1) - 0.65 + calibrated.hardness).clamp(0.0, 1.0);
+        let membrane = !pad.is_metal();
+        // A harder blow flattens the felt or the stick tip for less time: the head is struck
+        // by a harder hammer, and its upper modes and beater noise grow faster than its thump.
+        let blow = if membrane {
+            VELOCITY_HARDNESS * (velocity - 0.75)
+        } else {
+            0.0
+        };
+        let hardness = (self.params.at(1) - 0.65 + calibrated.hardness + blow).clamp(0.0, 1.0);
         let position = match self.touch.take() {
             // A touch says where the stick landed; the calibration only says where it usually does.
             Some(at) => finite_or(at, 0.5).clamp(0.0, 0.95),
@@ -379,16 +555,23 @@ impl DrumKit {
         let damping = (self.params.at(3) - 0.35 + calibrated.damping).clamp(0.0, 1.0);
         voice.current.contact = position;
         let decay = self.params.at(4) * calibrated.decay;
-        let duration = voice.current.profile.decay * decay;
-        voice
-            .current
-            .amplitude
-            .set_adsr(0.001, duration, 0.0, duration);
-        voice.current.wire_loss = voice.current.wire_loss.powf(1.0 / decay);
-        voice
-            .current
-            .resonators
-            .strike(hardness, position, damping, decay);
+        // Every loss shortens with damping and lengthens with decay; neither moves a pitch.
+        let exponent = damping_scale(damping) / decay;
+        let hit = &mut voice.current;
+        for band in 0..BANDS {
+            hit.field_loss[band] = hit.field_loss[band].powf(exponent);
+            hit.second_loss[band] = hit.second_loss[band].powf(exponent);
+            if membrane {
+                let octaves = (BAND_HZ[band] / 250.0).log2().clamp(0.0, 5.0);
+                hit.field_gain[band] *= velocity.powf(FIELD_VELOCITY_TILT * octaves);
+            }
+        }
+        hit.tail_loss = hit.tail_loss.powf(exponent);
+        let mut rng = Rng(hit.noise_state ^ 0x5bd1_e995);
+        hit.lines.strike(exponent, LINE_JITTER_DB, &mut rng);
+        let glide = hit.profile.glide * velocity * velocity;
+        hit.resonators
+            .strike(hardness, position, damping_scale(damping), decay, glide);
         if pad == Pad::Ride {
             voice.current.resonators.soften_ride_strike();
         }
@@ -426,7 +609,7 @@ impl DrumKit {
             observed.pitch = f32::from(hit.pitch);
             observed.level = hit.amplitude.level() * hit.velocity;
             observed.contact = hit.contact;
-            observed.excitation = hit.wire_energy * observed.level;
+            observed.excitation = hit.field_energy() * observed.level;
             self.projections[usize::from(hit.pad.is_metal())].observe(
                 &hit.resonators,
                 observed.level,
@@ -667,75 +850,132 @@ mod tests {
     }
 
     #[test]
-    fn snare_keeps_wire_body_and_sizzle_while_reducing_upper_midrange() {
+    fn the_snare_head_carries_the_strike_and_the_wires_outlast_it() {
+        // The captured snares put their first 20 ms in the head's 250 Hz octave, 19 dB above
+        // the 2 kHz one, and their wires take twice as long as the head to fall 30 dB.
         let snare = sound(38);
-        let attack = &snare[..2_400];
-        let body = band_amplitude(attack, 48_000.0, 1_000.0);
-        let sharp = band_amplitude(attack, 48_000.0, 3_800.0);
-        let sizzle = band_amplitude(attack, 48_000.0, 8_000.0);
-        // The original attack measured 0.00792 / 0.00518 / 0.00248 respectively.
-        // Keep the wire body and sizzle within 1 dB while reducing the sharp band.
-        assert!((0.0071..0.0089).contains(&body), "wire body: {body}");
-        assert!((0.0022..0.0028).contains(&sizzle), "wire sizzle: {sizzle}");
-        assert!(sharp / body < 0.5, "sharp/body: {}", sharp / body);
+        let attack = &snare[..960];
+        let late = &snare[4_800..9_600];
+        let head = |audio: &[f32]| band_amplitude(audio, 48_000.0, 250.0);
+        let wires = |audio: &[f32]| band_amplitude(audio, 48_000.0, 2_000.0);
+        assert!(
+            head(attack) > wires(attack) * 2.0,
+            "head {} wires {}",
+            head(attack),
+            wires(attack)
+        );
+        assert!(
+            wires(late) / head(late) > wires(attack) / head(attack) * 2.0,
+            "the wires died with the head: attack {}, late {}",
+            wires(attack) / head(attack),
+            wires(late) / head(late),
+        );
     }
 
     #[test]
-    fn ride_keeps_its_ping_without_dominant_low_and_high_plate_modes() {
+    fn a_snare_rings_on_once_its_strike_has_fallen() {
+        // The captured snares' 250 Hz octave holds 41-47 dB below its first 50 ms between
+        // 0.2 and 0.5 s: the head and the room ring on long after the strike has fallen 30 dB.
+        let snare = sound(38);
+        let level = |from: f64, to: f64| {
+            band_amplitude(
+                &snare[(48_000.0 * from) as usize..(48_000.0 * to) as usize],
+                48_000.0,
+                250.0,
+            )
+        };
+        let ring = 20.0 * (level(0.2, 0.5) / level(0.0, 0.05)).log10();
+        assert!((-55.0..-35.0).contains(&ring), "{ring} dB");
+    }
+
+    #[test]
+    fn a_crash_and_an_open_hat_ring_on_lines_not_noise() {
+        // In the captured tails, the strongest 0.5% of 2 Hz bins between 3 and 5 kHz stand
+        // 20 dB or more above the median one; band-limited noise reaches about 10.
+        for (key, from) in [(49, 0.3), (46, 0.1)] {
+            let audio = &rig(512).render(48_000, &[hit(0, key)])[(48_000.0 * from) as usize..];
+            // Hann-windowed, so a strong line does not leak into the bins between.
+            let tail: Vec<f32> = audio[..24_000]
+                .iter()
+                .enumerate()
+                .map(|(n, x)| x * (std::f32::consts::PI * n as f32 / 24_000.0).sin().powi(2))
+                .collect();
+            let mut power: Vec<f64> = (1_500..2_500)
+                .map(|bin| {
+                    crate::test_support::goertzel(&tail, 48_000.0, f64::from(bin) * 2.0).powi(2)
+                })
+                .collect();
+            power.sort_by(f64::total_cmp);
+            let standing = 10.0 * (power[995] / power[500]).log10();
+            assert!(standing > 15.0, "key {key}: lines stand {standing} dB");
+        }
+    }
+
+    #[test]
+    fn a_ride_rings_for_seconds_at_every_rate() {
+        // The captured rides fall 30 dB in two to three seconds across 1-4 kHz.
         for rate in [44_100.0, 48_000.0, 96_000.0] {
             let mut rig = Rig::new(Box::new(DrumKit::new()), rate, 256, 2);
             rig.set_param("level", MEASURED_LEVEL);
-            let audio = rig.render(rate as usize, &[hit(0, 51)]);
-            let body = &audio[(rate * 0.05) as usize..(rate * 0.25) as usize];
-            let ping = band_amplitude(body, rate, 2_650.0);
-            let upper = band_amplitude(body, rate, 12_359.6);
-            // Baseline amplitudes at 48 kHz were 0.00398 and 0.01659.
-            assert!((0.0018..0.0030).contains(&ping), "{rate}: ping {ping}");
-            assert!((0.010..0.0145).contains(&upper), "{rate}: upper {upper}");
-            assert!(rms(body) > 0.04, "{rate}: lost the ride body");
+            let audio = rig.render((rate * 3.0) as usize, &[hit(0, 51)]);
+            let window = |at: f64| &audio[(rate * at) as usize..(rate * (at + 0.2)) as usize];
+            let ping = band_amplitude(window(0.05), rate, 2_650.0);
+            let ringing = rms(window(2.0)) / rms(window(0.05));
+            assert!(ping > 1e-4, "{rate}: lost the ping");
+            assert!(
+                (0.03..0.6).contains(&ringing),
+                "{rate}: two seconds on, {ringing}"
+            );
         }
     }
 
     #[test]
     fn kicks_have_a_low_body_and_cymbals_have_high_frequency_energy() {
+        use auris_dsp::drum_analysis::analyze_drum_audio;
+        let centroid = |key| {
+            let audio = AudioBuffer::from_planar(vec![sound(key)], 48_000.0).unwrap();
+            analyze_drum_audio(&audio).unwrap().spectrum.centroid_hz
+        };
         let kick = sound(36);
-        let snare = sound(38);
-        let hat = sound(42);
-        let low = |samples: &[f32]| band_amplitude(samples, 48_000.0, 65.0);
-        let mid = |samples: &[f32]| band_amplitude(samples, 48_000.0, 2_000.0);
-        let high = |samples: &[f32]| band_amplitude(samples, 48_000.0, 10_000.0);
-        assert!(low(&kick) > high(&kick) * 100.0);
-        assert!(mid(&snare) > high(&snare) * 2.0);
-        // A bright plate may concentrate above 10 kHz. Measure the whole high band
-        // rather than requiring energy around one arbitrarily selected frequency.
-        let hat_spectrum = auris_dsp::drum_analysis::analyze_drum_audio(
-            &AudioBuffer::from_planar(vec![hat], 48_000.0).unwrap(),
-        )
-        .unwrap()
-        .spectrum;
-        assert!(hat_spectrum.high > 0.8);
-        assert!(hat_spectrum.high > hat_spectrum.body * 8.0);
-        assert!(mid(&snare) / low(&snare) > mid(&kick) / low(&kick) * 20.0);
-        let wire = &snare[1_200..9_600];
         assert!(
-            band_amplitude(wire, 48_000.0, 2_000.0) > band_amplitude(wire, 48_000.0, 185.0) * 2.0,
-            "the snare's pitched head outlasted its noise wires: noise {}, head {}",
-            band_amplitude(wire, 48_000.0, 2_000.0),
-            band_amplitude(wire, 48_000.0, 185.0),
+            band_amplitude(&kick, 48_000.0, 45.0)
+                > band_amplitude(&kick, 48_000.0, 10_000.0) * 100.0
         );
+        // The captures' spectral centroids: kick 54-61 Hz, snare 400-580 Hz, closed hat 7 kHz.
+        // The kit is close but not equal; these bands are where each drum stops being itself.
+        assert!(centroid(36) < 150.0, "kick {}", centroid(36));
+        assert!(
+            (250.0..1_500.0).contains(&centroid(38)),
+            "snare {}",
+            centroid(38)
+        );
+        assert!(centroid(42) > 5_000.0, "closed hat {}", centroid(42));
+        for key in [46, 49, 51] {
+            assert!(centroid(key) > 2_000.0, "cymbal {key}: {}", centroid(key));
+        }
     }
 
     #[test]
     fn each_pad_has_an_audible_attack_and_a_finite_one_shot_tail() {
+        // A ride's bell rings longest: its 500 Hz octave takes over five seconds to fall 30 dB
+        // in the captures. The hit ends when its slowest band is 80 dB down.
+        let seconds = 30 * 48_000;
         for key in [36, 38, 42, 46, 49, 51, 47] {
             let mut rig = rig(512);
-            let audio = rig.render(288_000, &[hit(0, key)]);
-            assert!(peak(&audio[..4_800]) > 0.08, "key {key} is too quiet");
+            let audio = rig.render(seconds, &[hit(0, key)]);
+            assert!(peak(&audio[..4_800]) > 0.05, "key {key} is too quiet");
             assert!(audio.iter().all(|sample| sample.is_finite()));
-            assert!(peak(&audio[264_000..]) < 1e-7, "key {key} did not decay");
-            assert_eq!(rig.instrument.active_voices(), 0);
+            assert!(
+                peak(&audio[seconds - 48_000..]) < 1e-7,
+                "key {key} did not decay"
+            );
+            assert_eq!(
+                rig.instrument.active_voices(),
+                0,
+                "key {key} kept its voice"
+            );
         }
-        assert!(rms(&sound(46)[9_600..14_400]) > rms(&sound(42)[9_600..14_400]) + 0.001);
+        assert!(rms(&sound(46)[9_600..14_400]) > rms(&sound(42)[9_600..14_400]) * 3.0);
         assert!(rms(&sound(49)[24_000..28_800]) > 0.001);
     }
 
@@ -743,9 +983,12 @@ mod tests {
     fn a_closed_hat_chokes_an_open_hat_but_leaves_a_crash_ringing() {
         let open = rig(512).render(24_000, &[hit(0, 46)]);
         let closed = rig(512).render(24_000, &[hit(0, 46), hit(4_800, 42)]);
+        let alone = rig(512).render(24_000, &[hit(4_800, 42)]);
         assert!(rms(&open[9_600..]) > 0.001);
-        assert!(rms(&closed[9_600..]) < rms(&open[9_600..]) * 0.05);
-        assert!(peak(&closed[16_800..]) < 1e-6);
+        // What is left is the closed hat alone: the open one was cut within its ramp.
+        assert!(rms(&closed[9_600..]) < rms(&open[9_600..]) * 0.5);
+        assert!(rms(&closed[9_600..]) < rms(&alone[9_600..]) * 1.3);
+        assert!(peak(&closed[20_000..]) < peak(&open[20_000..]) * 0.05);
         let cymbal = rig(512).render(24_000, &[hit(0, 49), hit(4_800, 42)]);
         assert!(rms(&cymbal[9_600..]) > 0.01);
     }
@@ -798,13 +1041,50 @@ mod tests {
     }
 
     #[test]
-    fn velocity_scales_amplitude_without_moving_the_pad() {
-        let loud = sound(38);
-        let quiet = rig(512).render(48_000, &[NoteEvent::note_on(0, 38, 0.5)]);
+    fn velocity_brightens_a_drum_head_but_only_scales_a_cymbal() {
+        let at = |key, velocity| rig(512).render(48_000, &[NoteEvent::note_on(0, key, velocity)]);
+        let loud = at(49, 1.0);
+        let quiet = at(49, 0.5);
         assert!(
             loud.iter()
                 .zip(&quiet)
                 .all(|(a, b)| (*a * 0.5 - *b).abs() < 1e-7)
+        );
+        // The captured kicks' and snares' centroids rise by half between soft and hard hits.
+        use auris_dsp::drum_analysis::analyze_drum_audio;
+        let centroid = |audio: Vec<f32>| {
+            let audio = AudioBuffer::from_planar(vec![audio[..9_600].to_vec()], 48_000.0).unwrap();
+            analyze_drum_audio(&audio).unwrap().spectrum.centroid_hz
+        };
+        // The captured toms' centroids move with pitch more than with velocity; they are left out.
+        for key in [36, 38] {
+            let (hard, soft) = (centroid(at(key, 1.0)), centroid(at(key, 0.35)));
+            assert!(hard > soft * 1.1, "key {key}: hard {hard}, soft {soft}");
+        }
+    }
+
+    #[test]
+    fn a_struck_kick_starts_sharp_and_settles_onto_its_tuning() {
+        // The captured kick reads 51 Hz in its first 60 ms and 41 Hz by 300 ms.
+        let kick = sound(36);
+        let strongest = |from: usize| {
+            let window = &kick[from..from + 2_880];
+            (30..90)
+                .map(|hz| (hz, band_amplitude(window, 48_000.0, f64::from(hz))))
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .unwrap()
+                .0
+        };
+        assert!(
+            strongest(0) > strongest(14_400) + 3,
+            "{} -> {}",
+            strongest(0),
+            strongest(14_400)
+        );
+        assert!(
+            (38..47).contains(&strongest(14_400)),
+            "{}",
+            strongest(14_400)
         );
     }
 
@@ -861,23 +1141,26 @@ mod tests {
         assert!(reset.voices.iter().all(|voice| voice.points == [0.0; 64]));
     }
 
+    const KIT_ROLES: [(u8, auris_core::DrumRole); 11] = [
+        (36, auris_core::DrumRole::Kick),
+        (38, auris_core::DrumRole::Snare),
+        (42, auris_core::DrumRole::ClosedHat),
+        (46, auris_core::DrumRole::OpenHat),
+        (49, auris_core::DrumRole::Crash),
+        (41, auris_core::DrumRole::Tom),
+        (43, auris_core::DrumRole::Tom),
+        (45, auris_core::DrumRole::Tom),
+        (47, auris_core::DrumRole::Tom),
+        (48, auris_core::DrumRole::Tom),
+        (50, auris_core::DrumRole::Tom),
+    ];
+
     #[test]
     fn acoustic_analysis_recognizes_the_generated_kit_roles_without_note_labels() {
-        use auris_core::DrumRole;
         use auris_dsp::drum_analysis::analyze_drum_audio;
-        for (pitch, role) in [
-            (36, DrumRole::Kick),
-            (38, DrumRole::Snare),
-            (42, DrumRole::ClosedHat),
-            (46, DrumRole::OpenHat),
-            (49, DrumRole::Crash),
-            (47, DrumRole::Tom),
-            (41, DrumRole::Tom),
-            (43, DrumRole::Tom),
-            (45, DrumRole::Tom),
-            (48, DrumRole::Tom),
-            (50, DrumRole::Tom),
-        ] {
+        // Every pad but the ride, whose role the analyzer leaves open: it reads the recorded
+        // ride as an open hat too.
+        for (pitch, role) in KIT_ROLES {
             let audio = rig(512).render(144_000, &[hit(0, pitch)]);
             let mut buffer = AudioBuffer::new(1, audio.len(), 48_000.0);
             buffer.channel_mut(0).copy_from_slice(&audio);
@@ -919,14 +1202,16 @@ mod tests {
         let long = render(49, "decay", 2.0);
         assert!(rms(&long[24_000..]) > rms(&short[24_000..]) * 2.0);
         for key in TOM_KEYS {
-            let audio = sound(key);
-            let fundamental = 130.0 * ((f64::from(key) - 47.0) / 12.0).exp2();
+            // After the glide has settled.
+            let audio = &sound(key)[9_600..];
+            let fundamental = f64::from(tom_tone(key));
             assert!(
-                band_amplitude(&audio, 48_000.0, fundamental)
-                    > band_amplitude(&audio, 48_000.0, fundamental * 1.15) * 2.0,
+                band_amplitude(audio, 48_000.0, fundamental)
+                    > band_amplitude(audio, 48_000.0, fundamental * 1.15) * 2.0,
                 "tom {key} lost its fundamental"
             );
         }
+        assert!((tom_tone(41) - 63.0).abs() < 0.5 && (tom_tone(50) - 135.0).abs() < 0.5);
     }
 
     #[test]
