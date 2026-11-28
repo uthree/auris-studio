@@ -63,6 +63,8 @@ pub(crate) enum BoreEnd {
     Reed,
     /// A fipple's plug and window, and an open end: a whistle.
     Fipple,
+    /// A cup mouthpiece the lips buzz against, and a tube that flares into a bell: brass.
+    Bell,
 }
 
 /// One body drawn as its [`Shape`].
@@ -502,6 +504,8 @@ fn paint_bore(window: &mut Window, bounds: Bounds<Pixels>, plot: &BodyPlot, end:
         match end {
             // A clarinet's bell opens over the last tenth of its length.
             BoreEnd::Reed if at > 0.9 => bore * (1. + ((at - 0.9) / 0.1).powi(2) * 0.7),
+            // A brass bell flares over the last quarter, widest at its rim.
+            BoreEnd::Bell if at > 0.75 => bore * (1. + ((at - 0.75) / 0.25).powi(3) * 1.6),
             _ => bore,
         }
     };
@@ -533,6 +537,31 @@ fn paint_bore(window: &mut Window, bounds: Bounds<Pixels>, plot: &BodyPlot, end:
                     point(lane.x(0.07), lane.middle + bore),
                 ],
                 px(2.),
+                plot.part(),
+            );
+        }
+        BoreEnd::Bell => {
+            paint::polyline(window, &wall(-1., 0.), px(2.), plot.ink.fixed);
+            paint::polyline(window, &wall(1., 0.), px(2.), plot.ink.fixed);
+            // The cup of the mouthpiece, and the lips pressed against its rim.
+            paint::polyline(
+                window,
+                &[
+                    point(lane.left, lane.middle - bore),
+                    point(lane.left - px(4.), lane.middle - bore - px(3.)),
+                    point(lane.left - px(4.), lane.middle + bore + px(3.)),
+                    point(lane.left, lane.middle + bore),
+                ],
+                px(2.),
+                plot.ink.fixed,
+            );
+            paint::rounded_rect(
+                window,
+                Bounds::new(
+                    point(lane.left - px(8.), lane.middle - bore * 0.6),
+                    size(px(3.), bore * 1.2),
+                ),
+                px(1.5),
                 plot.part(),
             );
         }
@@ -571,10 +600,11 @@ fn paint_bore(window: &mut Window, bounds: Bounds<Pixels>, plot: &BodyPlot, end:
             );
         }
     }
-    // Tone holes along the top, drawn open: the model does not finger them.
+    // Tone holes along the top, drawn open: the model does not finger them. Brass has none.
     let holes: &[f32] = match end {
         BoreEnd::Reed => &[0.38, 0.45, 0.52, 0.6, 0.67, 0.74, 0.81],
         BoreEnd::Fipple => &[0.45, 0.53, 0.61, 0.71, 0.79, 0.87],
+        BoreEnd::Bell => &[],
     };
     for at in holes {
         let radius = px(2.5);

@@ -131,6 +131,7 @@ fn every_model_is_in_tune_across_its_playing_register() {
         (Model::Mallet, [45, 65, 93]),
         (Model::Clarinet, [50, 67, 86]),
         (Model::TinWhistle, [74, 86, 98]),
+        (Model::Brass, [55, 67, 82]),
     ] {
         let mut rig = rig(model, 48_000.0);
         for pitch in pitches {
@@ -1667,7 +1668,7 @@ fn an_edge_off_the_centre_of_the_jet_adds_the_octave() {
 
 #[test]
 fn no_breath_makes_no_sound_and_expression_is_breath() {
-    for model in [Model::Clarinet, Model::TinWhistle] {
+    for model in [Model::Clarinet, Model::TinWhistle, Model::Brass] {
         let mut wind = rig(model, 48_000.0);
         let full = wind.render(24_000, &[on(home(model), 0.8)]);
         let hushed = wind.render(24_000, &[controller(0, 11, 0.0)]);
@@ -1688,7 +1689,7 @@ fn no_breath_makes_no_sound_and_expression_is_breath() {
 
 #[test]
 fn a_slurred_wind_note_glides_and_releases_when_its_last_key_does() {
-    for model in [Model::Clarinet, Model::TinWhistle] {
+    for model in [Model::Clarinet, Model::TinWhistle, Model::Brass] {
         let mut wind = rig(model, 48_000.0);
         wind.set_param("legato", 1.0);
         let low = home(model);
@@ -1816,7 +1817,12 @@ fn the_soft_pedal_strikes_two_strings_of_three_with_softer_felt() {
 
 #[test]
 fn the_single_line_instruments_slur_out_of_the_box() {
-    for model in [Model::Clarinet, Model::TinWhistle, Model::Violin] {
+    for model in [
+        Model::Clarinet,
+        Model::TinWhistle,
+        Model::Violin,
+        Model::Brass,
+    ] {
         let mut line = rig(model, 48_000.0);
         line.render(12_000, &[on(72, 0.8)]);
         line.render(12_000, &[on(74, 0.8)]);
@@ -2015,7 +2021,12 @@ fn controller_74_draws_the_bow_toward_the_bridge_or_over_the_fingerboard() {
 
 #[test]
 fn portamento_slides_a_slur_and_lets_the_finger_jump_without_it() {
-    for model in [Model::Violin, Model::Clarinet, Model::TinWhistle] {
+    for model in [
+        Model::Violin,
+        Model::Clarinet,
+        Model::TinWhistle,
+        Model::Brass,
+    ] {
         let (from, to) = (home(model), home(model) + 7);
         let slur = |portamento: f32| {
             let mut line = rig(model, 48_000.0);
@@ -2053,7 +2064,7 @@ fn portamento_slides_a_slur_and_lets_the_finger_jump_without_it() {
 
 #[test]
 fn the_breath_controller_blows_a_pipe_and_without_breath_it_is_silent() {
-    for model in [Model::Clarinet, Model::TinWhistle] {
+    for model in [Model::Clarinet, Model::TinWhistle, Model::Brass] {
         let key = home(model);
         let blown = |events: &[NoteEvent]| {
             let mut wind = rig(model, 48_000.0);
@@ -2403,6 +2414,7 @@ fn every_technique_control_starts_on_the_way_the_instrument_was_always_played() 
         (Model::Violin, 3),
         (Model::Clarinet, 2),
         (Model::TinWhistle, 2),
+        (Model::Brass, 2),
     ] {
         let instrument = Physical::new(model);
         let technique = instrument.descriptor_for_key("technique").unwrap();
@@ -2545,6 +2557,10 @@ fn a_fluttered_tongue_rolls_two_dozen_times_a_second_and_the_note_stays_where_it
         (Model::Clarinet, 81),
         (Model::TinWhistle, 86),
         (Model::TinWhistle, 93),
+        // A brass note's buzz is a train of sharp puffs, and five milliseconds of it are as
+        // loud as the puffs they hold: G4 and G5 put a whole number of them in each.
+        (Model::Brass, 67),
+        (Model::Brass, 79),
     ] {
         let take = |technique: f32| {
             let mut wind = played(model, technique);
@@ -2592,6 +2608,7 @@ fn the_new_techniques_do_not_depend_on_the_block_size_and_allocate_nothing() {
         (Model::Bass, 4.0),
         (Model::Clarinet, 1.0),
         (Model::TinWhistle, 1.0),
+        (Model::Brass, 1.0),
     ] {
         let pitch = home(model);
         let events = [
@@ -2718,6 +2735,7 @@ fn the_winds_stay_on_the_note_however_hard_they_are_blown() {
     for (model, pitches) in [
         (Model::Clarinet, [50_u8, 62, 74, 86]),
         (Model::TinWhistle, [62, 74, 86, 105]),
+        (Model::Brass, [55, 64, 72, 82]),
     ] {
         for pressure in [0.2, 0.5, 0.9] {
             for pitch in pitches {
@@ -2793,4 +2811,112 @@ fn a_bow_asked_nearer_the_bridge_than_the_string_holds_leans_and_stays_on_the_no
             );
         }
     }
+}
+
+/// The brass instruments, each across its own range: (instrument, lowest, highest).
+const BRASS: [(f32, u8, u8); 4] = [(0.0, 55, 82), (1.0, 36, 77), (2.0, 40, 72), (3.0, 28, 62)];
+
+fn brass(instrument: f32) -> Rig {
+    let mut rig = rig(Model::Brass, 48_000.0);
+    rig.set_param("instrument", instrument);
+    rig
+}
+
+/// Where the weight of the first sixteen harmonics of `samples` lies, as a harmonic number.
+fn harmonic_centroid(samples: &[f32], fundamental: f64) -> f64 {
+    let (mut weighted, mut total) = (0.0, 0.0);
+    for n in 1..=16 {
+        let power = windowed(samples, 48_000.0, fundamental * f64::from(n)).powi(2);
+        weighted += f64::from(n) * power;
+        total += power;
+    }
+    weighted / total.max(1.0e-30)
+}
+
+#[test]
+fn every_brass_instrument_speaks_in_tune_across_its_range_at_every_dynamic() {
+    for (instrument, low, high) in BRASS {
+        for pitch in (low..=high).step_by(3) {
+            for velocity in [0.2_f32, 0.6, 1.0] {
+                let mut horn = brass(instrument);
+                let audio = horn.render(48_000, &[on(pitch, velocity)]);
+                let steady = &audio[19_200..45_600];
+                assert!(
+                    level_db(steady) > -70.0,
+                    "instrument {instrument} MIDI {pitch} at {velocity} does not speak"
+                );
+                let cents = peak_cents(steady, 48_000.0, hz(pitch), -300..=300);
+                assert!(
+                    cents.abs() < 5.0,
+                    "instrument {instrument} MIDI {pitch} at {velocity}: {cents} cents"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn louder_brass_is_brighter_and_within_a_players_range_of_level() {
+    // A *fortissimo* reaches the bell steeper than a *pianissimo* leaves the lips: its upper
+    // harmonics are stronger, not only its level. And a player's dynamics span ten to twenty
+    // decibels or so, as the Iowa players' do.
+    // Each on a note of its own recordings' range.
+    for (instrument, pitch) in [(0.0, 66), (1.0, 66), (2.0, 54), (3.0, 42)] {
+        let take = |velocity: f32| {
+            let mut horn = brass(instrument);
+            horn.render(48_000, &[on(pitch, velocity)])[19_200..45_600].to_vec()
+        };
+        let (soft, loud) = (take(0.25), take(1.0));
+        let span = level_db(&loud) - level_db(&soft);
+        assert!(
+            (10.0..30.0).contains(&span),
+            "instrument {instrument}: {span} dB from pp to ff"
+        );
+        let (dull, bright) = (
+            harmonic_centroid(&soft, hz(pitch)),
+            harmonic_centroid(&loud, hz(pitch)),
+        );
+        // The recordings brighten more than this from *pianissimo* to *fortissimo* on the
+        // horn and the trombone (by half and by more than double); the model holds the
+        // direction, not yet the whole of it.
+        assert!(
+            bright > dull * 1.05,
+            "instrument {instrument}: centroid {dull} at pp, {bright} at ff"
+        );
+    }
+}
+
+#[test]
+fn a_brass_note_speaks_within_a_tenth_of_a_second() {
+    for (instrument, low, high) in BRASS {
+        for pitch in [low, (low + high) / 2, high] {
+            let mut horn = brass(instrument);
+            let audio = horn.render(48_000, &[on(pitch, 0.6)]);
+            let settled = rms(&audio[24_000..43_200]);
+            let reached = audio
+                .chunks(240)
+                .position(|chunk| rms(chunk) > settled * 0.5)
+                .map_or(f32::INFINITY, |chunk| chunk as f32 * 5.0);
+            assert!(
+                reached < 100.0,
+                "instrument {instrument} MIDI {pitch}: half its level after {reached} ms"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_brass_instruments_sound_unlike_one_another_on_the_same_note() {
+    // On the one note they share, the horn's hand and wide bell leave it the darkest and the
+    // trumpet's small bright bell the brightest.
+    let centroid = |instrument: f32| {
+        let mut horn = brass(instrument);
+        let audio = horn.render(48_000, &[on(55, 0.8)]);
+        harmonic_centroid(&audio[19_200..45_600], hz(55))
+    };
+    let (trumpet, horn, trombone) = (centroid(0.0), centroid(1.0), centroid(2.0));
+    assert!(
+        horn < trombone && trombone < trumpet,
+        "horn {horn}, trombone {trombone}, trumpet {trumpet}"
+    );
 }

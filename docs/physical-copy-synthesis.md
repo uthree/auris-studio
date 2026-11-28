@@ -2,7 +2,7 @@
 
 [日本語](physical-copy-synthesis.ja.md)
 
-The physical piano, guitar, strings, reeds, whistles and hammered strings are measured against
+The physical piano, guitar, strings, reeds, whistles, hammered strings and brass are measured against
 frozen cohorts of **real recordings**. Each tool plays the recorded notes through the actual
 Rust instrument and reports how far the result lies from the recording. The instrument is
 played by the worker, `physical_fit_render`: freeze a copy of it before changing anything that
@@ -293,6 +293,25 @@ the fundamental's share, which depends on where each bass's pickup lies under ea
 are regression measurements of whether slapping changes a note as a hand does, not evidence
 that a slapped note sounds like any one bass.
 
+## Brass
+
+The [Iowa MIS](https://theremin.music.uiowa.edu/MIS.html) brass captures are chromatic phrases
+at *pp*, *mf* and *ff*: the B♭ trumpet without vibrato over C4–B5, the horn and the tenor
+trombone over C4–B4 and C3–B3, and the tuba over C2–B2 (its *pp* and *mf* captures yield one
+note each). `brass_profile.py` reads each note's first ten harmonics, in decibels under its
+strongest, from 0.25 to 0.85 s after its onset, and plays the same pitch at velocity 0.3, 0.65
+and 1.0 for the three dynamics, read from 0.3 to 0.8 s. The distance is the mean absolute
+difference of the ten, both floored at −60 dB. The lowest and highest note of each capture are
+fitted on; the middle one is held out. `fit` searches the brass dials of
+`auris_synth::physical::dials` by differential evolution (seed 20261128, eight candidates a
+dimension, thirty generations), with the softest breath kept at or above 0.055 so that every
+note of every instrument speaks.
+
+The measure is a spectral envelope, not a timbre: it says nothing of the attack, and it is
+one player and one room for each instrument. It also does not see how much a note brightens
+from *pp* to *ff* beyond what the three envelopes show, and the horn and the trombone
+recordings brighten more than the model does.
+
 ## Running the measures
 
 Run Python tools with `uv`. On Windows, use the installed `uv.exe` path if it is missing from
@@ -341,6 +360,11 @@ uv run tools/eval/bass_slap.py measure target/slap-reference <after-worker> \
 uv run tools/eval/bass_slap.py fetch target/slap-reference --fret 3 --fret 8
 uv run tools/eval/bass_slap.py measure target/slap-reference <after-worker> \
   target/slap-reference/measure-held-out.json --fret 3 --fret 8
+
+uv run tools/eval/brass_profile.py fetch target/brass-reference
+uv run tools/eval/brass_profile.py measure target/brass-reference <after-worker>
+# Fitting needs a worker built with --features physical-calibration.
+uv run tools/eval/brass_profile.py fit target/brass-reference <calibration-worker> Trumpet
 ```
 
 Pin the recorded dependency versions for exact extraction of the Iowa cohort: NumPy 2.5.3,

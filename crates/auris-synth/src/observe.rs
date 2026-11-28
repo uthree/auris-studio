@@ -225,6 +225,9 @@ mod tests {
                 Model::Clarinet => {
                     assert!(high > 0.7 && high <= 2.0 && low == 0.0, "{low}..{high}");
                 }
+                // Lips are pushed apart by the breath and swing back to touching once a
+                // period; they never cross.
+                Model::Brass => assert!(low == 0.0 && high > 0.05, "{low}..{high}"),
                 // A jet swings to both sides of the edge.
                 Model::TinWhistle => assert!(low < -0.3 && high > 0.2, "{low}..{high}"),
                 // A finger lets go and is gone.

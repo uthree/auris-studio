@@ -1454,7 +1454,9 @@ fn sound_artwork(
             | "auris.synth.kick_bass"
             | "auris.synth.sub_bass" => SoundIcon::Bass,
             "auris.physical.violin" => SoundIcon::Strings,
-            "auris.physical.clarinet" | "auris.physical.tin_whistle" => SoundIcon::Wind,
+            "auris.physical.clarinet" | "auris.physical.tin_whistle" | "auris.physical.brass" => {
+                SoundIcon::Wind
+            }
             "auris.physical.mallet"
             | "auris.physical.hammered_dulcimer"
             | "auris.physical.bell" => SoundIcon::Bell,

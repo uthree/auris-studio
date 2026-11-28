@@ -1007,10 +1007,12 @@ impl Session {
         {
             let _ = budget.push_sound(
                 &mut sounds,
+                // The description is searched too: it names what a family holds, so "horn"
+                // finds the brass and "cello" the strings.
                 Sound::new(
                     descriptor.name.to_string(),
                     "Auris".into(),
-                    descriptor.id.to_string(),
+                    format!("{} {}", descriptor.id, descriptor.description),
                     Source::Builtin(descriptor.id.to_string()),
                 ),
             );

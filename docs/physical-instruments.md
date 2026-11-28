@@ -3,7 +3,7 @@
 [日本語](physical-instruments.ja.md)
 
 Choose **Physical Piano, Hammered Strings, Guitar, Electric Guitar, Bass, Strings, Mallet,
-Bell, Reeds or Whistles** in the sound library. Each is a built-in plugin with its own stable
+Bell, Reeds, Whistles or Brass** in the sound library. Each is a built-in plugin with its own stable
 ID, such as `auris.physical.guitar`. New melodic tracks use Physical Piano. There are no sample
 files to install. **[Physical Choir](physical-choir.md)** is a separate instrument with its
 own page.
@@ -35,6 +35,7 @@ that wave sample by sample.
 | Bell | Paired modes that beat as they ring: a cast bell, a tubular bell, a handbell, a singing bowl | Bell, hardness, where round the rim it is struck, warble |
 | Reeds | A reed valve on a cylinder of air closed at the reed: a clarinet | Breath pressure, reed stiffness, breath noise, attack, vibrato, legato, technique |
 | Whistles | An air jet across the window of an open pipe | Breath pressure, jet shape, breath noise, attack, vibrato, legato, technique |
+| Brass | Lips buzzing as a valve into a tube that flares into a bell; the wave steepening on its way there: trumpet, horn, trombone, tuba | Instrument, breath pressure, brassiness, breath noise, attack, vibrato, legato, technique |
 
 Every model also has **Level**, **Stereo Width**, **Live Quality** and **Render Quality**.
 
@@ -111,6 +112,18 @@ Some of what these do is worth knowing before you hear it.
   soft one is started with a little more breath than it is held with, or it would take most
   of a second to speak. The breath in the tone is rough the way a recorded clarinet's is,
   about 33 dB under the tone at every dynamic and falling away above a kilohertz.
+- **Loud brass is brighter because the wave steepens on its way to the bell.** Sound travels a
+  little faster where the air is compressed, so down the length of a tube the crest of a loud
+  wave gains on the trough ahead of it; a quiet note reaches the bell as it left the lips and a
+  loud one nearly as a sawtooth. Each sample is carried to the bell in a time that depends on
+  its own pressure, and **Brassiness** scales how far it has to travel to steepen: at zero a
+  fortissimo is only louder, and at the top it brays earlier. The lips are a mass on a spring
+  that the breath pushes open; they pull a note toward their own resonance, and the model,
+  like a player, times each period it plays and moves the tube until the note is where it is
+  written, within a few periods of the start. Each instrument's bell, how sharply it radiates
+  and how its lips stand were fitted to the Iowa recordings of that instrument at three
+  dynamics — the trumpet's bright band near 1.2 kHz, the trombone's lower one, the horn's hand
+  in its bell. There is no mute yet: General MIDI's muted trumpet plays the open one.
 - **A bell's warble depends on where you strike it.** Each partial is two shapes a
   fraction of a hertz apart, and the place round the rim shares the blow between them.
 
@@ -123,7 +136,7 @@ the reed further.
 Changes to **Decay**, **Damping**, **Release** and **Unison Detune** reach notes that are
 already sounding. Hardness, position, stiffness and the **Technique** of the strings, the
 guitars and the bass belong to the blow, the pluck or the stroke, and wait for the next one.
-On the reeds and whistles the tongue starts and stops rolling at once. On the strings, **Bow Position** moves the bow at once.
+On the reeds, whistles and brass the tongue starts and stops rolling at once. On the strings, **Bow Position** moves the bow at once.
 
 MIDI CC7 is channel volume. CC11 is expression: level, and also bow speed and breath. CC1
 deepens the vibrato of the bowed and blown instruments. CC64 lifts the piano's dampers and the
@@ -133,7 +146,7 @@ quarter and three quarters the dampers rise off the strings, so a half pedal sho
 note without stopping it. CC66 is the piano's sostenuto, holding up only the dampers that were up
 as it went down. CC67 is its soft pedal: a note struck with it down meets two strings of three,
 with softer felt, and comes out quieter and darker. CC68 is the legato footswitch: on the
-strings, reeds and whistles it slurs as the **Legato** control does, for as long as it is down.
+strings, reeds, whistles and brass it slurs as the **Legato** control does, for as long as it is down.
 CC75, the General MIDI 2 decay-time controller, rests at its middle; below it the guitars and
 the bass hear a palm laid on the strings at the bridge. It shortens notes that are held, the
 upper partials first, so at the bottom a note is its pick's click and a short, dark thump. It
@@ -145,14 +158,14 @@ ponticello). It goes as near as the string still holds its note, which is about 
 usually drawn, and leans harder for the rest of the way: the note is brighter, as loud as it
 was and on its pitch. A **Bow Position** set nearer the bridge than that does the same. Below
 the middle the bow goes out over the end of the fingerboard, up to twice as far, with a lighter
-stroke (sul tasto, veiled). CC65 turns portamento on for the strings, reeds
-and whistles: a slurred note slides to the next instead of moving the finger at once, taking the
+stroke (sul tasto, veiled). CC65 turns portamento on for the strings, reeds,
+whistles and brass: a slurred note slides to the next instead of moving the finger at once, taking the
 time CC5 gives, from a fiftieth of a second to a second and a half. Pitch bend is not slowed.
 On everything struck or plucked (the pianos, guitars, bass, mallets and bells), CC74 is how hard
 the next hammer, pick, mallet or beater is: harder above its middle and softer below it, by up
 to half of the instrument's own hardness control. A soft mallet high on a xylophone is already
 off the bar as fast as the bar throws it back, so there it can only go harder. CC2, the breath
-controller, blows the reeds and whistles beneath the expression pedal. It rests all the way up;
+controller, blows the reeds, whistles and brass beneath the expression pedal. It rests all the way up;
 a wind controller sends it, and in the bottom tenth of its travel the pipe stops speaking. On the
 vibraphone the modulation wheel turns the motor, wherever it is further up than **Tremolo**.
 CC64 is also the damper pedal of the tubular chimes and of the hammered strings, like a
@@ -164,7 +177,7 @@ Pitch bend reaches sounding notes, up to two octaves either way. On the piano **
 the damper: the time it takes to remove 80 dB, longer in the bass, and the keys above F6 have
 none.
 
-**Legato** is on by default for the strings, reeds and whistles, which then play one line:
+**Legato** is on by default for the strings, reeds, whistles and brass, which then play one line:
 overlapping notes reuse the sounding string or pipe without a new attack, and letting the newest
 key go returns to the one still held. Turn it off to play two keys as two notes.
 
@@ -204,11 +217,12 @@ instrument named:
 | 26–28, 31 | Electric Guitar; 28 is muted, 31 is harmonics |
 | 32–37 | Bass: 32 is the upright, 36–37 are slapped |
 | 40–45, 48–49 | Strings: solo violin, viola, cello and contrabass, and sections of four; 44 is the tremolo, 45 pizzicato |
+| 56–61 | Brass: trumpet (56, and the muted trumpet 59 and the brass section 61), trombone, tuba, horn |
 | 71 | Reeds |
 | 74, 78 | Whistles: recorder, whistle |
 
 These are starting parameters for Auris's own instruments, not General MIDI patch emulation.
-A program none of them is a model of — a trumpet, a harp, a flute — keeps its SoundFont sound
+A program none of them is a model of — a harp, a flute, an oboe — keeps its SoundFont sound
 or the session's reported fallback. An explicit SoundFont source always chooses that font.
 
 ## Looking inside
@@ -233,7 +247,8 @@ Under the audition keyboard is **Inside the instrument**:
 - The last plot is what excites the instrument: a hammer's or a mallet's force through the six
   milliseconds of its blow; a string's speed under the bow through one period, flat at the
   bow's own speed while the rosin grips and flying back when it lets go; a reed's opening
-  through one period; where an air jet meets the edge.
+  through one period; where an air jet meets the edge; how far a brass player's lips stand
+  apart through one period, from touching.
 
 Drag the surface to turn it. It is shaded on the graphics processor where there is one, and
 drawn the same without.
@@ -259,6 +274,7 @@ smaller is closer.
 | Reeds, mel distance | B♭ clarinet, held-out pitches | 0.041 | 0.054 |
 | Whistles, mel distance of the settled tone | tin whistle scale | 0.017 | 0.018 |
 | Hammered Strings, mel distance | hammered dulcimer | 0.234 | 0.241 |
+| Brass, first ten harmonics | trumpet, horn, trombone, tuba at *pp*, *mf*, *ff*; the middle note of each capture held out | 5.7, 5.1, 3.6, 2.6 dB | — |
 
 The last column is the instruments these replaced, which were fitted to the recordings in the
 second column. It is the mark a fitted model reaches, and the piano, the guitar and the

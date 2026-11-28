@@ -131,6 +131,7 @@ mod tests {
             vec![
                 "auris.physical.bass",
                 "auris.physical.bell",
+                "auris.physical.brass",
                 "auris.physical.choir",
                 "auris.physical.clarinet",
                 "auris.physical.electric_guitar",
@@ -163,7 +164,7 @@ mod tests {
                 "auris.synth.vocal"
             ]
         );
-        assert_eq!(registry.instruments().count(), 32);
+        assert_eq!(registry.instruments().count(), 33);
         // The effects modelled the way the instruments are, beside the instruments.
         let effects: Vec<&str> = registry.effects().map(|d| d.id.as_ref()).collect();
         assert_eq!(

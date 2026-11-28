@@ -165,6 +165,12 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Physical Reeds", "リード管楽器"),
     ("Physical Hammered Strings", "打弦楽器"),
     ("Physical Whistles", "ホイッスル"),
+    ("Physical Brass", "金管楽器"),
+    ("Trumpet", "トランペット"),
+    ("Horn", "ホルン"),
+    ("French horn", "ホルン"),
+    ("Trombone", "トロンボーン"),
+    ("Tuba", "テューバ"),
     ("Physical Drums", "ドラム"),
     ("Grand piano", "グランドピアノ"),
     ("Felt piano", "フェルトピアノ"),
@@ -297,7 +303,7 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "曲のコードやキーに調弦した弦が、同じ音程の音に共鳴して鳴り続ける",
     ),
     (
-        "Bowed strings: stick-slip friction, a section of players, their bodies",
+        "Bowed strings — violin, viola, cello, contrabass: stick-slip friction, a section",
         "弓と弦の摩擦で鳴らす弦楽器。奏者の人数、弓圧と位置、楽器ごとの胴を再現",
     ),
     (
@@ -321,7 +327,7 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "弦をはじくベース。ピックアップの音とアップライトの胴の音を切り替え可能",
     ),
     (
-        "Tuned bars over resonator tubes, struck with a mallet",
+        "Marimba, vibraphone, xylophone, glockenspiel: tuned bars, struck",
         "共鳴管の上に並べた音板をマレットで叩く鍵盤打楽器。マリンバからオルゴールまで",
     ),
     (
@@ -329,12 +335,16 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "鐘や管を叩くベル。対になった振動がうなりながら鳴り続ける様子を再現",
     ),
     (
-        "A reed valve on a cylinder of air, closed at the reed",
+        "A clarinet: a reed valve on a cylinder of air, closed at the reed",
         "リードの弁と円筒の気柱で鳴らすクラリネット系の管楽器",
     ),
     (
         "An air jet across the window of an open pipe",
         "開いた管の歌口を横切る空気ジェットで鳴らす笛",
+    ),
+    (
+        "Trumpet, horn, trombone and tuba: buzzing lips into a flared tube",
+        "トランペット・ホルン・トロンボーン・テューバ。唇の振動と朝顔に広がる管で鳴らす金管楽器",
     ),
     (
         "Hammer-excited coupled string courses with passive bridge coupling",
@@ -552,6 +562,7 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Bow Pressure", "弓圧"),
     ("Breath Pressure", "息の圧力"),
     ("Reed Stiffness", "リードの硬さ"),
+    ("Brassiness", "金管らしさ"),
     ("Breath Noise", "息の雑音"),
     ("Hammer Hardness", "ハンマーの硬さ"),
     ("Strike Position", "打撃位置"),

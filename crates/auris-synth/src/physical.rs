@@ -18,6 +18,7 @@
 //! | Bell | the paired modes of a shell | a clapper or a hammer |
 //! | Reeds | an air column closed at the reed | the reed as a pressure-controlled valve |
 //! | Whistles | an air column open at both ends | a jet across the window, delayed by its own flight |
+//! | Brass | a tube whose flare makes its resonances a harmonic series | the lips as a valve the breath pushes open, the wave steepening on its way to the bell |
 //!
 //! Nothing is sampled, and no spectrum is shaped to match a recording's. The numbers are the
 //! kind a maker or a measurement gives — a string's stiffness, a hammer's mass, a plate's first
@@ -49,6 +50,7 @@ mod bars;
 mod bells;
 pub(crate) mod body;
 mod bowed;
+mod brass;
 mod flutes;
 mod hammer;
 mod legato;
@@ -154,11 +156,13 @@ pub enum Model {
     Clarinet,
     /// Whistles and flutes: an air jet across the open end of a pipe.
     TinWhistle,
+    /// Brass: trumpet, horn, trombone and tuba, the lips buzzing into a flared tube.
+    Brass,
 }
 
 impl Model {
     /// Every physical instrument, ordered by how it is set going.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Piano,
         Self::HammeredDulcimer,
         Self::Guitar,
@@ -169,6 +173,7 @@ impl Model {
         Self::Bell,
         Self::Clarinet,
         Self::TinWhistle,
+        Self::Brass,
     ];
 
     /// Stable plugin id stored in a project.
@@ -184,6 +189,7 @@ impl Model {
             Self::Bell => "auris.physical.bell",
             Self::Clarinet => "auris.physical.clarinet",
             Self::TinWhistle => "auris.physical.tin_whistle",
+            Self::Brass => "auris.physical.brass",
         }
     }
 
@@ -215,6 +221,7 @@ impl Model {
             Self::Bell => "Physical Bell",
             Self::Clarinet => "Physical Reeds",
             Self::TinWhistle => "Physical Whistles",
+            Self::Brass => "Physical Brass",
         }
     }
 
@@ -228,12 +235,13 @@ impl Model {
             Self::ElectricGuitar => "Steel strings under a magnetic pickup, before the amplifier",
             Self::Bass => "Plucked bass strings under a pickup or on an upright's body",
             Self::Violin => {
-                "Bowed strings: stick-slip friction, a section of players, their bodies"
+                "Bowed strings — violin, viola, cello, contrabass: stick-slip friction, a section"
             }
-            Self::Mallet => "Tuned bars over resonator tubes, struck with a mallet",
+            Self::Mallet => "Marimba, vibraphone, xylophone, glockenspiel: tuned bars, struck",
             Self::Bell => "Struck shells and tubes: paired modes that beat as they ring",
-            Self::Clarinet => "A reed valve on a cylinder of air, closed at the reed",
+            Self::Clarinet => "A clarinet: a reed valve on a cylinder of air, closed at the reed",
             Self::TinWhistle => "An air jet across the window of an open pipe",
+            Self::Brass => "Trumpet, horn, trombone and tuba: buzzing lips into a flared tube",
         }
     }
 
@@ -254,12 +262,18 @@ impl Model {
             Self::Bell => StereoImage::new(72.0, 18.0, 0.4),
             Self::Clarinet => StereoImage::new(70.0, 22.0, 0.25),
             Self::TinWhistle => StereoImage::new(86.0, 12.0, 0.25),
+            // The brass sit behind the woodwinds, the tubas and trombones right of centre and
+            // the trumpets further.
+            Self::Brass => StereoImage::new(46.0, 24.0, 0.25),
         }
     }
 
     /// Whether a note lasts as long as its key is held: bowed and blown, not struck or plucked.
     pub const fn is_sustained(self) -> bool {
-        matches!(self, Self::Violin | Self::Clarinet | Self::TinWhistle)
+        matches!(
+            self,
+            Self::Violin | Self::Clarinet | Self::TinWhistle | Self::Brass
+        )
     }
 
     /// What a frontend draws this instrument's bodies as.
@@ -267,7 +281,7 @@ impl Model {
         match self {
             Self::Mallet => MotionGeometry::Bar,
             Self::Bell => MotionGeometry::Shell,
-            Self::Clarinet | Self::TinWhistle => MotionGeometry::Bore,
+            Self::Clarinet | Self::TinWhistle | Self::Brass => MotionGeometry::Bore,
             _ => MotionGeometry::String,
         }
     }
@@ -278,7 +292,7 @@ impl Model {
             Self::Piano => 32,
             Self::HammeredDulcimer | Self::Mallet | Self::Bell => 24,
             Self::Guitar | Self::ElectricGuitar | Self::Violin => 16,
-            Self::Bass | Self::Clarinet | Self::TinWhistle => 12,
+            Self::Bass | Self::Clarinet | Self::TinWhistle | Self::Brass => 12,
         }
     }
 
@@ -293,6 +307,7 @@ impl Model {
             Self::Bell => Box::new(bells::Bells::new()),
             Self::Clarinet => Box::new(reeds::Reeds::new()),
             Self::TinWhistle => Box::new(flutes::Flutes::new()),
+            Self::Brass => Box::new(brass::Brass::new()),
         }
     }
 
@@ -305,6 +320,7 @@ impl Model {
             Self::Bell => bells::descriptors(),
             Self::Clarinet => reeds::descriptors(),
             Self::TinWhistle => flutes::descriptors(),
+            Self::Brass => brass::descriptors(),
         }
     }
 
@@ -328,6 +344,7 @@ impl Model {
             Self::Bell => 0.329,
             Self::Clarinet => 2.481,
             Self::TinWhistle => 2.903,
+            Self::Brass => 1.334,
         }
     }
 }
@@ -696,6 +713,26 @@ pub(crate) mod dials {
     pub(crate) const PLUCK_HARDER: usize = 97;
     /// The power of how much shorter a stopped string sounds by which it decays faster.
     pub(crate) const PLUCK_STOPPED: usize = 98;
+    /// The brass: where the bell lets the sound out, what the air leaves of its top, how far a
+    /// unit of pressure hastens a wave to the bell, the softest and hardest mouth pressures,
+    /// and the lips' tuning against the note, their sharpness and how much air they pass.
+    pub(crate) const BRASS_BELL_HZ: usize = 100;
+    pub(crate) const BRASS_AIR_HZ: usize = 101;
+    pub(crate) const BRASS_STEEPENING: usize = 102;
+    pub(crate) const BRASS_SOFTEST: usize = 103;
+    pub(crate) const BRASS_HARDEST: usize = 104;
+    pub(crate) const BRASS_LIP_TUNING: usize = 105;
+    pub(crate) const BRASS_LIP_Q: usize = 106;
+    pub(crate) const BRASS_LIP_AREA: usize = 107;
+    /// How sharply the brass bell's radiation rises to its corner.
+    pub(crate) const BRASS_BELL_Q: usize = 108;
+    /// How much more breath a brass note is started with, and the seconds that eases over.
+    pub(crate) const BRASS_KICK: usize = 109;
+    pub(crate) const BRASS_KICK_SECONDS: usize = 110;
+    /// How loud a brass note's tongued puff rings the tube, against the breath.
+    pub(crate) const BRASS_SEED: usize = 111;
+    /// How much of a period's measured pull the brass player takes out at once.
+    pub(crate) const BRASS_TRIM_GAIN: usize = 112;
 }
 
 /// A dial for each C from C1 to C8, read at a pitch between them along straight lines.

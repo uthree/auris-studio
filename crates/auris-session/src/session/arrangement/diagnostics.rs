@@ -14,9 +14,10 @@ pub(super) fn family(instrument: &InstrumentTrack, drum: bool) -> &'static str {
         "auris.physical.bass" => "bass",
         "auris.physical.violin" | "auris.physical.cello" => "bowed_strings",
         "auris.physical.bell" | "auris.physical.mallet" => "pitched_percussion",
-        "auris.physical.flute" | "auris.physical.clarinet" | "auris.physical.tin_whistle" => {
-            "winds"
-        }
+        "auris.physical.flute"
+        | "auris.physical.clarinet"
+        | "auris.physical.tin_whistle"
+        | "auris.physical.brass" => "winds",
         "auris.synth.chiptune" => "synth",
         // The subtractive patches are all synthesisers, whatever sound each one imitates.
         id if auris_synth::AnalogPatch::from_id(id).is_some() => "synth",
@@ -56,7 +57,10 @@ pub(super) fn capabilities(instrument: &InstrumentTrack, drum: bool) -> Value {
     );
     let dulcimer = id == "auris.physical.hammered_dulcimer";
     let sampler = id == auris_sampler::SAMPLER_ID;
-    let wind = matches!(id, "auris.physical.clarinet" | "auris.physical.tin_whistle");
+    let wind = matches!(
+        id,
+        "auris.physical.clarinet" | "auris.physical.tin_whistle" | "auris.physical.brass"
+    );
     // The subtractive patches read the wheel as vibrato depth exactly as the chiptune voice does.
     let chiptune = id == "auris.synth.chiptune" || auris_synth::AnalogPatch::from_id(id).is_some();
     let native = physical || sampler || wind || chiptune || dulcimer;

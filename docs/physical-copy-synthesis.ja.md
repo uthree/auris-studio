@@ -3,7 +3,7 @@
 
 [English](physical-copy-synthesis.md)
 
-物理ピアノ、ギター、ストリングス、リード、ホイッスル、ハンマードストリングスは、固定した**実録音**のコホートと照合して測定している。各ツールは、録音されたノートを実際のRust製の楽器で演奏し、その結果が録音からどれだけ離れているかを報告する。楽器を演奏するのはワーカー `physical_fit_render` である。音に関わる変更をする前にそのコピーを凍結し、変更後に両方のビルドを測定する。これらのツールが楽器を変更することはない。ダウンロード、Python、プロット、試聴ファイルは開発用ツールであり、録音が製品に入ることはない。
+物理ピアノ、ギター、ストリングス、リード、ホイッスル、ハンマードストリングス、金管は、固定した**実録音**のコホートと照合して測定している。各ツールは、録音されたノートを実際のRust製の楽器で演奏し、その結果が録音からどれだけ離れているかを報告する。楽器を演奏するのはワーカー `physical_fit_render` である。音に関わる変更をする前にそのコピーを凍結し、変更後に両方のビルドを測定する。これらのツールが楽器を変更することはない。ダウンロード、Python、プロット、試聴ファイルは開発用ツールであり、録音が製品に入ることはない。
 
 現在の楽器の測定値は、楽器の説明とともに[物理楽器](physical-instruments.ja.md)に記載している。このページでは、ツールが何を録音データとし、何を測り、何を必要とするかを説明する。
 
@@ -114,6 +114,12 @@ University of Iowaの[Steinway model Bの録音](https://theremin.music.uiowa.ed
 録音どうしのばらつきは、どの指標でも数デシベルある。基音が占める割合はそれより大きくばらつく。各ベースのピックアップが、その音の弦のどこにあるかで変わるためである。これは、スラップが手と同じように音を変えるかを確かめる回帰測定であり、スラップした音が特定のベースに似ていることを示すものではない。
 
 <a id="running-the-measures"></a>
+## 金管
+
+[Iowa MIS](https://theremin.music.uiowa.edu/MIS.html) の金管の録音は、*pp*・*mf*・*ff* の半音階である。ビブラートなしの B♭ トランペットが C4〜B5、ホルンとテナートロンボーンがそれぞれ C4〜B4 と C3〜B3、テューバが C2〜B2 である（テューバの *pp* と *mf* からは 1 音ずつしか取れない）。`brass_profile.py` は各音の第 10 倍音までを、最も強い倍音から何 dB 下かで、音の始まりから 0.25〜0.85 秒の区間で読む。モデルは同じ音高を 3 つの強さに対してベロシティ 0.3・0.65・1.0 で鳴らし、0.3〜0.8 秒の区間で同じように読む。距離は 10 個の差の絶対値の平均で、どちらも −60 dB を下限にする。各録音の最低音と最高音で合わせ込み、中央の音は検証用に外す。`fit` は `auris_synth::physical::dials` の金管のダイヤルを差分進化（シード 20261128、1 次元あたり 8 候補、30 世代）で探す。最も弱い息は 0.055 以上に保ち、どの楽器のどの音も鳴るようにしている。
+
+この指標が比べるのはスペクトルの包絡で、音色そのものではない。アタックについては何も言わず、楽器ごとに奏者も部屋も 1 つである。*pp* から *ff* にかけて音がどれだけ明るくなるかも、3 つの包絡に表れる範囲でしか見ていない。ホルンとトロンボーンの録音は、モデルより大きく明るくなる。
+
 ## 測定の実行
 
 Pythonツールは `uv` で実行する。Windowsで `uv.exe` がPATHにない場合はインストール先のパスを使い、ワーカーには `.exe` のパスを使う。ツールはスクリプト環境を使うため、学習用の環境やGPUは不要である。フォークのコホートを準備するには、MP3プレビューのために `ffmpeg` もPATHに必要である。クラリネットとフォークのフェッチャーは、`--offline` を指定するとキャッシュ済みのキャプチャーから準備する。
@@ -153,6 +159,11 @@ uv run tools/eval/bass_slap.py measure target/slap-reference <after-worker> \
 uv run tools/eval/bass_slap.py fetch target/slap-reference --fret 3 --fret 8
 uv run tools/eval/bass_slap.py measure target/slap-reference <after-worker> \
   target/slap-reference/measure-held-out.json --fret 3 --fret 8
+
+uv run tools/eval/brass_profile.py fetch target/brass-reference
+uv run tools/eval/brass_profile.py measure target/brass-reference <after-worker>
+# Fitting needs a worker built with --features physical-calibration.
+uv run tools/eval/brass_profile.py fit target/brass-reference <calibration-worker> Trumpet
 ```
 
 Iowaコホートを正確に抽出するには、記録された依存関係のバージョン（NumPy 2.5.3、SciPy 1.18.1、SoundFile 0.14.0）を固定する。正規のノートマニフェストのSHA-256は `878f66a719dd47400ad6246d9a23c8ecb09676c26837bbfa569993099b76c4bc` である。マニフェストの識別には、UTF-8でエンコードした、ソート済みでコンパクトなJSONを使い、ファイルの行末には依存しない。レポートには、ワーカーのハッシュ、工場出荷時パラメーター、ノートごとの距離をすべて記録する。再ビルドした実行ファイルのハッシュはツールチェーンとビルドパスに依存するため、アーカイブしたワーカーのハッシュと一致することを期待せず、PCMと指標を比較する。

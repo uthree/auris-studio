@@ -398,6 +398,15 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                 ],
             ),
             family(
+                Physical::new(Model::Brass),
+                &[
+                    ("Trumpet", &[]),
+                    ("French horn", &[("instrument", 1.0)]),
+                    ("Trombone", &[("instrument", 2.0)]),
+                    ("Tuba", &[("instrument", 3.0)]),
+                ],
+            ),
+            family(
                 Physical::new(Model::TinWhistle),
                 &[
                     ("Tin whistle", &[]),
@@ -551,7 +560,8 @@ mod tests {
     fn patch_register(name: &str, id: &str) -> u8 {
         match name {
             "Contrabass" => 36,
-            "Cello" | "Bass choir" => 48,
+            "Cello" | "Bass choir" | "Trombone" => 48,
+            "Tuba" => 36,
             "Glockenspiel" | "Music box" => 72,
             _ => auris_synth::level_reference::register(id),
         }
