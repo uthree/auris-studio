@@ -944,10 +944,10 @@ mod tests {
     }
 
     #[test]
-    fn a_crash_and_an_open_hat_ring_on_lines_not_noise() {
+    fn the_cymbals_ring_on_lines_not_noise() {
         // In the captured tails, the strongest 0.5% of 2 Hz bins between 3 and 5 kHz stand
         // 20 dB or more above the median one; band-limited noise reaches about 10.
-        for (key, from) in [(49, 0.3), (46, 0.1)] {
+        for (key, from) in [(49, 0.3), (46, 0.1), (51, 0.3)] {
             let audio = &rig(512).render(48_000, &[hit(0, key)])[(48_000.0 * from) as usize..];
             // Hann-windowed, so a strong line does not leak into the bins between.
             let tail: Vec<f32> = audio[..24_000]

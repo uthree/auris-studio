@@ -70,11 +70,18 @@ BLOOM_DEPTH = {"Crash"}
 # transient landed 15 dB over them in the first 10 ms, where the captured stick has yet to bloom.
 WITHOUT_SECOND = {"ClosedHat", "Kick", "Crash"}
 # Where a cymbal's tail is read for its lines: late enough that the strike has gone, short
-# enough that the band is still well above the floor. A closed hat has no tail to read. The
-# ride's lines are not modelled yet: they made its first 50 ms further from the captures.
-LINE_WINDOWS = {"OpenHat": (0.05, 0.55), "Crash": (0.1, 1.1)}
+# enough that the band is still well above the floor. A closed hat has no tail to read.
+LINE_WINDOWS = {"OpenHat": (0.05, 0.55), "Crash": (0.1, 1.1), "Ride": (0.1, 1.1)}
 # Below this the captures' lines are room and the other drums, not the cymbal.
 LINE_FLOOR_HZ = 250
+# The ride's lines are measured 9 dB apart in level; at that spread the mel bands holding a line
+# or two go up and down where the captured ride's do not, and its training mel rose from 0.209
+# to 0.231. Four decibels keeps the lines standing 29-42 dB over the floor, as captured.
+LINE_SPREAD_CAP_DB = {"Ride": 4.0}
+# Pads whose decays and diffuse levels were searched band by band on the training mel by
+# `drum_band_search.py`, after the tables here: their decays are kept from the output file,
+# and their levels are kept unless corrected.
+SEARCHED = {"OpenHat", "Ride"}
 # A line counts when it stands this far above the local noise mean, at least this far apart.
 LINE_HEIGHT_DB = 12
 LINE_SPACING_HZ = 4
@@ -386,6 +393,7 @@ def main():
     manifest = json.loads((args.reference / "notes.json").read_text(encoding="utf-8"))
     previous = previous_levels(args.output)
     previous_second = previous_levels(args.output, "second_db")
+    previous_t30 = previous_levels(args.output, "t30")
     previous_stick = {name: float(match[1]) for name in PADS
                       if (match := re.search(rf"const {name.upper()}: Acoustics = Acoustics \{{[^}}]*?stick_db: (-?[0-9.]+)",
                                              args.output.read_text(encoding="utf-8") if args.output.exists() else "",
@@ -400,6 +408,10 @@ def main():
                 notes, reference = [notes[index] for index in keep], reference[keep]
             share, t30, peak = measure(reference)
             t30 = reliable(share, t30)
+            # The bloom is read on the captures' own decay, whatever the table's has become.
+            measured_t30 = t30
+            if name in SEARCHED and name in previous_t30:
+                t30 = previous_t30[name][:MEASURED].copy()
             level = previous.get(name)
             metal = name in METAL
             second_t30, second_db = second_decay(reference, t30, metal)
@@ -447,10 +459,12 @@ def main():
                 level = np.where(modal, np.minimum(level, MODAL_CEILING_DB), level)
             if name in LINE_WINDOWS:
                 found = measure_lines(args.reference, notes, LINE_WINDOWS[name])
+                if name in LINE_SPREAD_CAP_DB:
+                    found = (found[0], found[1], min(found[2], LINE_SPREAD_CAP_DB[name]))
                 print(name, "line share", np.round(found[0], 2), "lines", found[1].tolist(), flush=True)
             else:
                 found = (np.zeros(len(BANDS)), np.zeros(len(BANDS), dtype=int), 0.0)
-            rise, depth = bloom(peak, t30, metal), np.ones(MEASURED)
+            rise, depth = bloom(peak, measured_t30, metal), np.ones(MEASURED)
             if name in BLOOM_DEPTH:
                 envs = analysis_audio(reference)
                 fitted = [bloom_shape(envelope_db(band(envs, center)), t30[index])

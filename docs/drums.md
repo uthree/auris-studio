@@ -14,7 +14,7 @@ The built-in kit models a struck circular membrane for kicks, snares and six tun
 and damped bending modes of metal plates for hats, crash and ride. A lossy cavity follows
 the moving drum head. Beside the resolved modes, each pad has a diffuse field in nine
 octave bands: the snare's wires, the shell and beater, and the modes of a cymbal too dense
-for the plate to resolve. A crash or open hat carries most of that field as a few hundred
+for the plate to resolve. A crash, open hat or ride carries most of that field as a few hundred
 split pairs of decaying lines, which beat slowly as a slightly out-of-round cymbal's do, with
 the share, count and spread of lines measured in each octave of recorded tails; only the rest
 is noise. Every band, modal or diffuse, falls at the rate measured for that
